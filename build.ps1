@@ -5,7 +5,7 @@
 #   ezmj-<version>.jar                       runnable jar (needs Java 17+)
 #   EZMJ-<version>-windows-portable\         portable app, run EZMJ.exe (bundles its own Java)
 #   EZMJ-<version>-windows-portable.zip      the same folder, zipped
-#   EZMJ-<version>-setup.exe                 installer, only when WiX 3 is on PATH
+#   EZMJ-<version>-setup.exe                 installer, only when WiX 3 is in tools\wix314 or on PATH
 #
 # The version comes from src\ezmj\version.properties.
 
@@ -77,6 +77,10 @@ $portableName = "EZMJ-$version-windows-portable"
 Copy-Item -Recurse 'build\image\EZMJ' "dist\$portableName"
 Compress-Archive -Path "dist\$portableName" -DestinationPath "dist\$portableName.zip"
 
+$localWix = Join-Path $PSScriptRoot 'tools\wix314'
+if (Test-Path (Join-Path $localWix 'candle.exe')) {
+    $env:PATH = "$localWix;$env:PATH"
+}
 if ((Get-Command candle -ErrorAction SilentlyContinue) -and (Get-Command light -ErrorAction SilentlyContinue)) {
     Write-Host '== Windows installer =='
     Invoke-Tool jpackage @(
@@ -96,7 +100,7 @@ if ((Get-Command candle -ErrorAction SilentlyContinue) -and (Get-Command light -
     )
     Rename-Item "dist\EZMJ-$version.exe" "EZMJ-$version-setup.exe"
 } else {
-    Write-Warning 'WiX 3 (candle/light) is not on PATH, skipping the installer.'
+    Write-Warning 'WiX 3 (candle/light) was not found in tools\wix314 or on PATH, skipping the installer.'
 }
 
 Write-Host '== Done =='

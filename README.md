@@ -14,9 +14,11 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 |---|---|
 | `ezmj-<版號>.jar` | 可執行 jar，需要 Java 17 以上：`java -jar ezmj-<版號>.jar` |
 | `EZMJ-<版號>-windows-portable.zip` | 免安裝版，解壓後執行 `EZMJ.exe`，不需要另外裝 Java |
-| `EZMJ-<版號>-setup.exe` | 安裝程式，只有在 PATH 上找得到 WiX 3 時才會產生 |
+| `EZMJ-<版號>-setup.exe` | 安裝程式，需要 WiX 3 才會產生 |
 
 版號只改 `src/ezmj/version.properties` 一處。
+
+要產生安裝程式時，把 [WiX v3.14.1](https://github.com/wixtoolset/wix3/releases/tag/wix3141rtm) 的 `wix314-binaries.zip` 解壓到 `tools\wix314\`（不進版控），或把 WiX 3 加到 PATH。
 
 ## 測試
 
