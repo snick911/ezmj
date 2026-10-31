@@ -23,6 +23,8 @@ public final class GameSession {
     private final int[] selfDraws = new int[SEATS];
     private final int[] dealIns = new int[SEATS];
 
+    private int roundsPlayed;
+    private int drawnGames;
     private int dealer;
     private int roundWind = 1;
     private int streak;
@@ -52,7 +54,10 @@ public final class GameSession {
     public Settlement settle(RoundResult result) {
         int[] deltas = new int[SEATS];
         int[] tais = new int[SEATS];
-        if (!result.isDrawnGame()) {
+        roundsPlayed++;
+        if (result.isDrawnGame()) {
+            drawnGames++;
+        } else {
             wins[result.winner()]++;
             if (result.isSelfDraw()) {
                 selfDraws[result.winner()]++;
@@ -113,6 +118,15 @@ public final class GameSession {
         return new GameRecord(players[seat].name(), date, wins[seat], selfDraws[seat],
                 players[seat].chips() - config.startingChips(), dealIns[seat],
                 config.botLevel(), config.basePay(), config.taiPay());
+    }
+
+    /** 已經結算的局數，包含流局。 */
+    public int roundsPlayed() {
+        return roundsPlayed;
+    }
+
+    public int drawnGames() {
+        return drawnGames;
     }
 
     public GameConfig config() {

@@ -83,10 +83,6 @@ public final class GameController {
         }
     }
 
-    boolean isAutoPlay() {
-        return autoPlay;
-    }
-
     /** 這場牌局是否用過電腦代打。用過的不列入榮譽榜。 */
     boolean usedAutoPlay() {
         return usedAutoPlay;

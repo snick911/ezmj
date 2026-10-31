@@ -8,8 +8,6 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.text.ParseException;
 import java.time.LocalDate;
-import java.util.Arrays;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -43,7 +41,6 @@ import ezmj.model.GameRecord;
 import ezmj.model.Gender;
 import ezmj.model.HonorRoll;
 import ezmj.model.MusicTrack;
-import ezmj.model.Player;
 import ezmj.model.Resolution;
 
 /** 主視窗：以 CardLayout 切換開始畫面與牌桌。 */
@@ -51,7 +48,8 @@ public final class MainFrame extends JFrame {
 
     private static final String CARD_START = "start";
     private static final String CARD_TABLE = "table";
-    private static final int AUTO_PLAY_RESULT_SECONDS = 5;
+    private static final int DRAWN_RESULT_SECONDS = 10;
+    private static final int RESULT_SECONDS = 60;
     private static final Path SETTINGS_FILE = Path.of(System.getProperty("user.home"), ".ezmj", "settings.properties");
     private static final Path HONOR_FILE = Path.of(System.getProperty("user.home"), ".ezmj", "honor.properties");
     private static final Path VOICE_DIR = Path.of(System.getProperty("user.home"), ".ezmj", "voice");
@@ -405,7 +403,7 @@ public final class MainFrame extends JFrame {
     private void handleRoundEnd(GameSession session, Round round, Settlement settlement, Runnable next) {
         boolean over = session.isOver();
         new ResultDialog(this, session, round, settlement, over ? "查看最終排名" : "下一局",
-                controller.isAutoPlay() ? AUTO_PLAY_RESULT_SECONDS : 0).setVisible(true);
+                round.result().isDrawnGame() ? DRAWN_RESULT_SECONDS : RESULT_SECONDS).setVisible(true);
         if (controller == null) {
             return;
         }
@@ -418,20 +416,14 @@ public final class MainFrame extends JFrame {
     }
 
     private void showFinalRanking(GameSession session) {
-        Player[] ranking = {session.player(0), session.player(1), session.player(2), session.player(3)};
-        Arrays.sort(ranking, Comparator.comparingInt(Player::chips).reversed());
-        String text = Arrays.stream(ranking)
-                .map(player -> player.name() + "：" + player.chips())
-                .collect(Collectors.joining("\n"));
-        JOptionPane.showMessageDialog(this, text + "\n\n" + recordGame(session), "牌局結束",
-                JOptionPane.INFORMATION_MESSAGE);
+        new FinalDialog(this, session, recordGame(session)).setVisible(true);
     }
 
-    /** 牌局打到結束才記錄，中途離開或用過電腦代打都不算。回傳要告訴玩家的成績。 */
+    /** 牌局打到結束才記錄，中途離開或用過電腦代打都不算。回傳榮譽榜的結果，沒有要說的就是空字串。 */
     private String recordGame(GameSession session) {
         GameRecord record = session.record(0, LocalDate.now().toString());
         if (controller.usedAutoPlay()) {
-            return summary(record) + "\n這場用過電腦代打，不列入榮譽榜。";
+            return "這場用過電腦代打，不列入榮譽榜。";
         }
         Map<HonorRoll.Category, Integer> ranks = honorRoll.add(record);
         if (!ranks.isEmpty()) {
@@ -443,16 +435,11 @@ public final class MainFrame extends JFrame {
             }
         }
         if (ranks.isEmpty()) {
-            return summary(record);
+            return "";
         }
-        return summary(record) + "\n登上榮譽榜：" + ranks.entrySet().stream()
+        return "登上榮譽榜：" + ranks.entrySet().stream()
                 .map(entry -> entry.getKey().label() + "第 " + entry.getValue() + " 名")
                 .collect(Collectors.joining("、"));
-    }
-
-    private static String summary(GameRecord record) {
-        return "你的成績：胡牌 " + record.wins() + " 次（自摸 " + record.selfDraws() + " 次）、放槍 "
-                + record.dealIns() + " 次、" + (record.winnings() < 0 ? "輸 " + -record.winnings() : "贏 " + record.winnings());
     }
 
     private void confirmLeave() {

@@ -60,6 +60,9 @@ final class SessionTest {
             GameRecord other = session.record(1, "2026-10-31");
             eq(0, other.wins(), "別家胡牌數");
             eq(1, other.dealIns(), "別家放槍數");
+
+            eq(4, session.roundsPlayed(), "局數包含流局");
+            eq(1, session.drawnGames(), "流局數");
         });
     }
 

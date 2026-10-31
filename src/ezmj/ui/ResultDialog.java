@@ -39,7 +39,7 @@ import ezmj.rules.ScoreResult;
 /** 一局結束的結果視窗：胡牌牌型、台數明細與各家輸贏。 */
 final class ResultDialog extends JDialog {
 
-    /** autoCloseSeconds 大於 0 時，時間到自動關閉，電腦代打才能一直打下去。 */
+    /** 時間到自動關閉，電腦代打才能一直打下去。 */
     ResultDialog(Frame owner, GameSession session, Round round, Settlement settlement, String buttonText,
                  int autoCloseSeconds) {
         super(owner, "本局結果", true);
@@ -74,9 +74,7 @@ final class ResultDialog extends JDialog {
         next.setAlignmentX(LEFT_ALIGNMENT);
         content.add(next);
         getRootPane().setDefaultButton(next);
-        if (autoCloseSeconds > 0) {
-            startAutoClose(next, buttonText, autoCloseSeconds);
-        }
+        startAutoClose(next, buttonText, autoCloseSeconds);
 
         setContentPane(content);
         pack();
@@ -109,7 +107,7 @@ final class ResultDialog extends JDialog {
                 : winner + " 胡牌，" + round.player(result.from()).name() + " 放槍 " + result.winTile().label();
     }
 
-    private static JLabel line(String text, int style, float size, Color color) {
+    static JLabel line(String text, int style, float size, Color color) {
         JLabel label = new JLabel(text);
         label.setFont(Theme.font(style, size));
         label.setForeground(color);
@@ -195,11 +193,11 @@ final class ResultDialog extends JDialog {
         return seat == result.from() ? "放槍" : "";
     }
 
-    private static String money(int delta) {
+    static String money(int delta) {
         return (delta > 0 ? "+" : "") + delta;
     }
 
-    private static Color moneyColor(int delta) {
+    static Color moneyColor(int delta) {
         if (delta == 0) {
             return Theme.MUTED;
         }
@@ -207,7 +205,7 @@ final class ResultDialog extends JDialog {
     }
 
     /** 欄位對齊的表格。前 leftColumns 欄是文字靠左，其餘是數字靠右。 */
-    private static final class GridTable extends JPanel {
+    static final class GridTable extends JPanel {
         private static final Border HEADER_BORDER = BorderFactory.createEmptyBorder(5, 10, 5, 10);
         private static final Border CELL_BORDER = BorderFactory.createCompoundBorder(
                 BorderFactory.createMatteBorder(0, 0, 1, 0, Theme.PANEL_LIGHT), HEADER_BORDER);
