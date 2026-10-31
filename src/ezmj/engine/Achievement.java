@@ -66,7 +66,7 @@ public enum Achievement {
     NO_DEAL_IN(Group.GAME, "滴水不漏", "四圈打完，整場沒有放槍", facts -> facts.fullGame() && facts.dealIns() == 0),
     TEN_WINS_IN_GAME(Group.GAME, "大殺四方", "一場胡牌 10 次以上", facts -> facts.gameEnded() && facts.wins() >= 10),
     DOUBLED(Group.GAME, "翻倍奉還", "打完一場，贏的錢超過本金", facts -> facts.gameEnded() && facts.winnings() >= facts.startingChips()),
-    BROKE_SOMEONE(Group.GAME, "趕盡殺絕", "讓別家輸光籌碼，自己還留在場上", AchievementFacts::someoneElseBroke),
+    BROKE_SOMEONE(Group.GAME, "趕盡殺絕", "胡牌讓別家輸光籌碼", AchievementFacts::humanBrokeSomeone),
     WENT_BROKE(Group.GAME, "傾家蕩產", "自己輸光籌碼", facts -> facts.gameEnded() && facts.humanChips() <= 0),
     NO_WINS(Group.GAME, "全程陪打", "四圈打完，整場沒有胡牌", facts -> facts.fullGame() && facts.wins() == 0),
     MANY_DRAWN(Group.GAME, "和氣生財", "一場有 5 局以上流局", facts -> facts.gameEnded() && facts.drawnGames() >= 5),

@@ -249,6 +249,21 @@ final class AchievementTest {
             List<Achievement> second = other.recordGame(won, 5, 30, DATE);
             check(second.contains(Achievement.BROKE_SOMEONE), "讓別家輸光 " + second);
             check(!second.contains(Achievement.WENT_BROKE), "自己沒輸光 " + second);
+
+            GameSession others = new GameSession(small, new Random(5));
+            others.settle(ron(1, 2));
+            List<Achievement> third = new AchievementBook().recordGame(others, 5, 30, DATE);
+            check(!third.contains(Achievement.BROKE_SOMEONE), "電腦之間放槍不算 " + third);
+
+            GameSession selfDraw = new GameSession(small, new Random(5));
+            selfDraw.settle(tsumo(0));
+            List<Achievement> fourth = new AchievementBook().recordGame(selfDraw, 5, 30, DATE);
+            check(fourth.contains(Achievement.BROKE_SOMEONE), "自摸讓別家輸光也算 " + fourth);
+
+            GameSession big = new GameSession(new GameConfig("測試", CHIPS, 100, 20, BotLevel.NORMAL), new Random(5));
+            big.settle(ron(0, 1));
+            List<Achievement> fifth = new AchievementBook().recordGame(big, 5, 30, DATE);
+            check(!fifth.contains(Achievement.BROKE_SOMEONE), "胡牌但沒有人輸光不算 " + fifth);
         });
 
         test("思考速度：要有足夠次數才算", () -> {

@@ -250,14 +250,18 @@ public final class GameController {
 
     /**
      * 吃碰槓之後還是輪到真人，要打出牌才算想完；加槓等別家搶槓時也還沒完。
-     * 其他情況代表真人已經打牌、過或胡了。
+     * 其他情況代表真人已經打牌或胡了，過牌在 passClaim 就算完。
      */
     private void finishThinkingIfDone() {
         boolean stillHuman = round.phase() == Round.Phase.TURN && round.current() == HUMAN_SEAT;
         if (thinking.isRunning() && !stillHuman && !round.isRobbing()) {
-            thinking.finish(System.nanoTime());
-            view.showThinkTime(thinking.averageSeconds(), thinking.count());
+            finishThinking();
         }
+    }
+
+    private void finishThinking() {
+        thinking.finish(System.nanoTime());
+        view.showThinkTime(thinking.averageSeconds(), thinking.count());
     }
 
     private void beginTurn() {
@@ -452,7 +456,7 @@ public final class GameController {
             return;
         }
         thinking.start(System.nanoTime());
-        beginPrompt(claimHint() + "，要宣告嗎？", this::resolveClaims);
+        beginPrompt(claimHint() + "，要宣告嗎？", this::passClaim);
         showClaimActions(humanOptions);
     }
 
@@ -473,7 +477,7 @@ public final class GameController {
                     ? new TablePanel.ActionItem(first.verb(), Theme.RED, () -> declareClaim(first))
                     : new TablePanel.ActionItem(first.verb(), Theme.BUTTON, () -> pickClaim(options, ofType, null)));
         }
-        actions.add(new TablePanel.ActionItem("過", Theme.PANEL_LIGHT, this::resolveClaims));
+        actions.add(new TablePanel.ActionItem("過", Theme.PANEL_LIGHT, this::passClaim));
         String hint = claimHint() + "，要宣告嗎？";
         view.showActions(hint, false, actions);
         updatePromptHint(hint);
@@ -493,6 +497,12 @@ public final class GameController {
             }
         }, List.of(new TablePanel.ActionItem("取消", Theme.PANEL_LIGHT, () -> showClaimActions(options))));
         updatePromptHint(hint);
+    }
+
+    /** 過牌就算想完了，下一家就算是自己，摸牌後也是新的一次。 */
+    private void passClaim() {
+        finishThinking();
+        resolveClaims();
     }
 
     private void declareClaim(Claim claim) {

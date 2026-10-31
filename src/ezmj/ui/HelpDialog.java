@@ -117,8 +117,8 @@ final class HelpDialog extends JDialog {
                 appendAchievementGroup(html, book, group);
             }
         }
-        return html.append("<p class=\"note\">都是看你自己的表現。用過電腦代打的牌局不列入成就與累計次數，"
-                + "中途離開的牌局，已經打完的局數仍然算數。</p>").toString();
+        return html.append("<p class=\"note\">都是看你自己的表現。開了電腦代打之後，這場剩下的局與整場類成就都不列入；"
+                + "在那之前自己打完的局仍然算數，中途離開的牌局也一樣。</p>").toString();
     }
 
     private static void appendAchievementGroup(StringBuilder html, AchievementBook book, Achievement.Group group) {

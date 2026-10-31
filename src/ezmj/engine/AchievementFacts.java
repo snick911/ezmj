@@ -100,12 +100,15 @@ final class AchievementFacts {
         return true;
     }
 
-    boolean someoneElseBroke() {
-        if (!gameEnded || humanChips() <= 0) {
+    /** 真人胡的這一局，有別家付了錢因此輸光。有人輸光牌局就結束，所以只要看最後一局。 */
+    boolean humanBrokeSomeone() {
+        if (!gameEnded || !humanWon()) {
             return false;
         }
+        List<RoundRecord> history = session.history();
+        int[] deltas = history.get(history.size() - 1).deltas();
         for (int seat = 1; seat < 4; seat++) {
-            if (session.player(seat).chips() <= 0) {
+            if (deltas[seat] < 0 && session.player(seat).chips() <= 0) {
                 return true;
             }
         }

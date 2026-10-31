@@ -483,7 +483,7 @@ public final class MainFrame extends JFrame {
     private String recordGame(GameSession session) {
         GameRecord record = session.record(0, LocalDate.now().toString());
         if (controller.usedAutoPlay()) {
-            return "這場用過電腦代打，不列入榮譽榜與成就。";
+            return "這場用過電腦代打，不列入榮譽榜；開代打之後的局也不列入成就。";
         }
         Map<HonorRoll.Category, Integer> ranks = honorRoll.add(record);
         if (!ranks.isEmpty()) {
