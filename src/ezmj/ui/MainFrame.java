@@ -7,9 +7,11 @@ import java.awt.Toolkit;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.text.ParseException;
+import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -23,6 +25,7 @@ import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JRadioButtonMenuItem;
+import javax.swing.JSlider;
 import javax.swing.JSpinner;
 import javax.swing.SpinnerNumberModel;
 
@@ -33,7 +36,11 @@ import ezmj.engine.GameSession;
 import ezmj.engine.Round;
 import ezmj.engine.Settlement;
 import ezmj.model.AppSettings;
+import ezmj.model.BotLevel;
 import ezmj.model.GameConfig;
+import ezmj.model.GameRecord;
+import ezmj.model.HonorRoll;
+import ezmj.model.MusicTrack;
 import ezmj.model.Player;
 import ezmj.model.Resolution;
 
@@ -42,10 +49,13 @@ public final class MainFrame extends JFrame {
 
     private static final String CARD_START = "start";
     private static final String CARD_TABLE = "table";
+    private static final int AUTO_PLAY_RESULT_SECONDS = 5;
     private static final Path SETTINGS_FILE = Path.of(System.getProperty("user.home"), ".ezmj", "settings.properties");
+    private static final Path HONOR_FILE = Path.of(System.getProperty("user.home"), ".ezmj", "honor.properties");
 
     // 要在建立任何畫面之前讀取，字型才會一開始就是設定的大小
     private final AppSettings settings = loadSettings();
+    private final HonorRoll honorRoll = HonorRoll.load(HONOR_FILE);
     private final CardLayout cards = new CardLayout();
     private final JPanel root = new JPanel(cards);
     private final StartPanel startPanel = new StartPanel(this::startGame);
@@ -63,9 +73,12 @@ public final class MainFrame extends JFrame {
 
         setMinimumSize(new Dimension(1100, 720));
         applyResolution(settings.resolution());
+        SoundEffects.setVolume(settings.soundVolume());
         if (settings.soundEnabled()) {
             SoundEffects.preload();
         }
+        BackgroundMusic.setVolume(settings.musicVolume());
+        BackgroundMusic.select(settings.music());
     }
 
     /** 比螢幕大時縮到螢幕內。最大化之前先設好一般大小，還原視窗時才有合理的大小。 */
@@ -91,8 +104,15 @@ public final class MainFrame extends JFrame {
         preferences.add(buildFontMenu());
         preferences.add(menuItem("等待時間…", this::editWaitSeconds));
         preferences.add(buildResolutionMenu());
+        preferences.add(buildMusicMenu());
+        preferences.add(menuItem("音量…", this::editVolumes));
         preferences.add(checkItem("音效", settings.soundEnabled(), this::changeSound));
         preferences.add(checkItem("動畫", settings.animationEnabled(), this::changeAnimation));
+
+        JMenu honor = topMenu("榮譽榜");
+        for (HonorRoll.Category category : HonorRoll.Category.values()) {
+            honor.add(menuItem(category.label(), () -> helpDialog.showHonorRoll(honorRoll, category)));
+        }
 
         JMenu help = topMenu("說明");
         help.add(menuItem("基本規則", helpDialog::showRules));
@@ -102,6 +122,7 @@ public final class MainFrame extends JFrame {
         bar.setBackground(Theme.PANEL);
         bar.setBorderPainted(false);
         bar.add(preferences);
+        bar.add(honor);
         bar.add(help);
         return bar;
     }
@@ -175,6 +196,56 @@ public final class MainFrame extends JFrame {
         return menu;
     }
 
+    private JMenu buildMusicMenu() {
+        JMenu menu = new JMenu("背景音樂");
+        menu.setFont(Theme.font(Font.PLAIN, 15f));
+        ButtonGroup group = new ButtonGroup();
+        for (MusicTrack track : MusicTrack.values()) {
+            JRadioButtonMenuItem item = new JRadioButtonMenuItem(track.label(), track == settings.music());
+            item.setFont(Theme.font(Font.PLAIN, 15f));
+            item.addActionListener(e -> changeMusic(track));
+            group.add(item);
+            menu.add(item);
+        }
+        return menu;
+    }
+
+    private void changeMusic(MusicTrack track) {
+        settings.setMusic(track);
+        saveSettings();
+        BackgroundMusic.select(track);
+    }
+
+    /** 拉動時立刻生效；音效拉完會響一聲，聽聽看大小。 */
+    private void editVolumes() {
+        JSlider music = volumeSlider(settings.musicVolume());
+        music.addChangeListener(e -> {
+            settings.setMusicVolume(music.getValue());
+            BackgroundMusic.setVolume(music.getValue());
+        });
+        JSlider sound = volumeSlider(settings.soundVolume());
+        sound.addChangeListener(e -> {
+            settings.setSoundVolume(sound.getValue());
+            SoundEffects.setVolume(sound.getValue());
+            if (!sound.getValueIsAdjusting() && settings.soundEnabled()) {
+                SoundEffects.play(SoundEffects.Cue.DISCARD);
+            }
+        });
+        Object[] message = {"背景音樂", music, "音效", sound};
+        JOptionPane.showMessageDialog(this, message, "音量", JOptionPane.PLAIN_MESSAGE);
+        saveSettings();
+    }
+
+    private static JSlider volumeSlider(int value) {
+        JSlider slider = new JSlider(0, 100, value);
+        slider.setMajorTickSpacing(25);
+        slider.setPaintTicks(true);
+        slider.setPaintLabels(true);
+        slider.setFont(Theme.font(Font.PLAIN, 13f));
+        slider.setPreferredSize(new Dimension(Theme.scaled(360), slider.getPreferredSize().height));
+        return slider;
+    }
+
     private void changeResolution(Resolution resolution) {
         settings.setResolution(resolution);
         saveSettings();
@@ -231,12 +302,13 @@ public final class MainFrame extends JFrame {
     public void startGame(GameConfig config) {
         GameSession session = new GameSession(config, new Random());
         Bot bot = new ComputerBot(config.botLevel(), config.basePay(), config.taiPay(), new Random());
-        controller = new GameController(session, bot, this::handleRoundEnd, settings);
+        Bot proxy = new ComputerBot(BotLevel.PRO, config.basePay(), config.taiPay(), new Random());
+        controller = new GameController(session, bot, proxy, this::handleRoundEnd, settings);
         if (tablePanel != null) {
             root.remove(tablePanel);
         }
         GameController current = controller;
-        tablePanel = new TablePanel(tile -> current.humanDiscard(tile), this::confirmLeave);
+        tablePanel = new TablePanel(tile -> current.humanDiscard(tile), this::confirmLeave, current::toggleAutoPlay);
         controller.attach(tablePanel);
         root.add(tablePanel, CARD_TABLE);
         cards.show(root, CARD_TABLE);
@@ -249,7 +321,8 @@ public final class MainFrame extends JFrame {
 
     private void handleRoundEnd(GameSession session, Round round, Settlement settlement, Runnable next) {
         boolean over = session.isOver();
-        new ResultDialog(this, session, round, settlement, over ? "查看最終排名" : "下一局").setVisible(true);
+        new ResultDialog(this, session, round, settlement, over ? "查看最終排名" : "下一局",
+                controller.isAutoPlay() ? AUTO_PLAY_RESULT_SECONDS : 0).setVisible(true);
         if (controller == null) {
             return;
         }
@@ -267,7 +340,36 @@ public final class MainFrame extends JFrame {
         String text = Arrays.stream(ranking)
                 .map(player -> player.name() + "：" + player.chips())
                 .collect(Collectors.joining("\n"));
-        JOptionPane.showMessageDialog(this, text, "牌局結束", JOptionPane.INFORMATION_MESSAGE);
+        JOptionPane.showMessageDialog(this, text + "\n\n" + recordGame(session), "牌局結束",
+                JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    /** 牌局打到結束才記錄，中途離開或用過電腦代打都不算。回傳要告訴玩家的成績。 */
+    private String recordGame(GameSession session) {
+        GameRecord record = session.record(0, LocalDate.now().toString());
+        if (controller.usedAutoPlay()) {
+            return summary(record) + "\n這場用過電腦代打，不列入榮譽榜。";
+        }
+        Map<HonorRoll.Category, Integer> ranks = honorRoll.add(record);
+        if (!ranks.isEmpty()) {
+            try {
+                honorRoll.save(HONOR_FILE);
+            } catch (IOException e) {
+                JOptionPane.showMessageDialog(this, "榮譽榜無法儲存，這場成績下次開啟時會不見。\n" + e.getMessage(),
+                        "榮譽榜", JOptionPane.WARNING_MESSAGE);
+            }
+        }
+        if (ranks.isEmpty()) {
+            return summary(record);
+        }
+        return summary(record) + "\n登上榮譽榜：" + ranks.entrySet().stream()
+                .map(entry -> entry.getKey().label() + "第 " + entry.getValue() + " 名")
+                .collect(Collectors.joining("、"));
+    }
+
+    private static String summary(GameRecord record) {
+        return "你的成績：胡牌 " + record.wins() + " 次（自摸 " + record.selfDraws() + " 次）、放槍 "
+                + record.dealIns() + " 次、" + (record.winnings() < 0 ? "輸 " + -record.winnings() : "贏 " + record.winnings());
     }
 
     private void confirmLeave() {

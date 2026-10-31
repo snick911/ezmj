@@ -15,6 +15,7 @@ import java.util.Set;
 
 import ezmj.model.Meld;
 import ezmj.model.Tile;
+import ezmj.rules.HandAnalyzer;
 import ezmj.rules.ScoreGuide;
 import ezmj.rules.ScoreItem;
 import ezmj.rules.ScoreResult;
@@ -421,6 +422,26 @@ final class ScorerTest {
                     eq(expected, actual, "順序不同台數變了");
                 }
             }
+        });
+
+        test("說明畫面的範例牌型：張數合法，而且真的算得出該牌型", () -> {
+            for (ScoreGuide.Group group : ScoreGuide.GROUPS) {
+                for (ScoreGuide.Entry entry : group.entries()) {
+                    WinContext example = entry.example();
+                    List<Tile> all = new ArrayList<>(example.concealed());
+                    example.melds().forEach(meld -> all.addAll(meld.tiles()));
+                    for (Tile tile : all) {
+                        check(Collections.frequency(all, tile) <= 4, entry.name() + " 的 " + tile + " 超過 4 張");
+                    }
+                    check(example.concealed().contains(example.winTile()), entry.name() + " 手上要有胡的那張牌");
+                    eq(5, example.melds().size() + (example.concealed().size() - 2) / 3, entry.name() + " 的面子組數");
+                    ScoreResult result = Scorer.score(example);
+                    SCORED_ITEMS.addAll(result.items());
+                    check(result.items().stream().anyMatch(item -> item.name().split(" ")[0].equals(entry.name())
+                            && item.tai() == entry.tai()), entry.name() + " 範例算不出這個牌型：" + result);
+                }
+            }
+            check(HandAnalyzer.canWin(Tile.parseAll(ScoreGuide.WINNING_HAND)), "基本規則的胡牌範例");
         });
 
         test("說明畫面的台數表與實際計台一致", () -> {

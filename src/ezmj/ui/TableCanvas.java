@@ -42,6 +42,11 @@ final class TableCanvas extends JComponent {
     static final int DISCARD_FLIGHT_MS = 190;
     static final int CLAIM_FLIGHT_MS = 240;
     static final int WIN_BANNER_MS = 1100;
+    /** 發牌每四張一批輪流發，最後一批是莊家的第 17 張。 */
+    static final int DEAL_PACKETS = 17;
+    static final int DEAL_FLIGHT_MS = 200;
+    static final int DEAL_INTERVAL_MS = 70;
+    static final int DEAL_MS = (DEAL_PACKETS - 1) * DEAL_INTERVAL_MS + DEAL_FLIGHT_MS;
 
     private static final int DISCARD_COLUMNS = 8;
     private static final double DISCARD_W = 25;
@@ -91,6 +96,7 @@ final class TableCanvas extends JComponent {
     private boolean discardEnabled;
     private int hover = -1;
     private long frameNow;
+    private long dealStart;
 
     TableCanvas(Consumer<Tile> onDiscard) {
         this.onDiscard = onDiscard;
@@ -122,7 +128,42 @@ final class TableCanvas extends JComponent {
         this.round = round;
         flights.clear();
         banners.clear();
+        dealStart = 0;
         repaint();
+    }
+
+    /** 開始發牌動畫。牌局其實已經發好了，這裡只是讓牌一批一批出現。 */
+    void animateDeal() {
+        dealStart = System.nanoTime();
+        frameNow = dealStart;
+        frameTimer.start();
+        repaint();
+    }
+
+    private double dealElapsedMs() {
+        return (frameNow - dealStart) / 1e6;
+    }
+
+    private boolean dealing() {
+        return dealStart != 0 && dealElapsedMs() < DEAL_MS;
+    }
+
+    /** 手牌第 index 張的發牌進度：小於 0 還沒發，0 到 1 飛行中，1 以上已落地。 */
+    private double dealProgress(int seat, int index) {
+        if (!dealing()) {
+            return 1;
+        }
+        int packet = index >= 16 ? DEAL_PACKETS - 1 : index / 4 * 4 + Math.floorMod(seat - round.dealer(), 4);
+        return (dealElapsedMs() - packet * DEAL_INTERVAL_MS) / DEAL_FLIGHT_MS;
+    }
+
+    /** 還沒發出去的張數，讓中央的剩餘張數跟著往下數。 */
+    private int undealtTiles() {
+        if (!dealing()) {
+            return 0;
+        }
+        int started = (int) (dealElapsedMs() / DEAL_INTERVAL_MS) + 1;
+        return started >= DEAL_PACKETS ? 0 : (DEAL_PACKETS - 1 - started) * 4 + 1;
     }
 
     /** 播放事件的動畫。只影響畫面，牌局狀態已經更新好了。 */
@@ -167,9 +208,10 @@ final class TableCanvas extends JComponent {
 
     private void nextFrame() {
         long now = System.nanoTime();
+        frameNow = now;
         flights.removeIf(flight -> flight.finished(now));
         banners.removeIf(banner -> banner.progress(now) >= 1);
-        if (flights.isEmpty() && banners.isEmpty()) {
+        if (flights.isEmpty() && banners.isEmpty() && !dealing()) {
             frameTimer.stop();
         }
         repaint();
@@ -504,13 +546,14 @@ final class TableCanvas extends JComponent {
         double x = row.x();
         double y = row.y();
 
+        int index = 0;
         for (Tile tile : hand) {
-            paintHandTile(g, seat, tile, x, y, tileW, tileH, faceUp);
+            paintDealtTile(g, seat, tile, index++, x, y, tileW, tileH, faceUp);
             x += tileW;
         }
         if (separated != null) {
             x += tileW * .4;
-            paintHandTile(g, seat, separated, x, y, tileW, tileH, faceUp);
+            paintDealtTile(g, seat, separated, index, x, y, tileW, tileH, faceUp);
             x += tileW;
         }
         for (int m = 0; m < player.melds().size(); m++) {
@@ -533,7 +576,26 @@ final class TableCanvas extends JComponent {
             }
         }
         // 面子多時手牌變寬，花牌要避開隔壁家的手牌
-        paintFlowers(g, player, Math.max(-total / 2, -halfLength + 66 * unit), y, unit);
+        if (!dealing()) {
+            paintFlowers(g, player, Math.max(-total / 2, -halfLength + 66 * unit), y, unit);
+        }
+    }
+
+    /** 發牌時，牌背朝上從牌桌中央轉著飛過來，落地後才是一般的手牌。原點就是牌桌中央。 */
+    private void paintDealtTile(Graphics2D g, int seat, Tile tile, int index, double x, double y, double w, double h,
+                                boolean faceUp) {
+        double progress = dealProgress(seat, index);
+        if (progress >= 1) {
+            paintHandTile(g, seat, tile, x, y, w, h, faceUp);
+        } else if (progress >= 0) {
+            double eased = easeOut(progress);
+            double scale = .6 + .4 * eased;
+            AffineTransform saved = g.getTransform();
+            g.translate((x + w / 2) * eased, (y + h / 2) * eased);
+            g.rotate((1 - eased) * .9);
+            TilePainter.paintBack(g, -w * scale / 2, -h * scale / 2, w * scale, h * scale);
+            g.setTransform(saved);
+        }
     }
 
     /** 剛摸到的牌（或胡的那張）與手牌分開顯示。 */
@@ -582,7 +644,7 @@ final class TableCanvas extends JComponent {
         drawCenteredLine(g, Tile.windName(round.roundWind()) + "風圈", -14 * unit);
         g.setColor(Theme.TEXT);
         g.setFont(Theme.font(Font.PLAIN, (float) (16 * unit)));
-        drawCenteredLine(g, "剩餘 " + round.wall().liveCount() + " 張", 22 * unit);
+        drawCenteredLine(g, "剩餘 " + (round.wall().liveCount() + undealtTiles()) + " 張", 22 * unit);
     }
 
     private static void drawCenteredLine(Graphics2D g, String text, double y) {

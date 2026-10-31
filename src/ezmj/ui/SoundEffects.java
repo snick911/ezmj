@@ -9,6 +9,7 @@ import java.util.concurrent.Executors;
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.Clip;
+import javax.sound.sampled.FloatControl;
 import javax.sound.sampled.LineUnavailableException;
 
 /**
@@ -19,7 +20,7 @@ public final class SoundEffects {
 
     /** variants 是同一種音效的版本數，避免連續打牌時每一聲都一模一樣。 */
     public enum Cue {
-        DISCARD(3), CHOW(1), PONG(1), KONG(1), WIN(1), DRAWN_GAME(1);
+        DISCARD(3), CHOW(1), PONG(1), KONG(1), WIN(1), DRAWN_GAME(1), DEAL(1);
 
         private final int variants;
 
@@ -44,8 +45,32 @@ public final class SoundEffects {
     private static final Map<Cue, Clip[]> CLIPS = new EnumMap<>(Cue.class);
     private static final Random PICKER = new Random();
     private static boolean unavailable;
+    private static int volume = 100;
 
     private SoundEffects() {
+    }
+
+    public static void setVolume(int percent) {
+        PLAYER.execute(() -> {
+            volume = percent;
+            for (Clip[] clips : CLIPS.values()) {
+                for (Clip clip : clips) {
+                    applyVolume(clip, percent);
+                }
+            }
+        });
+    }
+
+    /** 音量百分比換算成分貝。人耳對大小的感覺接近對數，這樣拉到一半聽起來也差不多是一半。 */
+    public static double gainDb(int percent) {
+        return percent <= 0 ? -80 : 40 * Math.log10(percent / 100.0);
+    }
+
+    static void applyVolume(Clip clip, int percent) {
+        if (clip.isControlSupported(FloatControl.Type.MASTER_GAIN)) {
+            FloatControl gain = (FloatControl) clip.getControl(FloatControl.Type.MASTER_GAIN);
+            gain.setValue((float) Math.max(gain.getMinimum(), Math.min(gain.getMaximum(), gainDb(percent))));
+        }
     }
 
     /** 先把音效載入好，第一次播放才不會慢半拍。 */
@@ -84,6 +109,7 @@ public final class SoundEffects {
                 byte[] samples = render(cue, variant);
                 clips[variant] = AudioSystem.getClip();
                 clips[variant].open(FORMAT, samples, 0, samples.length);
+                applyVolume(clips[variant], volume);
             }
             CLIPS.put(cue, clips);
             return clips;
@@ -135,6 +161,12 @@ public final class SoundEffects {
                 bell(mix, .25, 783.99, .6, .28);
                 bell(mix, .34, 1046.50, .75, .5);
                 level = .75;
+                break;
+            case DEAL:
+                mix = new double[seconds(.13)];
+                click(mix, 0, 1.15, .8, noise);
+                click(mix, .035, 1.05, 1, noise);
+                level = .35;
                 break;
             default:
                 mix = new double[seconds(.75)];

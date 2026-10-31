@@ -17,6 +17,7 @@ import javax.swing.JComponent;
 import javax.swing.JDialog;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.Timer;
 
 import ezmj.engine.GameSession;
 import ezmj.engine.Round;
@@ -30,7 +31,9 @@ import ezmj.rules.ScoreItem;
 /** 一局結束的結果視窗：胡牌牌型、台數明細與各家輸贏。 */
 final class ResultDialog extends JDialog {
 
-    ResultDialog(Frame owner, GameSession session, Round round, Settlement settlement, String buttonText) {
+    /** autoCloseSeconds 大於 0 時，時間到自動關閉，電腦代打才能一直打下去。 */
+    ResultDialog(Frame owner, GameSession session, Round round, Settlement settlement, String buttonText,
+                 int autoCloseSeconds) {
         super(owner, "本局結果", true);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
 
@@ -73,11 +76,29 @@ final class ResultDialog extends JDialog {
         next.setAlignmentX(LEFT_ALIGNMENT);
         content.add(next);
         getRootPane().setDefaultButton(next);
+        if (autoCloseSeconds > 0) {
+            startAutoClose(next, buttonText, autoCloseSeconds);
+        }
 
         setContentPane(content);
         pack();
         setResizable(false);
         setLocationRelativeTo(owner);
+    }
+
+    private void startAutoClose(JButton next, String buttonText, int seconds) {
+        int[] left = {seconds};
+        next.setText(buttonText + "（" + left[0] + "）");
+        Timer timer = new Timer(1000, e -> {
+            left[0]--;
+            if (left[0] > 0 && isDisplayable()) {
+                next.setText(buttonText + "（" + left[0] + "）");
+            } else {
+                ((Timer) e.getSource()).stop();
+                dispose();
+            }
+        });
+        timer.start();
     }
 
     private static String headline(Round round, RoundResult result) {

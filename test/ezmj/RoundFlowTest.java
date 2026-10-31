@@ -68,6 +68,29 @@ final class RoundFlowTest {
         illegalActions();
         rightmostTile();
         events();
+        readyDiscards();
+    }
+
+    private static void readyDiscards() {
+        test("聽牌選項：列出打哪張會聽牌、聽哪些牌", () -> {
+            Round round = Table.dealer(0).hand(0, WAITING).draws("9w").start();
+            Map<Tile, List<Tile>> ready = round.readyDiscards(0);
+            eq(T.hand("1s4s7s"), ready.get(tile("9w")), "打掉剛摸的牌");
+            for (List<Tile> waits : ready.values()) {
+                check(!waits.isEmpty(), "列出來的都要真的有聽");
+            }
+            fails(IllegalStateException.class, () -> round.readyDiscards(1), "還沒輪到");
+
+            Round far = Table.dealer(0).hand(0, "1w3w5w7w9w 1p3p5p7p9p 1s3s5s7s9s 1z").draws("3z").start();
+            check(far.readyDiscards(0).isEmpty(), "差很遠時沒有選項");
+        });
+
+        test("聽牌選項：吃碰之後也能聽牌", () -> {
+            Round round = Table.dealer(1).hand(0, "1w1w 4w5w6w 7p8p9p 2s3s4s 5s6s 9p9p 2z").draws("1w").start();
+            round.discard(1, tile("1w"));
+            round.resolveClaims(Map.of(0, option(round, 0, Claim.Type.PONG)));
+            eq(T.hand("1s4s7s"), round.readyDiscards(0).get(tile("2z")), "打掉多的那張");
+        });
     }
 
     private static void events() {

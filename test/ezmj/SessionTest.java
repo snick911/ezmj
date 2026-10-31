@@ -17,6 +17,7 @@ import ezmj.engine.RoundResult;
 import ezmj.engine.Settlement;
 import ezmj.model.BotLevel;
 import ezmj.model.GameConfig;
+import ezmj.model.GameRecord;
 import ezmj.rules.ScoreItem;
 import ezmj.rules.ScoreResult;
 
@@ -32,6 +33,32 @@ final class SessionTest {
 
     private static GameSession session() {
         return new GameSession(new GameConfig("測試", CHIPS, BASE, PER_TAI, BotLevel.NORMAL), new Random(5));
+    }
+
+    /** 榮譽榜用的成績：胡牌包含自摸，放槍只算放槍的人，流局不算。 */
+    static void records() {
+        test("一場牌局的成績累計正確", () -> {
+            GameSession session = session();
+            session.settle(ron(0, 1, 2));
+            session.settle(tsumo(0, 3));
+            session.settle(ron(2, 0, 1));
+            session.settle(RoundResult.drawnGame());
+
+            GameRecord me = session.record(0, "2026-10-31");
+            eq(2, me.wins(), "胡牌數包含自摸");
+            eq(1, me.selfDraws(), "自摸數");
+            eq(1, me.dealIns(), "放槍數");
+            eq(session.player(0).chips() - CHIPS, me.winnings(), "贏錢金額");
+            eq("測試", me.name(), "姓名");
+            eq("2026-10-31", me.date(), "日期");
+            eq(BotLevel.NORMAL, me.botLevel(), "電腦等級");
+            eq(BASE, me.basePay(), "底");
+            eq(PER_TAI, me.taiPay(), "每台");
+
+            GameRecord other = session.record(1, "2026-10-31");
+            eq(0, other.wins(), "別家胡牌數");
+            eq(1, other.dealIns(), "別家放槍數");
+        });
     }
 
     /** 電腦的名字是姓氏加名字，互不相同，也不會與玩家相同。 */

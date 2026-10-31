@@ -22,6 +22,27 @@ public record Tile(Suit suit, int rank) implements Comparable<Tile> {
         return new Tile(suit, rank);
     }
 
+    /** 記法：1w=一萬、1p=一筒、1s=一條、1z-4z=東南西北、5z-7z=中發白、1f-8f=春夏秋冬梅蘭竹菊。空白會略過。 */
+    public static List<Tile> parseAll(String text) {
+        List<Tile> tiles = new ArrayList<>();
+        String compact = text.replace(" ", "");
+        for (int i = 0; i < compact.length(); i += 2) {
+            int rank = compact.charAt(i) - '0';
+            switch (compact.charAt(i + 1)) {
+                case 'w': tiles.add(of(Suit.WAN, rank)); break;
+                case 'p': tiles.add(of(Suit.TONG, rank)); break;
+                case 's': tiles.add(of(Suit.TIAO, rank)); break;
+                case 'f': tiles.add(of(Suit.FLOWER, rank)); break;
+                case 'z':
+                    tiles.add(rank <= 4 ? of(Suit.WIND, rank) : of(Suit.DRAGON, rank - 4));
+                    break;
+                default:
+                    throw new IllegalArgumentException("無法解析: " + text);
+            }
+        }
+        return tiles;
+    }
+
     /** 完整的 144 張牌。 */
     public static List<Tile> fullSet() {
         List<Tile> tiles = new ArrayList<>(144);

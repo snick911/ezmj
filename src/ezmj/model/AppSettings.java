@@ -8,25 +8,34 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Properties;
 
-/** 環境設定：字體大小、等待時間、解析度、音效與動畫。存成文字檔，檔案不存在或內容不正確時用預設值。 */
+/** 環境設定：字體大小、等待時間、解析度、背景音樂、音量、音效與動畫。存成文字檔，檔案不存在或內容不正確時用預設值。 */
 public final class AppSettings {
 
     public static final List<Integer> FONT_PERCENTS = List.of(85, 100, 125, 150);
     public static final int DEFAULT_FONT_PERCENT = 100;
     public static final int NO_WAIT_LIMIT = -1;
     public static final int MAX_WAIT_SECONDS = 999;
+    public static final int DEFAULT_MUSIC_VOLUME = 50;
+    public static final int DEFAULT_SOUND_VOLUME = 100;
+    public static final MusicTrack DEFAULT_MUSIC = MusicTrack.TEAHOUSE;
 
     private static final String KEY_FONT = "fontPercent";
     private static final String KEY_WAIT = "waitSeconds";
     private static final String KEY_RESOLUTION = "resolution";
     private static final String KEY_SOUND = "sound";
     private static final String KEY_ANIMATION = "animation";
+    private static final String KEY_MUSIC = "music";
+    private static final String KEY_MUSIC_VOLUME = "musicVolume";
+    private static final String KEY_SOUND_VOLUME = "soundVolume";
 
     private int fontPercent = DEFAULT_FONT_PERCENT;
     private int waitSeconds = NO_WAIT_LIMIT;
     private Resolution resolution = Resolution.DEFAULT;
     private boolean soundEnabled = true;
     private boolean animationEnabled = true;
+    private MusicTrack music = DEFAULT_MUSIC;
+    private int musicVolume = DEFAULT_MUSIC_VOLUME;
+    private int soundVolume = DEFAULT_SOUND_VOLUME;
 
     public static AppSettings load(Path file) {
         AppSettings settings = new AppSettings();
@@ -41,6 +50,9 @@ public final class AppSettings {
         settings.setResolution(Resolution.fromKey(values.getProperty(KEY_RESOLUTION, "").trim()));
         settings.setSoundEnabled(!"false".equals(values.getProperty(KEY_SOUND, "").trim()));
         settings.setAnimationEnabled(!"false".equals(values.getProperty(KEY_ANIMATION, "").trim()));
+        settings.setMusic(MusicTrack.fromKey(values.getProperty(KEY_MUSIC, "").trim(), DEFAULT_MUSIC));
+        settings.setMusicVolume(intValue(values, KEY_MUSIC_VOLUME, DEFAULT_MUSIC_VOLUME));
+        settings.setSoundVolume(intValue(values, KEY_SOUND_VOLUME, DEFAULT_SOUND_VOLUME));
         return settings;
     }
 
@@ -59,6 +71,9 @@ public final class AppSettings {
         values.setProperty(KEY_RESOLUTION, resolution.key());
         values.setProperty(KEY_SOUND, String.valueOf(soundEnabled));
         values.setProperty(KEY_ANIMATION, String.valueOf(animationEnabled));
+        values.setProperty(KEY_MUSIC, music.name());
+        values.setProperty(KEY_MUSIC_VOLUME, String.valueOf(musicVolume));
+        values.setProperty(KEY_SOUND_VOLUME, String.valueOf(soundVolume));
         Files.createDirectories(file.getParent());
         try (OutputStream out = Files.newOutputStream(file)) {
             values.store(out, "EZMJ");
@@ -105,5 +120,31 @@ public final class AppSettings {
 
     public void setAnimationEnabled(boolean enabled) {
         animationEnabled = enabled;
+    }
+
+    public MusicTrack music() {
+        return music;
+    }
+
+    public void setMusic(MusicTrack track) {
+        music = track;
+    }
+
+    /** 音量 0 到 100。 */
+    public int musicVolume() {
+        return musicVolume;
+    }
+
+    public void setMusicVolume(int percent) {
+        musicVolume = Math.max(0, Math.min(100, percent));
+    }
+
+    /** 音量 0 到 100。 */
+    public int soundVolume() {
+        return soundVolume;
+    }
+
+    public void setSoundVolume(int percent) {
+        soundVolume = Math.max(0, Math.min(100, percent));
     }
 }

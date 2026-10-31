@@ -3,7 +3,6 @@ package ezmj;
 import java.util.ArrayList;
 import java.util.List;
 
-import ezmj.model.Suit;
 import ezmj.model.Tile;
 
 /** 不依賴測試框架的小工具：案例執行、斷言與牌的簡寫。 */
@@ -62,25 +61,8 @@ final class T {
         throw new AssertionError(message + "：應該要丟出 " + type.getSimpleName());
     }
 
-    /** 記法：1w=一萬、1p=一筒、1s=一條、1z-4z=東南西北、5z-7z=中發白、1f-8f=春夏秋冬梅蘭竹菊。 */
     static List<Tile> hand(String text) {
-        List<Tile> tiles = new ArrayList<>();
-        String compact = text.replace(" ", "");
-        for (int i = 0; i < compact.length(); i += 2) {
-            int rank = compact.charAt(i) - '0';
-            switch (compact.charAt(i + 1)) {
-                case 'w': tiles.add(Tile.of(Suit.WAN, rank)); break;
-                case 'p': tiles.add(Tile.of(Suit.TONG, rank)); break;
-                case 's': tiles.add(Tile.of(Suit.TIAO, rank)); break;
-                case 'f': tiles.add(Tile.of(Suit.FLOWER, rank)); break;
-                case 'z':
-                    tiles.add(rank <= 4 ? Tile.of(Suit.WIND, rank) : Tile.of(Suit.DRAGON, rank - 4));
-                    break;
-                default:
-                    throw new IllegalArgumentException("無法解析: " + text);
-            }
-        }
-        return tiles;
+        return Tile.parseAll(text);
     }
 
     static Tile tile(String text) {

@@ -6,6 +6,7 @@ import java.util.Random;
 import java.util.function.Consumer;
 
 import ezmj.model.GameConfig;
+import ezmj.model.GameRecord;
 import ezmj.model.Player;
 import ezmj.model.Wall;
 
@@ -18,6 +19,9 @@ public final class GameSession {
     private final Random random;
     private final Player[] players = new Player[SEATS];
     private final int firstDealer;
+    private final int[] wins = new int[SEATS];
+    private final int[] selfDraws = new int[SEATS];
+    private final int[] dealIns = new int[SEATS];
 
     private int dealer;
     private int roundWind = 1;
@@ -47,6 +51,12 @@ public final class GameSession {
         int[] deltas = new int[SEATS];
         List<String> notes = new ArrayList<>();
         if (!result.isDrawnGame()) {
+            wins[result.winner()]++;
+            if (result.isSelfDraw()) {
+                selfDraws[result.winner()]++;
+            } else {
+                dealIns[result.from()]++;
+            }
             int dealerTai = 1 + 2 * streak;
             int handTai = result.score().totalTai();
             for (int seat = 0; seat < SEATS; seat++) {
@@ -100,6 +110,13 @@ public final class GameSession {
 
     public Player player(int seat) {
         return players[seat];
+    }
+
+    /** 到目前為止這個座位的成績。 */
+    public GameRecord record(int seat, String date) {
+        return new GameRecord(players[seat].name(), date, wins[seat], selfDraws[seat],
+                players[seat].chips() - config.startingChips(), dealIns[seat],
+                config.botLevel(), config.basePay(), config.taiPay());
     }
 
     public GameConfig config() {

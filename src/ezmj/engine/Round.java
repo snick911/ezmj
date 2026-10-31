@@ -3,6 +3,7 @@ package ezmj.engine;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -164,6 +165,24 @@ public final class Round {
         requireTurn(seat);
         List<Tile> hand = players[seat].concealed();
         return drawn != null ? drawn : hand.get(hand.size() - 1);
+    }
+
+    /** 打出哪張牌之後會聽牌，以及會聽哪些牌。相同的牌只列一次，依手牌順序排列。 */
+    public Map<Tile, List<Tile>> readyDiscards(int seat) {
+        requireTurn(seat);
+        Map<Tile, List<Tile>> ready = new LinkedHashMap<>();
+        List<Tile> hand = new ArrayList<>(players[seat].concealed());
+        for (Tile tile : players[seat].concealed()) {
+            if (!ready.containsKey(tile)) {
+                hand.remove(tile);
+                List<Tile> waits = HandAnalyzer.waits(hand);
+                if (!waits.isEmpty()) {
+                    ready.put(tile, waits);
+                }
+                hand.add(tile);
+            }
+        }
+        return ready;
     }
 
     public void declareSelfWin(int seat) {

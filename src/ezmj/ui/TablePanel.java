@@ -40,14 +40,20 @@ public final class TablePanel extends JPanel {
     private final JTextArea logArea = new JTextArea();
     private final JPanel actionBar = new JPanel();
     private final JPanel sidebar = new JPanel();
+    private final JButton autoPlayButton = Theme.button("電腦代打：關", Theme.PANEL_LIGHT);
 
-    TablePanel(Consumer<Tile> onDiscard, Runnable onLeave) {
+    TablePanel(Consumer<Tile> onDiscard, Runnable onLeave, Runnable onToggleAutoPlay) {
         super(new BorderLayout());
         canvas = new TableCanvas(onDiscard);
         add(canvas, BorderLayout.CENTER);
         add(buildActionBar(), BorderLayout.SOUTH);
-        add(buildSidebar(onLeave), BorderLayout.EAST);
+        add(buildSidebar(onLeave, onToggleAutoPlay), BorderLayout.EAST);
         syncSizes();
+    }
+
+    void setAutoPlay(boolean on) {
+        autoPlayButton.setText(on ? "電腦代打：開" : "電腦代打：關");
+        autoPlayButton.setBackground(on ? Theme.RED : Theme.PANEL_LIGHT);
     }
 
     /** 字體大小改變後，讓側欄與動作列跟著調整。 */
@@ -73,7 +79,7 @@ public final class TablePanel extends JPanel {
         return bar;
     }
 
-    private JPanel buildSidebar(Runnable onLeave) {
+    private JPanel buildSidebar(Runnable onLeave, Runnable onToggleAutoPlay) {
         JPanel side = sidebar;
         side.setLayout(new BoxLayout(side, BoxLayout.Y_AXIS));
         side.setBackground(Theme.PANEL);
@@ -109,6 +115,11 @@ public final class TablePanel extends JPanel {
         side.add(scroll);
         side.add(Box.createVerticalStrut(10));
 
+        autoPlayButton.setFont(Theme.font(Font.PLAIN, 14f));
+        autoPlayButton.addActionListener(e -> onToggleAutoPlay.run());
+        side.add(autoPlayButton);
+        side.add(Box.createVerticalStrut(8));
+
         JButton leave = Theme.button("離開牌局", Theme.PANEL_LIGHT);
         leave.setFont(Theme.font(Font.PLAIN, 14f));
         leave.addActionListener(e -> onLeave.run());
@@ -136,6 +147,10 @@ public final class TablePanel extends JPanel {
 
     void animate(RoundEvent event) {
         canvas.animate(event);
+    }
+
+    void animateDeal() {
+        canvas.animateDeal();
     }
 
     void appendLog(String message) {

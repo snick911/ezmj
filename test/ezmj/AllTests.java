@@ -13,7 +13,9 @@ public final class AllTests {
         RoundFlowTest.run();
         SessionTest.run();
         SessionTest.botNames();
+        SessionTest.records();
         SettingsTest.run();
+        HonorRollTest.run();
         SimulationTest.run();
         BotTest.run();
         System.exit(T.report() == 0 ? 0 : 1);
