@@ -1,6 +1,8 @@
 package ezmj.ui;
 
 import java.awt.Color;
+import java.awt.Component;
+import java.awt.Container;
 import java.awt.Font;
 import java.awt.GraphicsEnvironment;
 import java.util.Arrays;
@@ -9,6 +11,8 @@ import java.util.Set;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
+import javax.swing.JMenu;
+import javax.swing.UIManager;
 
 /** 共用的顏色、字型與按鈕樣式。 */
 final class Theme {
@@ -25,6 +29,8 @@ final class Theme {
 
     private static final String FAMILY = pickFamily();
 
+    private static float fontScale = 1f;
+
     private Theme() {
     }
 
@@ -39,8 +45,51 @@ final class Theme {
         return Font.DIALOG;
     }
 
+    /** 會隨字體大小設定縮放的字型。 */
     static Font font(int style, float size) {
+        return fixedFont(style, size * fontScale);
+    }
+
+    /** 不縮放的字型，用在要剛好塞進牌面的文字。 */
+    static Font fixedFont(int style, float size) {
         return new Font(FAMILY, style, 1).deriveFont(size);
+    }
+
+    /** 依字體大小設定縮放的尺寸，用在要容納文字的固定寬高。 */
+    static int scaled(int size) {
+        return Math.round(size * fontScale);
+    }
+
+    /** 改變字體大小，並套用到 roots 底下已經建立的元件。 */
+    static void setFontPercent(int percent, Component... roots) {
+        float next = percent / 100f;
+        float ratio = next / fontScale;
+        fontScale = next;
+        UIManager.put("OptionPane.messageFont", font(Font.PLAIN, 15f));
+        UIManager.put("OptionPane.buttonFont", font(Font.PLAIN, 15f));
+        for (Component root : roots) {
+            rescale(root, ratio);
+            root.revalidate();
+            root.repaint();
+        }
+    }
+
+    private static void rescale(Component component, float ratio) {
+        // 繼承自上層的字型會跟著上層變，再縮放一次就重複了
+        if (component.isFontSet()) {
+            Font font = component.getFont();
+            component.setFont(font.deriveFont(font.getSize2D() * ratio));
+        }
+        if (component instanceof JMenu) {
+            for (Component item : ((JMenu) component).getMenuComponents()) {
+                rescale(item, ratio);
+            }
+        }
+        if (component instanceof Container) {
+            for (Component child : ((Container) component).getComponents()) {
+                rescale(child, ratio);
+            }
+        }
     }
 
     static JButton button(String text, Color background) {

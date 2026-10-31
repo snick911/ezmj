@@ -8,11 +8,15 @@ import static ezmj.T.tile;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
+import java.util.Set;
 
 import ezmj.model.Meld;
 import ezmj.model.Tile;
+import ezmj.rules.ScoreGuide;
+import ezmj.rules.ScoreItem;
 import ezmj.rules.ScoreResult;
 import ezmj.rules.Scorer;
 import ezmj.rules.WinContext;
@@ -21,6 +25,7 @@ import ezmj.rules.WinContext;
 final class ScorerTest {
 
     private static final String PLAIN = "1w2w3w 4w5w6w 7p8p9p 2s3s4s 5s6s7s 9p9p";
+    private static final Set<ScoreItem> SCORED_ITEMS = new HashSet<>();
 
     private ScorerTest() {
     }
@@ -92,8 +97,10 @@ final class ScorerTest {
         }
 
         ScoreResult score() {
-            return Scorer.score(new WinContext(hand(concealed), melds, flowers, tile(winTile), selfDraw,
+            ScoreResult result = Scorer.score(new WinContext(hand(concealed), melds, flowers, tile(winTile), selfDraw,
                     roundWind, seatWind, robbed, afterKong, lastTile, heavenly, earthly));
+            SCORED_ITEMS.addAll(result.items());
+            return result;
         }
     }
 
@@ -412,6 +419,21 @@ final class ScorerTest {
                     int actual = Scorer.score(new WinContext(shuffled, List.of(), List.of(), tile(tiles.substring(0, 2)),
                             false, 1, 2, false, false, false, false, false)).totalTai();
                     eq(expected, actual, "順序不同台數變了");
+                }
+            }
+        });
+
+        test("說明畫面的台數表與實際計台一致", () -> {
+            Set<String> seen = new HashSet<>();
+            for (ScoreItem item : SCORED_ITEMS) {
+                ScoreGuide.Entry entry = ScoreGuide.find(item.name());
+                check(entry != null, "台數表沒有 " + item.name());
+                eq(entry.tai(), item.tai(), "台數表的 " + entry.name());
+                seen.add(entry.name());
+            }
+            for (ScoreGuide.Group group : ScoreGuide.GROUPS) {
+                for (ScoreGuide.Entry entry : group.entries()) {
+                    check(seen.contains(entry.name()), "台數表的 " + entry.name() + " 沒有測試案例算出來");
                 }
             }
         });

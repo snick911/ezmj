@@ -10,10 +10,12 @@ import java.util.List;
 import java.util.Random;
 import java.util.Set;
 
+import ezmj.engine.BotNames;
 import ezmj.engine.GameSession;
 import ezmj.engine.Round;
 import ezmj.engine.RoundResult;
 import ezmj.engine.Settlement;
+import ezmj.model.BotLevel;
 import ezmj.model.GameConfig;
 import ezmj.rules.ScoreItem;
 import ezmj.rules.ScoreResult;
@@ -29,7 +31,28 @@ final class SessionTest {
     }
 
     private static GameSession session() {
-        return new GameSession(new GameConfig("測試", CHIPS, BASE, PER_TAI), new Random(5));
+        return new GameSession(new GameConfig("測試", CHIPS, BASE, PER_TAI, BotLevel.NORMAL), new Random(5));
+    }
+
+    /** 電腦的名字是姓氏加名字，互不相同，也不會與玩家相同。 */
+    static void botNames() {
+        test("電腦名字隨機、不重複、不與玩家相同", () -> {
+            Set<String> seen = new HashSet<>();
+            for (int seed = 0; seed < 2000; seed++) {
+                List<String> names = BotNames.pick(3, "王小明", new Random(seed));
+                eq(3, new HashSet<>(names).size(), "互不相同 " + names);
+                check(!names.contains("王小明"), "與玩家相同 " + names);
+                for (String name : names) {
+                    check(name.length() >= 3 && name.length() <= 4, "姓氏加名字 3 到 4 字：" + name);
+                }
+                seen.addAll(names);
+            }
+            check(seen.size() > 500, "名字種類太少：" + seen.size());
+
+            GameSession session = session();
+            check(!session.player(1).name().equals(session.player(2).name()), "牌局裡的電腦名字");
+            check(session.player(1).name().length() >= 3, "牌局裡用的是隨機名字");
+        });
     }
 
     private static RoundResult ron(int winner, int from, int tai) {
@@ -197,19 +220,19 @@ final class SessionTest {
         });
 
         test("有人籌碼歸零或變負就結束", () -> {
-            GameSession exact = new GameSession(new GameConfig("測試", BASE, BASE, PER_TAI), new Random(5));
+            GameSession exact = new GameSession(new GameConfig("測試", BASE, BASE, PER_TAI, BotLevel.NORMAL), new Random(5));
             check(!exact.isOver(), "開局未結束");
             exact.settle(ron(rel(exact, 1), rel(exact, 2), 0));
             check(exact.isOver(), "輸到剛好 0 結束");
 
-            GameSession negative = new GameSession(new GameConfig("測試", BASE, BASE, PER_TAI), new Random(5));
+            GameSession negative = new GameSession(new GameConfig("測試", BASE, BASE, PER_TAI, BotLevel.NORMAL), new Random(5));
             negative.settle(ron(rel(negative, 1), rel(negative, 2), 5));
             check(negative.isOver(), "輸到負數結束");
         });
 
         test("結算總和恆為 0", () -> {
             Random random = new Random(41);
-            GameSession session = new GameSession(new GameConfig("測試", 1_000_000, 300, 50), random);
+            GameSession session = new GameSession(new GameConfig("測試", 1_000_000, 300, 50, BotLevel.NORMAL), random);
             for (int i = 0; i < 2000 && !session.isOver(); i++) {
                 int winner = random.nextInt(4);
                 int from = (winner + 1 + random.nextInt(3)) % 4;

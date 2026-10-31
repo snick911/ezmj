@@ -8,6 +8,8 @@
 #   EZMJ-<version>-setup.exe                 installer, only when WiX 3 is in tools\wix314 or on PATH
 #
 # The version comes from src\ezmj\version.properties.
+# Stops before touching anything unless CHANGELOG.md has a section for that version
+# and dist\ does not already hold it. See "打包流程" in README.md.
 
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
@@ -23,6 +25,13 @@ function Invoke-Tool {
 
 $version = (Select-String -Path 'src\ezmj\version.properties' -Pattern '^version=(.+)$').Matches[0].Groups[1].Value.Trim()
 Write-Host "== EZMJ $version =="
+
+if (-not (Select-String -Path 'CHANGELOG.md' -Pattern "^## $([regex]::Escape($version))( |$)" -Quiet)) {
+    throw "CHANGELOG.md has no '## $version' section. Record the changes before packaging."
+}
+if (Test-Path "dist\ezmj-$version.jar") {
+    throw "$version is already packaged in dist\. Bump src\ezmj\version.properties, or delete dist\ to rebuild the same version."
+}
 
 foreach ($dir in 'build', 'dist') {
     if (Test-Path $dir) {

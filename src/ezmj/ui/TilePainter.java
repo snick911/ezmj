@@ -175,7 +175,7 @@ public final class TilePainter {
 
     private static void drawCentered(Graphics2D g, String text, double x, double y, double w, double h,
                                      Color color, double size) {
-        g.setFont(Theme.font(Font.BOLD, (float) size));
+        g.setFont(Theme.fixedFont(Font.BOLD, (float) size));
         g.setColor(color);
         FontMetrics metrics = g.getFontMetrics();
         float tx = (float) (x + (w - metrics.stringWidth(text)) / 2);

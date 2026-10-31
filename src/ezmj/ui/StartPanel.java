@@ -23,11 +23,12 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 
 import ezmj.AppVersion;
+import ezmj.model.BotLevel;
 import ezmj.model.GameConfig;
 import ezmj.model.Suit;
 import ezmj.model.Tile;
 
-/** 開始畫面：輸入姓名、選擇籌碼本金、底與台，按下按鈕即開始。 */
+/** 開始畫面：輸入姓名、選擇籌碼本金、底與台、電腦等級，按下按鈕即開始。 */
 public final class StartPanel extends JPanel {
 
     private static final int MAX_NAME_LENGTH = 8;
@@ -39,6 +40,7 @@ public final class StartPanel extends JPanel {
     private final JComboBox<Integer> chipBox = combo(CHIP_OPTIONS, 20_000);
     private final JComboBox<Integer> baseBox = combo(BASE_OPTIONS, 100);
     private final JComboBox<Integer> taiBox = combo(TAI_OPTIONS, 20);
+    private final JComboBox<BotLevel> levelBox = combo(BotLevel.values(), BotLevel.NORMAL);
     private final JButton startButton = Theme.button("開始遊戲", Theme.RED);
 
     public StartPanel(Consumer<GameConfig> onStart) {
@@ -69,9 +71,10 @@ public final class StartPanel extends JPanel {
         addRow(card, c, "籌碼本金", chipBox);
         addRow(card, c, "底", baseBox);
         addRow(card, c, "每台", taiBox);
+        addRow(card, c, "電腦等級", levelBox);
 
         startButton.setFont(Theme.font(Font.BOLD, 20f));
-        startButton.setPreferredSize(new Dimension(300, 50));
+        syncSizes();
         startButton.setEnabled(false);
         c.gridx = 0;
         c.gridy++;
@@ -94,11 +97,17 @@ public final class StartPanel extends JPanel {
             String name = nameField.getText().trim();
             if (startButton.isEnabled()) {
                 onStart.accept(new GameConfig(name, (Integer) chipBox.getSelectedItem(),
-                        (Integer) baseBox.getSelectedItem(), (Integer) taiBox.getSelectedItem()));
+                        (Integer) baseBox.getSelectedItem(), (Integer) taiBox.getSelectedItem(),
+                        (BotLevel) levelBox.getSelectedItem()));
             }
         };
         startButton.addActionListener(e -> submit.run());
         nameField.addActionListener(e -> submit.run());
+    }
+
+    /** 字體大小改變後，讓開始按鈕跟著調整。 */
+    void syncSizes() {
+        startButton.setPreferredSize(new Dimension(Theme.scaled(300), Theme.scaled(50)));
     }
 
     private void styleName() {
@@ -148,8 +157,8 @@ public final class StartPanel extends JPanel {
         card.add(field, c);
     }
 
-    private static JComboBox<Integer> combo(Integer[] options, int selected) {
-        JComboBox<Integer> box = new JComboBox<>(options);
+    private static <T> JComboBox<T> combo(T[] options, T selected) {
+        JComboBox<T> box = new JComboBox<>(options);
         box.setSelectedItem(selected);
         box.setFont(Theme.font(Font.PLAIN, 17f));
         return box;

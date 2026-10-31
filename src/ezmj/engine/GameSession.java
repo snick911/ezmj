@@ -13,7 +13,6 @@ import ezmj.model.Wall;
 public final class GameSession {
 
     private static final int SEATS = 4;
-    private static final String[] BOT_NAMES = {"電腦甲", "電腦乙", "電腦丙"};
 
     private final GameConfig config;
     private final Random random;
@@ -28,8 +27,9 @@ public final class GameSession {
         this.config = config;
         this.random = random;
         players[0] = new Player(config.playerName(), 0, true, config.startingChips());
+        List<String> botNames = BotNames.pick(SEATS - 1, config.playerName(), random);
         for (int seat = 1; seat < SEATS; seat++) {
-            players[seat] = new Player(BOT_NAMES[seat - 1], seat, false, config.startingChips());
+            players[seat] = new Player(botNames.get(seat - 1), seat, false, config.startingChips());
         }
         this.firstDealer = random.nextInt(SEATS);
         this.dealer = firstDealer;
@@ -39,7 +39,7 @@ public final class GameSession {
         for (Player player : players) {
             player.resetForRound();
         }
-        return new Round(players, new Wall(random), dealer, roundWind, log);
+        return new Round(players, new Wall(random), dealer, roundWind, streak, log);
     }
 
     /** 結算金額並推進莊家與圈風。 */

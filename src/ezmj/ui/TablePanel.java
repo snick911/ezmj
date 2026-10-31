@@ -20,6 +20,7 @@ import javax.swing.SwingConstants;
 
 import ezmj.engine.GameSession;
 import ezmj.engine.Round;
+import ezmj.engine.RoundEvent;
 import ezmj.model.Player;
 import ezmj.model.Tile;
 
@@ -37,6 +38,8 @@ public final class TablePanel extends JPanel {
     private final JLabel stakesInfo = new JLabel(" ");
     private final JLabel[] scoreLabels = new JLabel[4];
     private final JTextArea logArea = new JTextArea();
+    private final JPanel actionBar = new JPanel();
+    private final JPanel sidebar = new JPanel();
 
     TablePanel(Consumer<Tile> onDiscard, Runnable onLeave) {
         super(new BorderLayout());
@@ -44,14 +47,20 @@ public final class TablePanel extends JPanel {
         add(canvas, BorderLayout.CENTER);
         add(buildActionBar(), BorderLayout.SOUTH);
         add(buildSidebar(onLeave), BorderLayout.EAST);
+        syncSizes();
+    }
+
+    /** 字體大小改變後，讓側欄與動作列跟著調整。 */
+    void syncSizes() {
+        actionBar.setPreferredSize(new Dimension(0, Theme.scaled(84)));
+        sidebar.setPreferredSize(new Dimension(Theme.scaled(262), 0));
     }
 
     private JPanel buildActionBar() {
-        JPanel bar = new JPanel();
+        JPanel bar = actionBar;
         bar.setLayout(new BoxLayout(bar, BoxLayout.Y_AXIS));
         bar.setBackground(Theme.PANEL);
         bar.setBorder(BorderFactory.createEmptyBorder(8, 8, 10, 8));
-        bar.setPreferredSize(new Dimension(0, 84));
 
         hint.setFont(Theme.font(Font.PLAIN, 15f));
         hint.setForeground(Theme.MUTED);
@@ -65,11 +74,10 @@ public final class TablePanel extends JPanel {
     }
 
     private JPanel buildSidebar(Runnable onLeave) {
-        JPanel side = new JPanel();
+        JPanel side = sidebar;
         side.setLayout(new BoxLayout(side, BoxLayout.Y_AXIS));
         side.setBackground(Theme.PANEL);
         side.setBorder(BorderFactory.createEmptyBorder(14, 14, 14, 14));
-        side.setPreferredSize(new Dimension(236, 0));
 
         roundInfo.setFont(Theme.font(Font.BOLD, 19f));
         roundInfo.setForeground(Theme.GOLD);
@@ -109,10 +117,14 @@ public final class TablePanel extends JPanel {
     }
 
     private static JPanel leftAligned(JLabel label) {
-        JPanel row = new JPanel(new BorderLayout());
+        JPanel row = new JPanel(new BorderLayout()) {
+            @Override
+            public Dimension getMaximumSize() {
+                return new Dimension(Integer.MAX_VALUE, label.getPreferredSize().height + 8);
+            }
+        };
         row.setOpaque(false);
         row.setAlignmentX(LEFT_ALIGNMENT);
-        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, label.getPreferredSize().height + 8));
         row.add(label, BorderLayout.WEST);
         return row;
     }
@@ -120,6 +132,10 @@ public final class TablePanel extends JPanel {
     void bindRound(Round round) {
         logArea.setText("");
         canvas.setRound(round);
+    }
+
+    void animate(RoundEvent event) {
+        canvas.animate(event);
     }
 
     void appendLog(String message) {
@@ -139,6 +155,11 @@ public final class TablePanel extends JPanel {
             scoreLabels[seat].setForeground(seat == 0 ? Theme.GOLD : Theme.TEXT);
         }
         canvas.repaint();
+    }
+
+    /** 只更新提示文字，按鈕不動。 */
+    void setHint(String hintText) {
+        hint.setText(hintText);
     }
 
     void showActions(String hintText, boolean discardEnabled, List<ActionItem> actions) {

@@ -1,6 +1,7 @@
 package ezmj.engine;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -29,9 +30,12 @@ public final class Round {
     private final Wall wall;
     private final int dealer;
     private final int roundWind;
+    private final int streak;
     private final Consumer<String> log;
     private final int[] turnsTaken = new int[SEATS];
+    private final List<DiscardEvent> discardHistory = new ArrayList<>();
 
+    private Consumer<RoundEvent> listener = event -> { };
     private Phase phase = Phase.TURN;
     private int current;
     private Tile drawn;
@@ -43,13 +47,19 @@ public final class Round {
     private boolean anyClaim;
     private RoundResult result;
 
-    public Round(Player[] players, Wall wall, int dealer, int roundWind, Consumer<String> log) {
+    public Round(Player[] players, Wall wall, int dealer, int roundWind, int streak, Consumer<String> log) {
         this.players = players;
         this.wall = wall;
         this.dealer = dealer;
         this.roundWind = roundWind;
+        this.streak = streak;
         this.log = log;
         this.current = dealer;
+    }
+
+    /** 事件發生時，狀態已經更新。 */
+    public void setListener(Consumer<RoundEvent> listener) {
+        this.listener = listener;
     }
 
     /** 發牌、補花，並讓莊家摸第 17 張。 */
@@ -137,6 +147,7 @@ public final class Round {
         Player player = players[seat];
         player.removeFromHand(tile);
         player.addDiscard(tile);
+        discardHistory.add(new DiscardEvent(seat, tile));
         log.accept(player.name() + " 打出 " + tile.label());
         turnsTaken[seat]++;
         claimTile = tile;
@@ -145,6 +156,14 @@ public final class Round {
         afterKong = false;
         discardOnly = false;
         phase = Phase.CLAIMS;
+        listener.accept(new RoundEvent(RoundEvent.Type.DISCARD, seat, tile, seat));
+    }
+
+    /** 畫面上最右邊的手牌：剛摸的牌排在最右，沒有的話就是排序後的最後一張。 */
+    public Tile rightmostTile(int seat) {
+        requireTurn(seat);
+        List<Tile> hand = players[seat].concealed();
+        return drawn != null ? drawn : hand.get(hand.size() - 1);
     }
 
     public void declareSelfWin(int seat) {
@@ -169,6 +188,7 @@ public final class Round {
         player.addMeld(new Meld(Meld.Type.CONCEALED_KONG, tiles));
         log.accept(player.name() + " 暗槓");
         anyClaim = true;
+        listener.accept(new RoundEvent(RoundEvent.Type.CONCEALED_KONG, seat, null, -1));
         draw(seat, true);
     }
 
@@ -187,6 +207,7 @@ public final class Round {
         robbing = true;
         drawn = null;
         phase = Phase.CLAIMS;
+        listener.accept(new RoundEvent(RoundEvent.Type.ADD_KONG, seat, tile, -1));
     }
 
     public List<Claim> claimOptions(int seat) {
@@ -303,15 +324,18 @@ public final class Round {
         switch (claim.type()) {
             case KONG:
                 player.addMeld(new Meld(Meld.Type.OPEN_KONG, tiles));
+                listener.accept(new RoundEvent(RoundEvent.Type.KONG, seat, claim.tile(), discarder));
                 draw(seat, true);
                 break;
             case PONG:
                 player.addMeld(new Meld(Meld.Type.PONG, tiles));
                 takeTurnWithoutDraw(seat);
+                listener.accept(new RoundEvent(RoundEvent.Type.PONG, seat, claim.tile(), discarder));
                 break;
             default:
                 player.addMeld(new Meld(Meld.Type.CHOW, tiles));
                 takeTurnWithoutDraw(seat);
+                listener.accept(new RoundEvent(RoundEvent.Type.CHOW, seat, claim.tile(), discarder));
                 break;
         }
     }
@@ -340,6 +364,7 @@ public final class Round {
         phase = Phase.FINISHED;
         log.accept(selfDraw ? player.name() + " 自摸 " + tile.label()
                 : player.name() + " 胡 " + players[from].name() + " 的 " + tile.label());
+        listener.accept(new RoundEvent(selfDraw ? RoundEvent.Type.SELF_WIN : RoundEvent.Type.WIN, seat, tile, from));
     }
 
     private void finishDrawnGame() {
@@ -348,6 +373,7 @@ public final class Round {
         claimTile = null;
         phase = Phase.FINISHED;
         log.accept("流局");
+        listener.accept(new RoundEvent(RoundEvent.Type.DRAWN_GAME, -1, null, -1));
     }
 
     private void requirePhase(Phase expected) {
@@ -398,6 +424,14 @@ public final class Round {
 
     public int roundWind() {
         return roundWind;
+    }
+
+    public int streak() {
+        return streak;
+    }
+
+    public List<DiscardEvent> discardHistory() {
+        return Collections.unmodifiableList(discardHistory);
     }
 
     public RoundResult result() {

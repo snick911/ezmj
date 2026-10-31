@@ -6,6 +6,7 @@ import static ezmj.T.fails;
 import static ezmj.T.test;
 import static ezmj.T.tile;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -13,6 +14,7 @@ import java.util.stream.Collectors;
 
 import ezmj.engine.Claim;
 import ezmj.engine.Round;
+import ezmj.engine.RoundEvent;
 import ezmj.engine.RoundResult;
 import ezmj.engine.TurnOptions;
 import ezmj.model.Meld;
@@ -64,6 +66,63 @@ final class RoundFlowTest {
         winning();
         endOfWall();
         illegalActions();
+        rightmostTile();
+        events();
+    }
+
+    private static void events() {
+        test("事件：打牌、碰與胡，狀態已更新且帶對的座位", () -> {
+            Round round = Table.dealer(1).hand(0, "5w5w").draws("5w").start();
+            List<RoundEvent> events = new ArrayList<>();
+            round.setListener(event -> {
+                events.add(event);
+                if (event.type() == RoundEvent.Type.PONG) {
+                    eq(1, round.player(0).melds().size(), "事件發生時面子已經加上去");
+                }
+            });
+            round.discard(1, tile("5w"));
+            round.resolveClaims(Map.of(0, option(round, 0, Claim.Type.PONG)));
+            eq(List.of(new RoundEvent(RoundEvent.Type.DISCARD, 1, tile("5w"), 1),
+                    new RoundEvent(RoundEvent.Type.PONG, 0, tile("5w"), 1)), events, "打牌與碰");
+
+            Round win = Table.dealer(1).hand(0, WINS_ON_3W).draws("3w").start();
+            List<RoundEvent> winEvents = new ArrayList<>();
+            win.setListener(winEvents::add);
+            win.discard(1, tile("3w"));
+            win.resolveClaims(Map.of(0, option(win, 0, Claim.Type.WIN)));
+            eq(new RoundEvent(RoundEvent.Type.WIN, 0, tile("3w"), 1), winEvents.get(1), "放槍");
+
+            Round self = Table.dealer(0).hand(0, WINS_ON_3W).draws("3w").start();
+            List<RoundEvent> selfEvents = new ArrayList<>();
+            self.setListener(selfEvents::add);
+            self.declareSelfWin(0);
+            eq(new RoundEvent(RoundEvent.Type.SELF_WIN, 0, tile("3w"), -1), selfEvents.get(0), "自摸");
+        });
+
+        test("事件：流局", () -> {
+            Round round = Table.dealer(0).start();
+            List<RoundEvent> events = new ArrayList<>();
+            round.setListener(events::add);
+            playToLastTile(round);
+            Table.discardDrawnAndPass(round);
+            eq(Round.Phase.FINISHED, round.phase(), "摸完牌");
+            eq(RoundEvent.Type.DRAWN_GAME, events.get(events.size() - 1).type(), "最後一個事件");
+        });
+    }
+
+    private static void rightmostTile() {
+        test("最右邊的手牌：有剛摸的牌就是它，碰牌後是排序最後一張", () -> {
+            Round round = Table.dealer(1).hand(0, "5w5w").draws("5w").start();
+            eq(tile("5w"), round.rightmostTile(1), "剛摸的牌排在最右，即使排序不是最後");
+            fails(IllegalStateException.class, () -> round.rightmostTile(2), "還沒輪到");
+
+            round.discard(1, tile("5w"));
+            fails(IllegalStateException.class, () -> round.rightmostTile(0), "等待宣告時沒有輪到誰出牌");
+
+            round.resolveClaims(Map.of(0, option(round, 0, Claim.Type.PONG)));
+            List<Tile> hand = round.player(0).concealed();
+            eq(hand.get(hand.size() - 1), round.rightmostTile(0), "碰牌後沒有剛摸的牌");
+        });
     }
 
     private static void dealing() {
@@ -86,7 +145,7 @@ final class RoundFlowTest {
                 for (int seat = 0; seat < 4; seat++) {
                     players[seat] = new Player("P" + seat, seat, seat == 0, 1000);
                 }
-                Round round = new Round(players, new Wall(random), i % 4, 1, message -> { });
+                Round round = new Round(players, new Wall(random), i % 4, 1, 0, message -> { });
                 round.start();
                 for (int seat = 0; seat < 4; seat++) {
                     check(players[seat].concealed().stream().noneMatch(Tile::isFlower), "手牌有花");

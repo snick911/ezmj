@@ -12,7 +12,10 @@ public final class AllTests {
         ScorerTest.run();
         RoundFlowTest.run();
         SessionTest.run();
+        SessionTest.botNames();
+        SettingsTest.run();
         SimulationTest.run();
+        BotTest.run();
         System.exit(T.report() == 0 ? 0 : 1);
     }
 }

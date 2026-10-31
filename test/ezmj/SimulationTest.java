@@ -11,13 +11,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 
-import ezmj.bot.PlaceholderBot;
+import ezmj.bot.ComputerBot;
 import ezmj.engine.Claim;
 import ezmj.engine.GameSession;
 import ezmj.engine.Round;
 import ezmj.engine.RoundResult;
 import ezmj.engine.Settlement;
 import ezmj.engine.TurnOptions;
+import ezmj.model.BotLevel;
 import ezmj.model.GameConfig;
 import ezmj.model.Meld;
 import ezmj.model.Player;
@@ -43,7 +44,7 @@ final class SimulationTest {
             int drawn = 0;
             Map<Meld.Type, Integer> melds = new EnumMap<>(Meld.Type.class);
             while (rounds < ROUNDS) {
-                GameSession session = new GameSession(new GameConfig("測試", 100_000_000, 100, 20), random);
+                GameSession session = new GameSession(new GameConfig("測試", 100_000_000, 100, 20, BotLevel.NORMAL), random);
                 while (!session.isOver() && rounds < ROUNDS) {
                     rounds++;
                     Round round = session.newRound(message -> { });
@@ -84,35 +85,37 @@ final class SimulationTest {
             }
         });
 
-        test("佔位電腦玩家跑完一局不會出錯", () -> {
-            Random random = new Random(51);
-            PlaceholderBot bot = new PlaceholderBot();
-            for (int game = 0; game < 200; game++) {
-                GameSession session = new GameSession(new GameConfig("測試", 100_000, 100, 20), random);
-                Round round = session.newRound(message -> { });
-                round.start();
-                while (round.phase() != Round.Phase.FINISHED) {
-                    assertInvariants(round);
-                    if (round.phase() == Round.Phase.TURN) {
-                        int seat = round.current();
-                        bot.playTurn(round, seat, round.turnOptions(seat));
-                    } else {
-                        Map<Integer, Claim> decisions = new HashMap<>();
-                        for (int seat = 0; seat < 4; seat++) {
-                            List<Claim> options = round.claimOptions(seat);
-                            if (!options.isEmpty()) {
-                                Claim claim = bot.chooseClaim(round, seat, options);
-                                if (claim != null) {
-                                    decisions.put(seat, claim);
+        for (BotLevel level : BotLevel.values()) {
+            test(level + "電腦玩家跑完牌局都符合不變量", () -> {
+                Random random = new Random(51);
+                ComputerBot bot = new ComputerBot(level, 100, 20, random);
+                for (int game = 0; game < 100; game++) {
+                    GameSession session = new GameSession(new GameConfig("測試", 100_000, 100, 20, level), random);
+                    Round round = session.newRound(message -> { });
+                    round.start();
+                    while (round.phase() != Round.Phase.FINISHED) {
+                        assertInvariants(round);
+                        if (round.phase() == Round.Phase.TURN) {
+                            int seat = round.current();
+                            bot.playTurn(round, seat, round.turnOptions(seat));
+                        } else {
+                            Map<Integer, Claim> decisions = new HashMap<>();
+                            for (int seat = 0; seat < 4; seat++) {
+                                List<Claim> options = round.claimOptions(seat);
+                                if (!options.isEmpty()) {
+                                    Claim claim = bot.chooseClaim(round, seat, options);
+                                    if (claim != null) {
+                                        decisions.put(seat, claim);
+                                    }
                                 }
                             }
+                            round.resolveClaims(decisions);
                         }
-                        round.resolveClaims(decisions);
                     }
+                    assertFinished(round);
                 }
-                assertFinished(round);
-            }
-        });
+            });
+        }
     }
 
     private static void playTurn(Round round, Random random) {
