@@ -66,9 +66,13 @@ public final class VoiceLines {
         });
     }
 
-    /** 準備好全部語音。做不到時在背景執行緒呼叫 onUnavailable。 */
+    /** 準備好全部語音，已經準備好就不再重做。做不到時在背景執行緒呼叫 onUnavailable。 */
     public static void prepare(Path dir, Runnable onUnavailable) {
         PREPARER.execute(() -> {
+            // 全部載入成功才會放進 CLIPS，所以有內容就是都好了；重新載入會多佔音訊資源
+            if (!CLIPS.isEmpty()) {
+                return;
+            }
             try {
                 if (!allPresent(dir)) {
                     generate(dir);
