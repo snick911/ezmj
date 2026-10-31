@@ -1,10 +1,12 @@
 package ezmj.ui;
 
+import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.Frame;
 import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.List;
 import java.util.stream.Collectors;
 
 import javax.swing.BorderFactory;
@@ -15,6 +17,7 @@ import javax.swing.JDialog;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 
+import ezmj.engine.Achievement;
 import ezmj.engine.GameSession;
 import ezmj.model.GameRecord;
 import ezmj.model.Player;
@@ -23,7 +26,7 @@ import ezmj.model.Player;
 final class FinalDialog extends JDialog {
 
     /** note 是表格下方要告訴玩家的話，沒有就傳空字串。 */
-    FinalDialog(Frame owner, GameSession session, String note) {
+    FinalDialog(Frame owner, GameSession session, String note, List<Achievement> earned) {
         super(owner, "牌局結束", true);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
 
@@ -47,12 +50,21 @@ final class FinalDialog extends JDialog {
             content.add(Box.createVerticalStrut(8));
             content.add(ResultDialog.line(note, Font.BOLD, 16f, Theme.GOLD));
         }
+        ResultDialog.addEarned(content, earned);
         content.add(Box.createVerticalStrut(16));
 
         JButton close = Theme.button("回到開始畫面", Theme.RED);
         close.addActionListener(e -> dispose());
-        close.setAlignmentX(LEFT_ALIGNMENT);
-        content.add(close);
+        JButton history = Theme.button("輸贏歷程", Theme.BUTTON);
+        history.addActionListener(e ->
+                new HistoryDialog(this, ModalityType.APPLICATION_MODAL, session).setVisible(true));
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        buttons.setOpaque(false);
+        buttons.setAlignmentX(LEFT_ALIGNMENT);
+        buttons.add(close);
+        buttons.add(Box.createHorizontalStrut(10));
+        buttons.add(history);
+        content.add(buttons);
         getRootPane().setDefaultButton(close);
 
         setContentPane(content);

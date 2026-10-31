@@ -1,5 +1,6 @@
 package ezmj.engine;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 import java.util.function.Consumer;
@@ -22,6 +23,7 @@ public final class GameSession {
     private final int[] wins = new int[SEATS];
     private final int[] selfDraws = new int[SEATS];
     private final int[] dealIns = new int[SEATS];
+    private final List<RoundRecord> history = new ArrayList<>();
 
     private int roundsPlayed;
     private int drawnGames;
@@ -81,6 +83,7 @@ public final class GameSession {
         for (int seat = 0; seat < SEATS; seat++) {
             players[seat].addChips(deltas[seat]);
         }
+        history.add(new RoundRecord(roundsPlayed, roundWind, dealer, streak, result, deltas));
         advanceDealer(result);
         return new Settlement(deltas, tais);
     }
@@ -127,6 +130,11 @@ public final class GameSession {
 
     public int drawnGames() {
         return drawnGames;
+    }
+
+    /** 這場打完的每一局，先打的在前面。 */
+    public List<RoundRecord> history() {
+        return List.copyOf(history);
     }
 
     public GameConfig config() {

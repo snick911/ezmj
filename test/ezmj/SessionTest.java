@@ -5,6 +5,7 @@ import static ezmj.T.eq;
 import static ezmj.T.test;
 import static ezmj.T.tile;
 
+import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
@@ -14,8 +15,10 @@ import java.util.Set;
 import ezmj.engine.BotNames;
 import ezmj.engine.GameSession;
 import ezmj.engine.Round;
+import ezmj.engine.RoundRecord;
 import ezmj.engine.RoundResult;
 import ezmj.engine.Settlement;
+import ezmj.engine.ThinkTimer;
 import ezmj.model.BotLevel;
 import ezmj.model.GameConfig;
 import ezmj.model.GameRecord;
@@ -195,6 +198,40 @@ final class SessionTest {
             eq(0, tais[winner], "贏家沒付款");
         });
 
+        test("輸贏歷程：依序記下每一局開打時的狀態、結果與輸贏", () -> {
+            GameSession session = session();
+            eq(List.of(), session.history(), "還沒打");
+            int dealer = session.dealer();
+            int next = rel(session, 1);
+            session.settle(RoundResult.drawnGame());
+            RoundResult win = tsumo(dealer, 2);
+            Settlement second = session.settle(win);
+            RoundResult ron = ron(next, dealer, 1);
+            Settlement third = session.settle(ron);
+
+            List<RoundRecord> history = session.history();
+            eq(3, history.size(), "局數");
+            eq(session.roundsPlayed(), history.size(), "和總局數一致");
+            check(history.get(0).result().isDrawnGame(), "第一局流局");
+            eq(1, history.get(0).number(), "局號");
+            eq(0, history.get(0).streak(), "第一局沒有連莊");
+            eq(dealer, history.get(1).dealer(), "第二局的莊家");
+            eq(1, history.get(1).streak(), "第二局連一，要記開打時的狀態");
+            eq(win, history.get(1).result(), "第二局結果");
+            check(Arrays.equals(second.deltas(), history.get(1).deltas()), "第二局輸贏");
+            eq(dealer, history.get(2).dealer(), "莊家放槍這局記的還是原莊家");
+            check(Arrays.equals(third.deltas(), history.get(2).deltas()), "第三局輸贏");
+            eq((dealer + 1) % 4, session.dealer(), "目前已下莊");
+
+            for (int seat = 0; seat < 4; seat++) {
+                int total = 0;
+                for (RoundRecord record : history) {
+                    total += record.deltas()[seat];
+                }
+                eq(CHIPS + total, session.player(seat).chips(), "座位 " + seat + " 歷程加總等於籌碼變化");
+            }
+        });
+
         test("零台胡牌（屁胡）仍付底", () -> {
             GameSession session = session();
             int dealer = session.dealer();
@@ -287,6 +324,31 @@ final class SessionTest {
             GameSession negative = new GameSession(new GameConfig("測試", BASE, BASE, PER_TAI, BotLevel.NORMAL), new Random(5));
             negative.settle(ron(rel(negative, 1), rel(negative, 2), 5));
             check(negative.isOver(), "輸到負數結束");
+        });
+
+        test("平均思考時間：吃碰後一路算到打牌才是一次，中途交給代打不算", () -> {
+            ThinkTimer timer = new ThinkTimer();
+            eq(0.0, timer.averageSeconds(), "還沒有紀錄");
+            eq(0, timer.count(), "次數");
+
+            timer.start(0);
+            timer.finish(2_000_000_000L);
+            eq(1, timer.count(), "摸牌到打牌一次");
+            eq(2.0, timer.averageSeconds(), "2 秒");
+
+            timer.start(10_000_000_000L);
+            timer.start(12_000_000_000L);
+            check(timer.isRunning(), "碰完繼續算");
+            timer.finish(14_000_000_000L);
+            eq(2, timer.count(), "碰加打牌只算一次");
+            eq(3.0, timer.averageSeconds(), "第二次從可以碰就開始算，共 4 秒");
+
+            timer.start(20_000_000_000L);
+            timer.cancel();
+            timer.finish(99_000_000_000L);
+            eq(2, timer.count(), "取消的不算");
+            eq(3.0, timer.averageSeconds(), "平均不變");
+            check(!timer.isRunning(), "已停止");
         });
 
         test("結算總和恆為 0", () -> {

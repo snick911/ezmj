@@ -26,6 +26,7 @@ import javax.swing.SwingConstants;
 import javax.swing.Timer;
 import javax.swing.border.Border;
 
+import ezmj.engine.Achievement;
 import ezmj.engine.GameSession;
 import ezmj.engine.Round;
 import ezmj.engine.RoundResult;
@@ -40,8 +41,8 @@ import ezmj.rules.ScoreResult;
 final class ResultDialog extends JDialog {
 
     /** 時間到自動關閉，電腦代打才能一直打下去。 */
-    ResultDialog(Frame owner, GameSession session, Round round, Settlement settlement, String buttonText,
-                 int autoCloseSeconds) {
+    ResultDialog(Frame owner, GameSession session, Round round, Settlement settlement, List<Achievement> earned,
+                 String buttonText, int autoCloseSeconds) {
         super(owner, "本局結果", true);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
 
@@ -67,6 +68,7 @@ final class ResultDialog extends JDialog {
                     + (countsDealer(round, settlement) ? "，莊家台只算與莊家相關的付款" : ""),
                     Font.PLAIN, 14f, Theme.MUTED));
         }
+        addEarned(content, earned);
         content.add(Box.createVerticalStrut(16));
 
         JButton next = Theme.button(buttonText, Theme.RED);
@@ -105,6 +107,17 @@ final class ResultDialog extends JDialog {
         return result.isSelfDraw()
                 ? winner + " 自摸 " + result.winTile().label()
                 : winner + " 胡牌，" + round.player(result.from()).name() + " 放槍 " + result.winTile().label();
+    }
+
+    /** 列出這次新達成的成就。 */
+    static void addEarned(JPanel content, List<Achievement> earned) {
+        if (!earned.isEmpty()) {
+            content.add(Box.createVerticalStrut(10));
+        }
+        for (Achievement achievement : earned) {
+            content.add(line("★ 達成成就：" + achievement.title() + "（" + achievement.description() + "）",
+                    Font.BOLD, 16f, Theme.GOLD));
+        }
     }
 
     static JLabel line(String text, int style, float size, Color color) {

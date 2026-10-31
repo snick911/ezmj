@@ -1,6 +1,7 @@
 package ezmj.ui;
 
 import java.awt.CardLayout;
+import java.awt.Dialog;
 import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.Toolkit;
@@ -31,6 +32,8 @@ import javax.swing.SwingUtilities;
 import ezmj.AppVersion;
 import ezmj.bot.Bot;
 import ezmj.bot.ComputerBot;
+import ezmj.engine.Achievement;
+import ezmj.engine.AchievementBook;
 import ezmj.engine.GameSession;
 import ezmj.engine.Round;
 import ezmj.engine.Settlement;
@@ -52,11 +55,13 @@ public final class MainFrame extends JFrame {
     private static final int RESULT_SECONDS = 60;
     private static final Path SETTINGS_FILE = Path.of(System.getProperty("user.home"), ".ezmj", "settings.properties");
     private static final Path HONOR_FILE = Path.of(System.getProperty("user.home"), ".ezmj", "honor.properties");
-    private static final Path VOICE_DIR = Path.of(System.getProperty("user.home"), ".ezmj", "voice");
+    private static final Path ACHIEVEMENT_FILE = Path.of(System.getProperty("user.home"), ".ezmj", "achievements.properties");
+    private static final Path VOICE_DIR =Path.of(System.getProperty("user.home"), ".ezmj", "voice");
 
     // 要在建立任何畫面之前讀取，字型才會一開始就是設定的大小
     private final AppSettings settings = loadSettings();
     private final HonorRoll honorRoll = HonorRoll.load(HONOR_FILE);
+    private final AchievementBook achievements = AchievementBook.load(ACHIEVEMENT_FILE);
     private final CardLayout cards = new CardLayout();
     private final JPanel root = new JPanel(cards);
     private final StartPanel startPanel = new StartPanel(this::startGame);
@@ -64,6 +69,8 @@ public final class MainFrame extends JFrame {
     private final JCheckBoxMenuItem voiceItem = checkItem("語音", settings.voiceEnabled(), this::changeVoice);
     private TablePanel tablePanel;
     private GameController controller;
+    private HistoryDialog historyDialog;
+    private boolean achievementSaveWarned;
 
     public MainFrame() {
         super("台灣十六張麻將 v" + AppVersion.get());
@@ -131,6 +138,12 @@ public final class MainFrame extends JFrame {
             honor.add(menuItem(category.label(), () -> helpDialog.showHonorRoll(honorRoll, category)));
         }
 
+        JMenu achievementMenu = topMenu("成就");
+        achievementMenu.add(menuItem("全部成就", () -> helpDialog.showAchievements(achievements, null)));
+        for (Achievement.Group group : Achievement.Group.values()) {
+            achievementMenu.add(menuItem(group.label(), () -> helpDialog.showAchievements(achievements, group)));
+        }
+
         JMenu help = topMenu("說明");
         help.add(menuItem("基本規則", helpDialog::showRules));
         help.add(menuItem("台數計算", helpDialog::showScoring));
@@ -140,6 +153,7 @@ public final class MainFrame extends JFrame {
         bar.setBorderPainted(false);
         bar.add(preferences);
         bar.add(honor);
+        bar.add(achievementMenu);
         bar.add(help);
         return bar;
     }
@@ -389,7 +403,9 @@ public final class MainFrame extends JFrame {
             root.remove(tablePanel);
         }
         GameController current = controller;
-        tablePanel = new TablePanel(tile -> current.humanDiscard(tile), this::confirmLeave, current::toggleAutoPlay);
+        closeHistory();
+        tablePanel = new TablePanel(tile -> current.humanDiscard(tile), this::confirmLeave, current::toggleAutoPlay,
+                () -> showHistory(session));
         controller.attach(tablePanel);
         root.add(tablePanel, CARD_TABLE);
         cards.show(root, CARD_TABLE);
@@ -400,9 +416,33 @@ public final class MainFrame extends JFrame {
         return controller;
     }
 
+    /** 已經開著就拿到最前面，不開第二個。 */
+    private void showHistory(GameSession session) {
+        if (historyDialog == null || !historyDialog.isDisplayable()) {
+            historyDialog = new HistoryDialog(this, Dialog.ModalityType.MODELESS, session);
+        }
+        historyDialog.setVisible(true);
+        historyDialog.toFront();
+    }
+
+    private void closeHistory() {
+        if (historyDialog != null) {
+            historyDialog.dispose();
+            historyDialog = null;
+        }
+    }
+
     private void handleRoundEnd(GameSession session, Round round, Settlement settlement, Runnable next) {
+        if (historyDialog != null && historyDialog.isDisplayable()) {
+            historyDialog.refresh();
+        }
         boolean over = session.isOver();
-        new ResultDialog(this, session, round, settlement, over ? "查看最終排名" : "下一局",
+        List<Achievement> earned = List.of();
+        if (!controller.usedAutoPlay()) {
+            earned = achievements.recordRound(session, LocalDate.now().toString());
+            saveAchievements();
+        }
+        new ResultDialog(this, session, round, settlement, earned, over ? "查看最終排名" : "下一局",
                 round.result().isDrawnGame() ? DRAWN_RESULT_SECONDS : RESULT_SECONDS).setVisible(true);
         if (controller == null) {
             return;
@@ -416,14 +456,34 @@ public final class MainFrame extends JFrame {
     }
 
     private void showFinalRanking(GameSession session) {
-        new FinalDialog(this, session, recordGame(session)).setVisible(true);
+        String note = recordGame(session);
+        List<Achievement> earned = List.of();
+        if (!controller.usedAutoPlay()) {
+            earned = achievements.recordGame(session, controller.averageThinkSeconds(), controller.thinkCount(),
+                    LocalDate.now().toString());
+            saveAchievements();
+        }
+        new FinalDialog(this, session, note, earned).setVisible(true);
+    }
+
+    /** 每局都會存，存不了只提醒一次，不要每局跳一個視窗。 */
+    private void saveAchievements() {
+        try {
+            achievements.save(ACHIEVEMENT_FILE);
+        } catch (IOException e) {
+            if (!achievementSaveWarned) {
+                achievementSaveWarned = true;
+                JOptionPane.showMessageDialog(this, "成就無法儲存，下次開啟時會不見。\n" + e.getMessage(),
+                        "成就", JOptionPane.WARNING_MESSAGE);
+            }
+        }
     }
 
     /** 牌局打到結束才記錄，中途離開或用過電腦代打都不算。回傳榮譽榜的結果，沒有要說的就是空字串。 */
     private String recordGame(GameSession session) {
         GameRecord record = session.record(0, LocalDate.now().toString());
         if (controller.usedAutoPlay()) {
-            return "這場用過電腦代打，不列入榮譽榜。";
+            return "這場用過電腦代打，不列入榮譽榜與成就。";
         }
         Map<HonorRoll.Category, Integer> ranks = honorRoll.add(record);
         if (!ranks.isEmpty()) {
@@ -451,6 +511,7 @@ public final class MainFrame extends JFrame {
     }
 
     private void returnToStart() {
+        closeHistory();
         if (controller != null) {
             controller.stop();
             controller = null;

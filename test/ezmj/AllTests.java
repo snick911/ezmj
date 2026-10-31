@@ -16,6 +16,7 @@ public final class AllTests {
         SessionTest.records();
         SettingsTest.run();
         HonorRollTest.run();
+        AchievementTest.run();
         SimulationTest.run();
         BotTest.run();
         System.exit(T.report() == 0 ? 0 : 1);

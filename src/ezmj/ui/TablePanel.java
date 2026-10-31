@@ -6,6 +6,7 @@ import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.function.Consumer;
 
@@ -37,19 +38,27 @@ public final class TablePanel extends JPanel {
     private final JLabel hint = new JLabel(" ", SwingConstants.CENTER);
     private final JLabel roundInfo = new JLabel(" ");
     private final JLabel stakesInfo = new JLabel(" ");
+    private final JLabel thinkInfo = new JLabel(" ");
     private final JLabel[] scoreLabels = new JLabel[4];
     private final JTextArea logArea = new JTextArea();
     private final JPanel actionBar = new JPanel();
     private final JPanel sidebar = new JPanel();
     private final JButton autoPlayButton = Theme.button("電腦代打：關", Theme.PANEL_LIGHT);
 
-    TablePanel(Consumer<Tile> onDiscard, Runnable onLeave, Runnable onToggleAutoPlay) {
+    TablePanel(Consumer<Tile> onDiscard, Runnable onLeave, Runnable onToggleAutoPlay, Runnable onShowHistory) {
         super(new BorderLayout());
         canvas = new TableCanvas(onDiscard);
         add(canvas, BorderLayout.CENTER);
         add(buildActionBar(), BorderLayout.SOUTH);
-        add(buildSidebar(onLeave, onToggleAutoPlay), BorderLayout.EAST);
+        add(buildSidebar(onLeave, onToggleAutoPlay, onShowHistory), BorderLayout.EAST);
         syncSizes();
+        showThinkTime(0, 0);
+    }
+
+    /** 真人的平均思考時間；還沒有紀錄時 count 是 0。 */
+    void showThinkTime(double seconds, int count) {
+        thinkInfo.setText(count == 0 ? "平均思考：—"
+                : String.format(Locale.ROOT, "平均思考：%.1f 秒（%d 次）", seconds, count));
     }
 
     void setAutoPlay(boolean on) {
@@ -80,7 +89,7 @@ public final class TablePanel extends JPanel {
         return bar;
     }
 
-    private JPanel buildSidebar(Runnable onLeave, Runnable onToggleAutoPlay) {
+    private JPanel buildSidebar(Runnable onLeave, Runnable onToggleAutoPlay, Runnable onShowHistory) {
         JPanel side = sidebar;
         side.setLayout(new BoxLayout(side, BoxLayout.Y_AXIS));
         side.setBackground(Theme.PANEL);
@@ -102,6 +111,10 @@ public final class TablePanel extends JPanel {
             side.add(leftAligned(scoreLabels[seat]));
             side.add(Box.createVerticalStrut(5));
         }
+        thinkInfo.setFont(Theme.font(Font.PLAIN, 14f));
+        thinkInfo.setForeground(Theme.MUTED);
+        thinkInfo.setToolTipText("從摸牌或可以吃碰槓胡開始，到打出牌或決定過為止的平均時間");
+        side.add(leftAligned(thinkInfo));
         side.add(Box.createVerticalStrut(8));
 
         logArea.setEditable(false);
@@ -115,6 +128,12 @@ public final class TablePanel extends JPanel {
         scroll.setAlignmentX(LEFT_ALIGNMENT);
         side.add(scroll);
         side.add(Box.createVerticalStrut(10));
+
+        JButton history = Theme.button("輸贏歷程", Theme.PANEL_LIGHT);
+        history.setFont(Theme.font(Font.PLAIN, 14f));
+        history.addActionListener(e -> onShowHistory.run());
+        side.add(history);
+        side.add(Box.createVerticalStrut(8));
 
         autoPlayButton.setFont(Theme.font(Font.PLAIN, 14f));
         autoPlayButton.addActionListener(e -> onToggleAutoPlay.run());

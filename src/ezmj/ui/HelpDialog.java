@@ -26,6 +26,8 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.SwingUtilities;
 
+import ezmj.engine.Achievement;
+import ezmj.engine.AchievementBook;
 import ezmj.model.GameRecord;
 import ezmj.model.HonorRoll;
 import ezmj.model.Meld;
@@ -101,6 +103,58 @@ final class HelpDialog extends JDialog {
         showPage("榮譽榜：" + category.label(), honorPage(roll, category));
     }
 
+    /** group 是 null 時顯示全部分類。 */
+    void showAchievements(AchievementBook book, Achievement.Group group) {
+        currentPage = () -> showAchievements(book, group);
+        showPage("成就" + (group == null ? "" : "：" + group.label()), achievementPage(book, group));
+    }
+
+    private static String achievementPage(AchievementBook book, Achievement.Group only) {
+        StringBuilder html = new StringBuilder("<p class=\"tai\"><b>已達成 ").append(book.unlockedCount()).append(" / ")
+                .append(Achievement.values().length).append(" 項</b></p>");
+        for (Achievement.Group group : Achievement.Group.values()) {
+            if (only == null || only == group) {
+                appendAchievementGroup(html, book, group);
+            }
+        }
+        return html.append("<p class=\"note\">都是看你自己的表現。用過電腦代打的牌局不列入成就與累計次數，"
+                + "中途離開的牌局，已經打完的局數仍然算數。</p>").toString();
+    }
+
+    private static void appendAchievementGroup(StringBuilder html, AchievementBook book, Achievement.Group group) {
+        html.append("<h2>").append(group.label()).append("</h2>")
+                .append("<table width=\"100%\" cellspacing=\"0\" cellpadding=\"5\"><tr class=\"head\">");
+        html.append("<td class=\"cell\" width=\"5%\"></td><td class=\"cell\" width=\"24%\">名稱</td>")
+                .append("<td class=\"cell\">條件</td><td class=\"cell\" width=\"18%\">達成</td></tr>");
+        for (Achievement achievement : Achievement.values()) {
+            if (achievement.group() != group) {
+                continue;
+            }
+            boolean done = book.isUnlocked(achievement);
+            Color color = done ? Theme.GOLD : Theme.MUTED;
+            html.append("<tr>")
+                    .append(colorCell(done ? "★" : "☆", color))
+                    .append(colorCell("<b>" + achievement.title() + "</b>", color))
+                    .append(colorCell(achievement.description(), color))
+                    .append(colorCell(achievementStatus(book, achievement), color))
+                    .append("</tr>");
+        }
+        html.append("</table>");
+    }
+
+    /** 這個 HTML 元件不支援一格套兩個 class，顏色要直接寫在文字上。 */
+    private static String colorCell(String text, Color color) {
+        return "<td class=\"cell\"><font color=\"" + hex(color) + "\">" + text + "</font></td>";
+    }
+
+    /** 達成的日期；還沒達成的累計成就顯示進度。 */
+    private static String achievementStatus(AchievementBook book, Achievement achievement) {
+        if (book.isUnlocked(achievement)) {
+            return escape(book.unlockedDate(achievement));
+        }
+        return achievement.counter() == null ? "" : book.count(achievement.counter()) + " / " + achievement.target();
+    }
+
     private static String honorPage(HonorRoll roll, HonorRoll.Category category) {
         StringBuilder html = new StringBuilder("<h2>").append(category.label()).append(" 前 ")
                 .append(HonorRoll.SIZE).append(" 名</h2>");
@@ -132,7 +186,7 @@ final class HelpDialog extends JDialog {
     }
 
     private static String honorCell(String text, boolean highlighted) {
-        return "<td class=\"cell" + (highlighted ? " tai" : "") + "\">" + text + "</td>";
+        return colorCell(text, highlighted ? Theme.GOLD : Theme.TEXT);
     }
 
     /** 姓名是玩家自己輸入的，可能有 HTML 的特殊字元。 */

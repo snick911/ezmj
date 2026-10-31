@@ -17,6 +17,7 @@ import ezmj.engine.GameSession;
 import ezmj.engine.Round;
 import ezmj.engine.RoundEvent;
 import ezmj.engine.Settlement;
+import ezmj.engine.ThinkTimer;
 import ezmj.engine.TurnOptions;
 import ezmj.model.AppSettings;
 import ezmj.model.Gender;
@@ -46,6 +47,7 @@ public final class GameController {
     private final Bot proxy;
     private final RoundEndHandler roundEndHandler;
     private final AppSettings settings;
+    private final ThinkTimer thinking = new ThinkTimer();
     private TablePanel view;
     private Round round;
     private Timer timer;
@@ -80,6 +82,7 @@ public final class GameController {
         view.setAutoPlay(autoPlay);
         if (autoPlay) {
             usedAutoPlay = true;
+            thinking.cancel();
             if (promptTimeout != null) {
                 advance();
             }
@@ -89,6 +92,15 @@ public final class GameController {
     /** 這場牌局是否用過電腦代打。用過的不列入榮譽榜。 */
     boolean usedAutoPlay() {
         return usedAutoPlay;
+    }
+
+    /** 這場到目前的平均思考秒數。 */
+    double averageThinkSeconds() {
+        return thinking.averageSeconds();
+    }
+
+    int thinkCount() {
+        return thinking.count();
     }
 
     public void startRound() {
@@ -221,6 +233,7 @@ public final class GameController {
         if (stopped) {
             return;
         }
+        finishThinkingIfDone();
         view.refresh(session, round);
         switch (round.phase()) {
             case FINISHED:
@@ -232,6 +245,18 @@ public final class GameController {
             default:
                 beginClaims();
                 break;
+        }
+    }
+
+    /**
+     * 吃碰槓之後還是輪到真人，要打出牌才算想完；加槓等別家搶槓時也還沒完。
+     * 其他情況代表真人已經打牌、過或胡了。
+     */
+    private void finishThinkingIfDone() {
+        boolean stillHuman = round.phase() == Round.Phase.TURN && round.current() == HUMAN_SEAT;
+        if (thinking.isRunning() && !stillHuman && !round.isRobbing()) {
+            thinking.finish(System.nanoTime());
+            view.showThinkTime(thinking.averageSeconds(), thinking.count());
         }
     }
 
@@ -300,6 +325,7 @@ public final class GameController {
     }
 
     private void showHumanTurn(TurnOptions options) {
+        thinking.start(System.nanoTime());
         beginPrompt(TURN_HINT, () -> humanDiscard(round.rightmostTile(HUMAN_SEAT)));
         showTurnActions(options);
     }
@@ -425,6 +451,7 @@ public final class GameController {
             schedule(CLAIM_DELAY_MS, this::resolveClaims);
             return;
         }
+        thinking.start(System.nanoTime());
         beginPrompt(claimHint() + "，要宣告嗎？", this::resolveClaims);
         showClaimActions(humanOptions);
     }
