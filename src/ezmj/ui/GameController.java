@@ -122,6 +122,9 @@ public final class GameController {
         if (animated) {
             view.animate(event);
         }
+        if (settings.voiceEnabled()) {
+            speak(event);
+        }
         if (!settings.soundEnabled()) {
             return;
         }
@@ -149,6 +152,34 @@ public final class GameController {
                 break;
             default:
                 playSound(SoundEffects.Cue.DRAWN_GAME, 0);
+                break;
+        }
+    }
+
+    /** 喊牌和大字同時出現。打牌不喊，不然每張牌都要講一次。 */
+    private static void speak(RoundEvent event) {
+        switch (event.type()) {
+            case CHOW:
+                VoiceLines.play(VoiceLines.Line.CHOW);
+                break;
+            case PONG:
+                VoiceLines.play(VoiceLines.Line.PONG);
+                break;
+            case KONG:
+            case CONCEALED_KONG:
+            case ADD_KONG:
+                VoiceLines.play(VoiceLines.Line.KONG);
+                break;
+            case WIN:
+                VoiceLines.play(VoiceLines.Line.WIN);
+                break;
+            case SELF_WIN:
+                VoiceLines.play(VoiceLines.Line.SELF_WIN);
+                break;
+            case DRAWN_GAME:
+                VoiceLines.play(VoiceLines.Line.DRAWN_GAME);
+                break;
+            default:
                 break;
         }
     }
@@ -237,6 +268,9 @@ public final class GameController {
     private void declareListening(Tile tile) {
         round.discard(HUMAN_SEAT, tile);
         listeningWaits = HandAnalyzer.waits(round.player(HUMAN_SEAT).concealed());
+        if (settings.voiceEnabled()) {
+            VoiceLines.play(VoiceLines.Line.LISTEN);
+        }
         advance();
     }
 

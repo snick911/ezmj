@@ -30,6 +30,7 @@ final class Theme {
     private static final String FAMILY = pickFamily();
 
     private static float fontScale = 1f;
+    private static double tileScale = 1;
 
     private Theme() {
     }
@@ -58,6 +59,15 @@ final class Theme {
     /** 依字體大小設定縮放的尺寸，用在要容納文字的固定寬高。 */
     static int scaled(int size) {
         return Math.round(size * fontScale);
+    }
+
+    /** 麻將大小的比例。牌桌每次重畫都會讀這個值，結果視窗在建立時讀。 */
+    static double tileScale() {
+        return tileScale;
+    }
+
+    static void setTilePercent(int percent) {
+        tileScale = percent / 100.0;
     }
 
     /** 改變字體大小，並套用到 roots 底下已經建立的元件。 */

@@ -19,6 +19,7 @@ import java.awt.geom.Line2D;
 import java.awt.geom.Point2D;
 import java.awt.geom.Rectangle2D;
 import java.awt.geom.RoundRectangle2D;
+import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
@@ -55,12 +56,19 @@ final class TableCanvas extends JComponent {
     private static final int FRAME_MS = 16;
     private static final int RING_MS = 170;
     private static final int CLAIM_BANNER_MS = 800;
+    private static final double TILE_RATIO = 1.38;
+    /** 寬度不夠時手牌可以互相疊住，牌最多畫成間距的這個倍數，牌面的字還看得清楚。 */
+    private static final double MAX_OVERLAP = 1.22;
+    /** 手牌列至少要留這麼多格，張數少的時候牌也不會忽大忽小。 */
+    private static final double MIN_ROW_SLOTS = 18;
+    private static final double MAX_TABLE_SCALE = 1.25;
+    private static final int DISCARD_ROWS_TO_FIT = 3;
 
     private record HandHit(Rectangle bounds, Tile tile) {
     }
 
-    /** 一家手牌列的位置，都是該家視角的座標。 */
-    private record RowLayout(double x, double y, double tileW, double tileH, double gap, double total) {
+    /** 一家手牌列的位置，都是該家視角的座標。step 是相鄰兩張的間距，比 tileW 小時牌會互相疊住。 */
+    private record RowLayout(double x, double y, double tileW, double tileH, double step, double gap, double total) {
     }
 
     /**
@@ -97,6 +105,7 @@ final class TableCanvas extends JComponent {
     private int hover = -1;
     private long frameNow;
     private long dealStart;
+    private BufferedImage felt;
 
     TableCanvas(Consumer<Tile> onDiscard) {
         this.onDiscard = onDiscard;
@@ -221,6 +230,55 @@ final class TableCanvas extends JComponent {
         return Math.min(getWidth(), getHeight()) / 720.0;
     }
 
+    /** 中央方框與棄牌區跟著牌放大，但至少要留得下三排棄牌，不能撞到自己的手牌。 */
+    private double tableUnit() {
+        double unit = unit();
+        double handH = rowTileW(0, MIN_ROW_SLOTS) * TILE_RATIO;
+        double room = (getHeight() / 2.0 - handH - 8 * unit) / unit;
+        double fit = room / (DISCARD_TOP + DISCARD_ROWS_TO_FIT * DISCARD_H);
+        return unit * Math.max(1, Math.min(Math.min(Theme.tileScale(), MAX_TABLE_SCALE), fit));
+    }
+
+    private double preferredTileW(int seat) {
+        return (seat == 0 ? 54 : 32) * unit() * Theme.tileScale();
+    }
+
+    private double rowStep(int seat, double slots) {
+        return Math.min(preferredTileW(seat), rowLength(seat) * .98 / Math.max(slots, MIN_ROW_SLOTS));
+    }
+
+    /** 自己的手牌佔滿整個寬度，其他三家排在剩下的空間裡，牌放大時才不會互相蓋住。 */
+    private double rowLength(int seat) {
+        if (seat == 0) {
+            return getWidth();
+        }
+        if (seat == 2) {
+            return getWidth() - 2 * botRowDepth();
+        }
+        return getHeight() - humanRowDepth() - botRowDepth();
+    }
+
+    private double humanRowDepth() {
+        return rowTileW(0, MIN_ROW_SLOTS) * TILE_RATIO + 8 * unit();
+    }
+
+    private double botRowDepth() {
+        return preferredTileW(1) * TILE_RATIO + 8 * unit();
+    }
+
+    /** 左右兩家的牌往上挪，避開比較厚的自家手牌。座標方向相反，所以兩家的正負號也相反。 */
+    private double rowShift(int seat) {
+        if (seat % 2 == 0) {
+            return 0;
+        }
+        double shift = (humanRowDepth() - botRowDepth()) / 2;
+        return seat == 1 ? shift : -shift;
+    }
+
+    private double rowTileW(int seat, double slots) {
+        return Math.min(preferredTileW(seat), rowStep(seat, slots) * MAX_OVERLAP);
+    }
+
     private double halfDepth(int seat) {
         return (seat % 2 == 0 ? getHeight() : getWidth()) / 2.0;
     }
@@ -236,7 +294,7 @@ final class TableCanvas extends JComponent {
 
     /** 第 index 張棄牌的中心點，該家視角。 */
     private Point2D.Double discardCenter(int index) {
-        double unit = unit();
+        double unit = tableUnit();
         double w = DISCARD_W * unit;
         double h = DISCARD_H * unit;
         return new Point2D.Double(-w * DISCARD_COLUMNS / 2 + (index % DISCARD_COLUMNS) * w + w / 2,
@@ -261,7 +319,7 @@ final class TableCanvas extends JComponent {
         Point2D.Double to = discardCenter(index);
         Point2D from = toTable(seat, fromX, fromY);
         Point2D target = toTable(seat, to.x, to.y);
-        double w = (DISCARD_W - 1) * unit();
+        double w = (DISCARD_W - 1) * tableUnit();
         flights.add(new Flight(event.tile(), from.getX(), from.getY(), seatAngle(seat), fromW,
                 target.getX(), target.getY(), seatAngle(seat), w, System.nanoTime(), DISCARD_FLIGHT_MS,
                 seat, -1, -1));
@@ -274,14 +332,14 @@ final class TableCanvas extends JComponent {
         Meld meld = player.melds().get(player.melds().size() - 1);
         int tileIndex = meld.tiles().indexOf(event.tile());
         RowLayout row = layoutRow(seat, separatedTile(seat, false));
-        double meldX = row.x() + row.total() - meld.tiles().size() * row.tileW();
+        double meldX = row.x() + row.total() - meld.tiles().size() * row.step();
 
         Point2D.Double slot = discardCenter(round.player(event.from()).discards().size());
         Point2D from = toTable(event.from(), slot.x, slot.y);
-        Point2D to = toTable(seat, meldX + (tileIndex + .5) * row.tileW(), row.y() + row.tileH() / 2);
+        Point2D to = toTable(seat, meldX + tileIndex * row.step() + row.tileW() / 2, row.y() + row.tileH() / 2);
         double turn = Math.IEEEremainder(seatAngle(seat) - seatAngle(event.from()), Math.PI * 2);
         flights.add(new Flight(event.tile(), from.getX(), from.getY(), seatAngle(event.from()),
-                (DISCARD_W - 1) * unit(), to.getX(), to.getY(), seatAngle(event.from()) + turn, row.tileW(),
+                (DISCARD_W - 1) * tableUnit(), to.getX(), to.getY(), seatAngle(event.from()) + turn, row.tileW(),
                 System.nanoTime(), CLAIM_FLIGHT_MS, -1, seat, tileIndex));
         addSeatBanner(seat, text);
     }
@@ -347,10 +405,7 @@ final class TableCanvas extends JComponent {
 
         int width = getWidth();
         int height = getHeight();
-        float radius = Math.max(1, Math.max(width, height) * .7f);
-        g.setPaint(new RadialGradientPaint(new Point2D.Float(width / 2f, height / 2f), radius,
-                new float[] {0f, 1f}, new Color[] {Theme.FELT, Theme.FELT_DARK}));
-        g.fillRect(0, 0, width, height);
+        g.drawImage(felt(width, height), 0, 0, null);
 
         if (round != null) {
             frameNow = System.nanoTime();
@@ -368,7 +423,7 @@ final class TableCanvas extends JComponent {
             }
             g.setTransform(base);
             g.translate(cx, cy);
-            paintCenterText(g, unit);
+            paintCenterText(g, tableUnit());
             for (Flight flight : flights) {
                 paintFlight(g, flight);
             }
@@ -377,6 +432,20 @@ final class TableCanvas extends JComponent {
             }
         }
         g.dispose();
+    }
+
+    /** 整片漸層很花時間，大小沒變就重複用同一張。 */
+    private BufferedImage felt(int width, int height) {
+        if (felt == null || felt.getWidth() != width || felt.getHeight() != height) {
+            felt = new BufferedImage(Math.max(1, width), Math.max(1, height), BufferedImage.TYPE_INT_RGB);
+            Graphics2D g = felt.createGraphics();
+            float radius = Math.max(1, Math.max(width, height) * .7f);
+            g.setPaint(new RadialGradientPaint(new Point2D.Float(width / 2f, height / 2f), radius,
+                    new float[] {0f, 1f}, new Color[] {Theme.FELT, Theme.FELT_DARK}));
+            g.fillRect(0, 0, width, height);
+            g.dispose();
+        }
+        return felt;
     }
 
     private void paintFlight(Graphics2D g, Flight flight) {
@@ -462,8 +531,9 @@ final class TableCanvas extends JComponent {
 
     private void paintSeat(Graphics2D g, int seat, double halfLength, double halfDepth, double unit) {
         Player player = round.player(seat);
-        paintSeatLabel(g, seat, player, unit);
-        paintDiscards(g, seat, player, unit);
+        double tableUnit = tableUnit();
+        paintSeatLabel(g, seat, player, tableUnit);
+        paintDiscards(g, seat, player, tableUnit);
         paintRow(g, player, seat, halfLength, unit);
     }
 
@@ -515,17 +585,16 @@ final class TableCanvas extends JComponent {
 
     /** 手牌列的位置。separated 是與手牌分開顯示的那張牌，沒有就傳 null。 */
     private RowLayout layoutRow(int seat, Tile separated) {
-        double unit = unit();
         Player player = round.player(seat);
-        double halfLength = (seat % 2 == 0 ? getWidth() : getHeight()) / 2.0;
-        double preferredWidth = (seat == 0 ? 54 : 32) * unit;
         int meldTiles = player.melds().stream().mapToInt(m -> m.tiles().size()).sum();
         double gapSlots = (separated != null ? .4 : 0) + player.melds().size() * .25;
         double slots = player.concealed().size() + meldTiles + gapSlots;
-        double tileW = Math.min(preferredWidth, halfLength * 2 * .96 / Math.max(slots, 18.6));
-        double tileH = tileW * 1.38;
-        double total = slots * tileW;
-        return new RowLayout(-total / 2, halfDepth(seat) - tileH - 8 * unit, tileW, tileH, tileW * .25, total);
+        double step = rowStep(seat, slots);
+        double tileW = rowTileW(seat, slots);
+        double tileH = tileW * TILE_RATIO;
+        double total = slots * step;
+        return new RowLayout(-total / 2 + rowShift(seat), halfDepth(seat) - tileH - 8 * unit(), tileW, tileH, step,
+                step * .25, total);
     }
 
     private void paintRow(Graphics2D g, Player player, int seat, double halfLength, double unit) {
@@ -541,20 +610,22 @@ final class TableCanvas extends JComponent {
         RowLayout row = layoutRow(seat, separated);
         double tileW = row.tileW();
         double tileH = row.tileH();
+        double step = row.step();
         double gap = row.gap();
-        double total = row.total();
         double x = row.x();
         double y = row.y();
 
         int index = 0;
         for (Tile tile : hand) {
-            paintDealtTile(g, seat, tile, index++, x, y, tileW, tileH, faceUp);
-            x += tileW;
+            // 被下一張疊住的部分點不到，點擊範圍只算露出來的寬度
+            double hitW = index == hand.size() - 1 ? tileW : step;
+            paintDealtTile(g, seat, tile, index++, x, y, tileW, tileH, hitW, faceUp);
+            x += step;
         }
         if (separated != null) {
-            x += tileW * .4;
-            paintDealtTile(g, seat, separated, index, x, y, tileW, tileH, faceUp);
-            x += tileW;
+            x += step * .4;
+            paintDealtTile(g, seat, separated, index, x, y, tileW, tileH, tileW, faceUp);
+            x += step;
         }
         for (int m = 0; m < player.melds().size(); m++) {
             Meld meld = player.melds().get(m);
@@ -564,7 +635,7 @@ final class TableCanvas extends JComponent {
                 // 暗槓只亮中間兩張給自己看，其他家全蓋
                 boolean hidden = meld.isConcealed() && !finished && (seat != 0 || i == 0 || i == 3);
                 if (newest && meldTileHidden(seat, i)) {
-                    x += tileW;
+                    x += step;
                     continue;
                 }
                 if (hidden) {
@@ -572,21 +643,22 @@ final class TableCanvas extends JComponent {
                 } else {
                     TilePainter.paintFace(g, meld.tiles().get(i), x, y, tileW, tileH);
                 }
-                x += tileW;
+                x += step;
             }
         }
         // 面子多時手牌變寬，花牌要避開隔壁家的手牌
         if (!dealing()) {
-            paintFlowers(g, player, Math.max(-total / 2, -halfLength + 66 * unit), y, unit);
+            double inset = Math.max(66 * unit, botRowDepth() + 6 * unit);
+            paintFlowers(g, player, Math.max(row.x(), -halfLength + inset), y, tableUnit());
         }
     }
 
     /** 發牌時，牌背朝上從牌桌中央轉著飛過來，落地後才是一般的手牌。原點就是牌桌中央。 */
     private void paintDealtTile(Graphics2D g, int seat, Tile tile, int index, double x, double y, double w, double h,
-                                boolean faceUp) {
+                                double hitW, boolean faceUp) {
         double progress = dealProgress(seat, index);
         if (progress >= 1) {
-            paintHandTile(g, seat, tile, x, y, w, h, faceUp);
+            paintHandTile(g, seat, tile, x, y, w, h, hitW, faceUp);
         } else if (progress >= 0) {
             double eased = easeOut(progress);
             double scale = .6 + .4 * eased;
@@ -608,12 +680,12 @@ final class TableCanvas extends JComponent {
     }
 
     private void paintHandTile(Graphics2D g, int seat, Tile tile, double x, double y, double w, double h,
-                               boolean faceUp) {
+                               double hitW, boolean faceUp) {
         double drawY = y;
         if (seat == 0) {
             int index = hits.size();
             hits.add(new HandHit(new Rectangle((int) (x + getWidth() / 2.0), (int) (y + getHeight() / 2.0),
-                    (int) Math.ceil(w), (int) Math.ceil(h)), tile));
+                    (int) Math.ceil(hitW), (int) Math.ceil(h)), tile));
             if (discardEnabled && index == hover) {
                 drawY -= h * .16;
             }

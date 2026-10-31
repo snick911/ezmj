@@ -13,6 +13,7 @@ import ezmj.model.MusicTrack;
 import ezmj.model.Resolution;
 import ezmj.ui.BackgroundMusic;
 import ezmj.ui.SoundEffects;
+import ezmj.ui.VoiceLines;
 
 /** 環境設定：預設值、存檔讀檔與不正確的內容；以及合成出來的音效與音樂。 */
 final class SettingsTest {
@@ -36,6 +37,7 @@ final class SettingsTest {
 
     private static void defaults(AppSettings settings) {
         eq(100, settings.fontPercent(), "字體");
+        eq(100, settings.tilePercent(), "麻將大小");
         eq(-1, settings.waitSeconds(), "等待時間");
         eq(Resolution.DEFAULT, settings.resolution(), "解析度");
         check(settings.soundEnabled(), "音效預設開啟");
@@ -43,6 +45,8 @@ final class SettingsTest {
         eq(MusicTrack.TEAHOUSE, settings.music(), "背景音樂");
         eq(50, settings.musicVolume(), "音樂音量");
         eq(100, settings.soundVolume(), "音效音量");
+        check(settings.voiceEnabled(), "語音預設開啟");
+        eq(100, settings.voiceVolume(), "語音音量");
     }
 
     static void run() {
@@ -65,6 +69,7 @@ final class SettingsTest {
                 for (Resolution resolution : Resolution.OPTIONS) {
                     AppSettings settings = new AppSettings();
                     settings.setFontPercent(150);
+                    settings.setTilePercent(130);
                     settings.setWaitSeconds(15);
                     settings.setResolution(resolution);
                     settings.setSoundEnabled(false);
@@ -72,10 +77,13 @@ final class SettingsTest {
                     settings.setMusic(MusicTrack.MOONLIGHT);
                     settings.setMusicVolume(30);
                     settings.setSoundVolume(70);
+                    settings.setVoiceEnabled(false);
+                    settings.setVoiceVolume(40);
                     settings.save(file);
 
                     AppSettings loaded = AppSettings.load(file);
                     eq(150, loaded.fontPercent(), "字體");
+                    eq(130, loaded.tilePercent(), "麻將大小");
                     eq(15, loaded.waitSeconds(), "等待時間");
                     eq(resolution, loaded.resolution(), "解析度");
                     check(!loaded.soundEnabled(), "音效");
@@ -83,6 +91,8 @@ final class SettingsTest {
                     eq(MusicTrack.MOONLIGHT, loaded.music(), "背景音樂");
                     eq(30, loaded.musicVolume(), "音樂音量");
                     eq(70, loaded.soundVolume(), "音效音量");
+                    check(!loaded.voiceEnabled(), "語音");
+                    eq(40, loaded.voiceVolume(), "語音音量");
                 }
             } finally {
                 Files.deleteIfExists(file);
@@ -96,6 +106,8 @@ final class SettingsTest {
             defaults(loadText("fontPercent=77\nwaitSeconds=-5\nresolution=\n"));
             defaults(loadText("fontPercent=\\u00zz\n"));
             defaults(loadText("music=ROCK\nmusicVolume=abc\nsoundVolume=\n"));
+            defaults(loadText("tilePercent=999\n"));
+            defaults(loadText("tilePercent=abc\n"));
         });
 
         test("音量限制在 0 到 100，換算成分貝", () -> {
@@ -107,6 +119,22 @@ final class SettingsTest {
             eq(0.0, SoundEffects.gainDb(100), "100%");
             check(Math.abs(SoundEffects.gainDb(50) + 12.04) < .01, "50% 約 -12 dB");
             eq(-80.0, SoundEffects.gainDb(0), "0%");
+        });
+
+        test("語音：修掉前後空白，留一點頭尾，結尾淡出", () -> {
+            int rate = 44_100;
+            byte[] pcm = new byte[rate * 2];
+            for (int i = rate / 4; i < rate / 2; i++) {
+                int value = 10_000;
+                pcm[i * 2] = (byte) value;
+                pcm[i * 2 + 1] = (byte) (value >> 8);
+            }
+            byte[] trimmed = VoiceLines.trimSilence(pcm);
+            int expected = rate / 4 + rate / 100 + rate / 25;
+            check(Math.abs(trimmed.length / 2 - expected) <= 1, "長度 " + trimmed.length / 2 + "，預期約 " + expected);
+            eq(0, sample(trimmed, 0), "開頭留了一點空白");
+            eq(0, sample(trimmed, trimmed.length - 2), "結尾歸零");
+            eq(0, VoiceLines.trimSilence(new byte[1000]).length, "全部是空白");
         });
 
         test("背景音樂：每個聲部都對齊，長度合理，循環接得起來", () -> {

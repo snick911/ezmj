@@ -28,6 +28,7 @@ import javax.swing.JRadioButtonMenuItem;
 import javax.swing.JSlider;
 import javax.swing.JSpinner;
 import javax.swing.SpinnerNumberModel;
+import javax.swing.SwingUtilities;
 
 import ezmj.AppVersion;
 import ezmj.bot.Bot;
@@ -52,6 +53,7 @@ public final class MainFrame extends JFrame {
     private static final int AUTO_PLAY_RESULT_SECONDS = 5;
     private static final Path SETTINGS_FILE = Path.of(System.getProperty("user.home"), ".ezmj", "settings.properties");
     private static final Path HONOR_FILE = Path.of(System.getProperty("user.home"), ".ezmj", "honor.properties");
+    private static final Path VOICE_DIR = Path.of(System.getProperty("user.home"), ".ezmj", "voice");
 
     // 要在建立任何畫面之前讀取，字型才會一開始就是設定的大小
     private final AppSettings settings = loadSettings();
@@ -60,6 +62,7 @@ public final class MainFrame extends JFrame {
     private final JPanel root = new JPanel(cards);
     private final StartPanel startPanel = new StartPanel(this::startGame);
     private final HelpDialog helpDialog = new HelpDialog(this);
+    private final JCheckBoxMenuItem voiceItem = checkItem("語音", settings.voiceEnabled(), this::changeVoice);
     private TablePanel tablePanel;
     private GameController controller;
 
@@ -79,6 +82,17 @@ public final class MainFrame extends JFrame {
         }
         BackgroundMusic.setVolume(settings.musicVolume());
         BackgroundMusic.select(settings.music());
+        VoiceLines.setVolume(settings.voiceVolume());
+        if (settings.voiceEnabled()) {
+            prepareVoice();
+        }
+    }
+
+    private void prepareVoice() {
+        VoiceLines.prepare(VOICE_DIR, () -> SwingUtilities.invokeLater(() -> {
+            voiceItem.setText("語音（這台電腦沒有中文語音）");
+            voiceItem.setEnabled(false);
+        }));
     }
 
     /** 比螢幕大時縮到螢幕內。最大化之前先設好一般大小，還原視窗時才有合理的大小。 */
@@ -96,17 +110,20 @@ public final class MainFrame extends JFrame {
     private static AppSettings loadSettings() {
         AppSettings loaded = AppSettings.load(SETTINGS_FILE);
         Theme.setFontPercent(loaded.fontPercent());
+        Theme.setTilePercent(loaded.tilePercent());
         return loaded;
     }
 
     private JMenuBar buildMenuBar() {
         JMenu preferences = topMenu("環境設定");
         preferences.add(buildFontMenu());
+        preferences.add(buildTileMenu());
         preferences.add(menuItem("等待時間…", this::editWaitSeconds));
         preferences.add(buildResolutionMenu());
         preferences.add(buildMusicMenu());
         preferences.add(menuItem("音量…", this::editVolumes));
         preferences.add(checkItem("音效", settings.soundEnabled(), this::changeSound));
+        preferences.add(voiceItem);
         preferences.add(checkItem("動畫", settings.animationEnabled(), this::changeAnimation));
 
         JMenu honor = topMenu("榮譽榜");
@@ -153,6 +170,14 @@ public final class MainFrame extends JFrame {
         saveSettings();
         if (enabled) {
             SoundEffects.preload();
+        }
+    }
+
+    private void changeVoice(boolean enabled) {
+        settings.setVoiceEnabled(enabled);
+        saveSettings();
+        if (enabled) {
+            prepareVoice();
         }
     }
 
@@ -216,7 +241,7 @@ public final class MainFrame extends JFrame {
         BackgroundMusic.select(track);
     }
 
-    /** 拉動時立刻生效；音效拉完會響一聲，聽聽看大小。 */
+    /** 拉動時立刻生效；音效與語音拉完會響一聲，聽聽看大小。 */
     private void editVolumes() {
         JSlider music = volumeSlider(settings.musicVolume());
         music.addChangeListener(e -> {
@@ -231,7 +256,15 @@ public final class MainFrame extends JFrame {
                 SoundEffects.play(SoundEffects.Cue.DISCARD);
             }
         });
-        Object[] message = {"背景音樂", music, "音效", sound};
+        JSlider voice = volumeSlider(settings.voiceVolume());
+        voice.addChangeListener(e -> {
+            settings.setVoiceVolume(voice.getValue());
+            VoiceLines.setVolume(voice.getValue());
+            if (!voice.getValueIsAdjusting() && settings.voiceEnabled()) {
+                VoiceLines.play(VoiceLines.Line.PONG);
+            }
+        });
+        Object[] message = {"背景音樂", music, "音效", sound, "語音", voice};
         JOptionPane.showMessageDialog(this, message, "音量", JOptionPane.PLAIN_MESSAGE);
         saveSettings();
     }
@@ -250,6 +283,29 @@ public final class MainFrame extends JFrame {
         settings.setResolution(resolution);
         saveSettings();
         applyResolution(resolution);
+    }
+
+    private JMenu buildTileMenu() {
+        JMenu menu = new JMenu("麻將大小");
+        menu.setFont(Theme.font(Font.PLAIN, 15f));
+        ButtonGroup group = new ButtonGroup();
+        for (int percent : AppSettings.TILE_PERCENTS) {
+            String suffix = percent == AppSettings.DEFAULT_TILE_PERCENT ? "（預設）" : "";
+            JRadioButtonMenuItem item = new JRadioButtonMenuItem(percent + "%" + suffix,
+                    percent == settings.tilePercent());
+            item.setFont(Theme.font(Font.PLAIN, 15f));
+            item.addActionListener(e -> changeTilePercent(percent));
+            group.add(item);
+            menu.add(item);
+        }
+        return menu;
+    }
+
+    private void changeTilePercent(int percent) {
+        settings.setTilePercent(percent);
+        saveSettings();
+        Theme.setTilePercent(percent);
+        repaint();
     }
 
     private void changeFontPercent(int percent) {

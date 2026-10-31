@@ -121,9 +121,9 @@ final class ResultDialog extends JDialog {
 
     /** 胡牌者的完整牌面。 */
     private static final class HandStrip extends JComponent {
-        private static final double TILE_W = 36;
-        private static final double TILE_H = 50;
-        private static final double GAP = 9;
+        private final double TILE_W = 36 * Theme.tileScale();
+        private final double TILE_H = 50 * Theme.tileScale();
+        private final double GAP = 9 * Theme.tileScale();
 
         private final Player player;
         private final Tile winTile;
