@@ -7,8 +7,11 @@ import java.awt.FontMetrics;
 import java.awt.GradientPaint;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
+import java.awt.Shape;
 import java.awt.geom.AffineTransform;
 import java.awt.geom.Ellipse2D;
+import java.awt.geom.Path2D;
+import java.awt.geom.QuadCurve2D;
 import java.awt.geom.Rectangle2D;
 import java.awt.geom.RoundRectangle2D;
 import java.awt.image.BufferedImage;
@@ -21,7 +24,7 @@ import ezmj.model.Tile;
 /** 以向量繪製麻將牌，不需要圖片素材，任何尺寸都清晰。 */
 public final class TilePainter {
 
-    private static final Color IVORY = new Color(0xFB, 0xF7, 0xEA);
+    static final Color IVORY = new Color(0xFB, 0xF7, 0xEA);
     private static final Color IVORY_SHADE = new Color(0xE6, 0xDE, 0xC6);
     private static final Color IVORY_SIDE = new Color(0xCF, 0xC5, 0xA6);
     private static final Color EDGE = new Color(0x8A, 0x80, 0x66, 150);
@@ -32,35 +35,56 @@ public final class TilePainter {
     private static final int CACHE_LIMIT = 800;
     private static final Color BACK = new Color(0x1F, 0x7A, 0x5C);
     private static final Color BACK_DARK = new Color(0x12, 0x55, 0x3F);
-    private static final Color INK = new Color(0x1C, 0x2A, 0x4A);
-    private static final Color CRIMSON = new Color(0xB8, 0x24, 0x24);
-    private static final Color JADE = new Color(0x13, 0x7A, 0x4A);
-    private static final Color BLUE = new Color(0x1F, 0x4E, 0x9C);
+    static final Color INK = new Color(0x15, 0x1B, 0x2E);
+    static final Color CRIMSON = new Color(0xB5, 0x20, 0x2A);
+    static final Color JADE = new Color(0x1A, 0x6E, 0x3C);
+
+    /** 牌面上的數字，五萬寫成大寫的「伍」。 */
+    private static final String[] WAN_NUMBERS = {"一", "二", "三", "四", "伍", "六", "七", "八", "九"};
 
     /** 筒與條的點位，座標為牌面內 0-1 的比例。 */
     private static final double[][][] TONG_PIPS = {
         {{.5, .5}},
-        {{.5, .27}, {.5, .73}},
-        {{.2, .2}, {.5, .5}, {.8, .8}},
-        {{.27, .27}, {.73, .27}, {.27, .73}, {.73, .73}},
-        {{.25, .22}, {.75, .22}, {.5, .5}, {.25, .78}, {.75, .78}},
-        {{.3, .2}, {.7, .2}, {.3, .5}, {.7, .5}, {.3, .8}, {.7, .8}},
-        {{.2, .12}, {.5, .22}, {.8, .32}, {.3, .58}, {.7, .58}, {.3, .85}, {.7, .85}},
-        {{.3, .13}, {.7, .13}, {.3, .38}, {.7, .38}, {.3, .63}, {.7, .63}, {.3, .88}, {.7, .88}},
-        {{.2, .18}, {.5, .18}, {.8, .18}, {.2, .5}, {.5, .5}, {.8, .5}, {.2, .82}, {.5, .82}, {.8, .82}},
+        {{.5, .25}, {.5, .75}},
+        {{.22, .17}, {.5, .5}, {.78, .83}},
+        {{.25, .26}, {.75, .26}, {.25, .74}, {.75, .74}},
+        {{.22, .2}, {.78, .2}, {.5, .5}, {.22, .8}, {.78, .8}},
+        {{.27, .15}, {.73, .15}, {.27, .55}, {.73, .55}, {.27, .85}, {.73, .85}},
+        {{.18, .11}, {.5, .21}, {.82, .31}, {.27, .6}, {.73, .6}, {.27, .87}, {.73, .87}},
+        {{.29, .12}, {.71, .12}, {.29, .37}, {.71, .37}, {.29, .63}, {.71, .63}, {.29, .88}, {.71, .88}},
+        {{.17, .17}, {.5, .17}, {.83, .17}, {.17, .5}, {.5, .5}, {.83, .5}, {.17, .83}, {.5, .83}, {.83, .83}},
     };
 
+    /** 各點數的筒子半徑，以牌面寬度為比例。 */
+    private static final double[] TONG_RADIUS = {.47, .29, .22, .22, .2, .2, .17, .165, .155};
+
+    /** 每個點位的顏色：G 綠、N 墨、R 紅。 */
+    private static final String[] TONG_INKS = {
+        "R", "GN", "GRN", "GNNG", "GNRNG", "GGRRRR", "GGGRRRR", "NNNNNNNN", "NNNRRRGGG",
+    };
+
+    /** 一條是鳥、八條是 WM 圖形，其他點數才用這張表。 */
     private static final double[][][] TIAO_PIPS = {
-        {{.5, .5}},
+        {},
         {{.5, .25}, {.5, .75}},
         {{.5, .25}, {.25, .75}, {.75, .75}},
         {{.25, .25}, {.75, .25}, {.25, .75}, {.75, .75}},
         {{.2, .25}, {.8, .25}, {.5, .5}, {.2, .75}, {.8, .75}},
         {{.2, .25}, {.5, .25}, {.8, .25}, {.2, .75}, {.5, .75}, {.8, .75}},
         {{.5, .17}, {.2, .5}, {.5, .5}, {.8, .5}, {.2, .83}, {.5, .83}, {.8, .83}},
-        {{.2, .17}, {.5, .17}, {.8, .17}, {.3, .5}, {.7, .5}, {.2, .83}, {.5, .83}, {.8, .83}},
+        {},
         {{.2, .17}, {.5, .17}, {.8, .17}, {.2, .5}, {.5, .5}, {.8, .5}, {.2, .83}, {.5, .83}, {.8, .83}},
     };
+
+    private static final String[] TIAO_INKS = {
+        "", "NN", "GNG", "GNNG", "GNRNG", "NNNGGG", "RGNGGNG", "", "GRNGRNGRN",
+    };
+
+    /** 八條上半部的 W，座標為牌面內 0-1 的比例；下半部的 M 是它的上下翻轉。 */
+    private static final double[][] EIGHT_W = {{.02, .02}, {.1, .42}, {.5, .08}, {.9, .42}, {.98, .02}};
+
+    /** 半徑為 1 的筒子：圓盤挖出五片花瓣。 */
+    private static final Shape TONG_PIP = tongPip();
 
     private TilePainter() {
     }
@@ -159,11 +183,15 @@ public final class TilePainter {
     }
 
     private static void drawTile(Graphics2D g, Tile tile, double x, double y, double w, double h) {
+        // 小圓圈與細線不對齊像素，縮小時形狀才不會歪
+        Object strokeControl = g.getRenderingHint(RenderingHints.KEY_STROKE_CONTROL);
+        g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
         if (tile == null) {
             paintBody(g, body(g, x, y, w, h), BACK, BACK_DARK, BACK_DARK, IVORY_SHADE);
         } else {
             drawFace(g, tile, x, y, w, h);
         }
+        g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, strokeControl);
     }
 
     private static void drawFace(Graphics2D g, Tile tile, double x, double y, double w, double h) {
@@ -246,63 +274,180 @@ public final class TilePainter {
     }
 
     private static void paintWan(Graphics2D g, Tile tile, double x, double y, double w, double h) {
-        drawCentered(g, Tile.numberName(tile.rank()), x, y + h * .02, w, h * .46, INK, h * .42);
-        drawCentered(g, "萬", x, y + h * .5, w, h * .48, CRIMSON, h * .46);
+        drawCentered(g, WAN_NUMBERS[tile.rank() - 1], x, y, w, h * .46, INK, Theme.brushFont((float) (h * .44)));
+        drawCentered(g, "萬", x, y + h * .46, w, h * .54, CRIMSON, Theme.brushFont((float) (h * .54)));
+    }
+
+    private static Color ink(char code) {
+        return code == 'R' ? CRIMSON : code == 'G' ? JADE : INK;
+    }
+
+    private static Shape tongPip() {
+        Path2D.Double petal = new Path2D.Double();
+        petal.moveTo(0, -.14);
+        petal.curveTo(.12, -.28, .34, -.48, .27, -.74);
+        petal.quadTo(0, -.9, -.27, -.74);
+        petal.curveTo(-.34, -.48, -.12, -.28, 0, -.14);
+        petal.closePath();
+        Path2D.Double pip = new Path2D.Double(Path2D.WIND_EVEN_ODD);
+        pip.append(new Ellipse2D.Double(-1, -1, 2, 2), false);
+        for (int i = 0; i < 5; i++) {
+            pip.append(AffineTransform.getRotateInstance(i * 2 * Math.PI / 5).createTransformedShape(petal), false);
+        }
+        return pip;
+    }
+
+    private static void fillTongPip(Graphics2D g, double cx, double cy, double radius, Color color) {
+        AffineTransform place = AffineTransform.getTranslateInstance(cx, cy);
+        place.scale(radius, radius);
+        g.setColor(color);
+        g.fill(place.createTransformedShape(TONG_PIP));
     }
 
     private static void paintTong(Graphics2D g, Tile tile, double x, double y, double w, double h) {
+        double radius = w * TONG_RADIUS[tile.rank() - 1];
+        if (tile.rank() == 1) {
+            paintOneTong(g, x + w / 2, y + h / 2, radius);
+            return;
+        }
         double[][] pips = TONG_PIPS[tile.rank() - 1];
-        double radius = tile.rank() == 1 ? w * .4 : Math.min(w, h) * (tile.rank() <= 5 ? .2 : .15);
+        String inks = TONG_INKS[tile.rank() - 1];
         for (int i = 0; i < pips.length; i++) {
-            Color color = (tile.rank() + i) % 3 == 0 ? CRIMSON : (tile.rank() + i) % 3 == 1 ? BLUE : JADE;
-            double cx = x + pips[i][0] * w;
-            double cy = y + pips[i][1] * h;
-            g.setColor(color);
-            g.fill(new Ellipse2D.Double(cx - radius, cy - radius, radius * 2, radius * 2));
-            g.setColor(IVORY);
-            double inner = radius * .55;
-            g.fill(new Ellipse2D.Double(cx - inner, cy - inner, inner * 2, inner * 2));
-            g.setColor(color);
-            double core = radius * .28;
-            g.fill(new Ellipse2D.Double(cx - core, cy - core, core * 2, core * 2));
+            fillTongPip(g, x + pips[i][0] * w, y + pips[i][1] * h, radius, ink(inks.charAt(i)));
         }
     }
 
+    /** 一筒：外圈綠環，中間一圈花瓣，花心是紅色的筒子。 */
+    private static void paintOneTong(Graphics2D g, double cx, double cy, double radius) {
+        g.setColor(JADE);
+        g.setStroke(new BasicStroke((float) (radius * .12)));
+        g.draw(new Ellipse2D.Double(cx - radius * .95, cy - radius * .95, radius * 1.9, radius * 1.9));
+        g.setStroke(new BasicStroke((float) (radius * .05)));
+        g.draw(new Ellipse2D.Double(cx - radius * .36, cy - radius * .36, radius * .72, radius * .72));
+        g.setStroke(new BasicStroke((float) (radius * .065)));
+        Ellipse2D loop = new Ellipse2D.Double(-radius * .1, -radius * .79, radius * .2, radius * .34);
+        for (int i = 0; i < 12; i++) {
+            AffineTransform turn = AffineTransform.getTranslateInstance(cx, cy);
+            turn.rotate(i * Math.PI / 6);
+            g.draw(turn.createTransformedShape(loop));
+        }
+        fillTongPip(g, cx, cy, radius * .31, CRIMSON);
+    }
+
     private static void paintTiao(Graphics2D g, Tile tile, double x, double y, double w, double h) {
+        if (tile.rank() == 1) {
+            TileArt.paintBird(g, x, y, w, h);
+            return;
+        }
+        if (tile.rank() == 8) {
+            paintEightTiao(g, x, y, w, h);
+            return;
+        }
         double[][] pips = TIAO_PIPS[tile.rank() - 1];
-        double stickH = tile.rank() == 1 ? h * .8 : h * (tile.rank() <= 6 ? .4 : .27);
-        double stickW = tile.rank() == 1 ? w * .28 : w * .15;
+        String inks = TIAO_INKS[tile.rank() - 1];
+        double length = h * (tile.rank() <= 6 ? .42 : .29);
+        double ring = length / 7.1;
         for (int i = 0; i < pips.length; i++) {
             double cx = x + pips[i][0] * w;
             double cy = y + pips[i][1] * h;
-            g.setColor(i % 4 == 3 || tile.rank() == 1 ? CRIMSON : JADE);
-            g.fill(new RoundRectangle2D.Double(cx - stickW / 2, cy - stickH / 2, stickW, stickH, stickW, stickW));
-            g.setColor(IVORY);
-            g.fill(new RoundRectangle2D.Double(cx - stickW * .75, cy - stickH * .04, stickW * 1.5, stickH * .08, 1, 1));
+            g.setColor(ink(inks.charAt(i)));
+            paintChain(g, cx, cy - length / 2 + ring, cx, cy + length / 2 - ring, 4, ring);
+        }
+    }
+
+    /** 八條：上半部綠色的 W，下半部墨色的 M，都由小圓圈串成。 */
+    private static void paintEightTiao(Graphics2D g, double x, double y, double w, double h) {
+        double ring = w * .07;
+        double left = x + ring;
+        double top = y + ring;
+        double spanW = w - ring * 2;
+        double spanH = h - ring * 2;
+        for (int leg = 0; leg + 1 < EIGHT_W.length; leg++) {
+            double x0 = left + EIGHT_W[leg][0] * spanW;
+            double x1 = left + EIGHT_W[leg + 1][0] * spanW;
+            double y0 = EIGHT_W[leg][1] * spanH;
+            double y1 = EIGHT_W[leg + 1][1] * spanH;
+            // 每段長短不同，依長度決定圓圈數，圓圈才會一個挨一個
+            int rings = (int) Math.round(Math.hypot(x1 - x0, y1 - y0) / (ring * 1.7)) + 1;
+            g.setColor(JADE);
+            paintChain(g, x0, top + y0, x1, top + y1, rings, ring);
+            g.setColor(INK);
+            paintChain(g, x0, top + spanH - y0, x1, top + spanH - y1, rings, ring);
+        }
+    }
+
+    /** 由 (x0, y0) 到 (x1, y1) 串起一列空心小圓，那就是一根竹條。 */
+    private static void paintChain(Graphics2D g, double x0, double y0, double x1, double y1, int rings, double radius) {
+        g.setStroke(new BasicStroke((float) Math.max(.7, radius * .52)));
+        for (int i = 0; i < rings; i++) {
+            double t = i / (double) (rings - 1);
+            double cx = x0 + (x1 - x0) * t;
+            double cy = y0 + (y1 - y0) * t;
+            g.draw(new Ellipse2D.Double(cx - radius, cy - radius, radius * 2, radius * 2));
         }
     }
 
     private static void paintHonor(Graphics2D g, Tile tile, double x, double y, double w, double h) {
         if (tile.suit() == Suit.DRAGON && tile.rank() == 3) {
-            g.setColor(BLUE);
-            g.setStroke(new BasicStroke((float) Math.max(1.5, w * .07)));
-            g.draw(new RoundRectangle2D.Double(x + w * .12, y + h * .14, w * .76, h * .72, w * .12, w * .12));
+            paintWhiteDragon(g, x, y, w, h);
             return;
         }
         Color color = tile.suit() == Suit.WIND ? INK : tile.rank() == 1 ? CRIMSON : JADE;
-        drawCentered(g, tile.label(), x, y, w, h, color, h * .62);
+        drawCentered(g, tile.label(), x, y, w, h, color, Theme.brushFont((float) (h * .68)));
     }
 
+    /** 白板：墨色的外框，框上有一列白色花紋，中間留白。 */
+    private static void paintWhiteDragon(Graphics2D g, double x, double y, double w, double h) {
+        double frameW = w * .9;
+        double frameH = h * .86;
+        double left = x + (w - frameW) / 2;
+        double top = y + (h - frameH) / 2;
+        double band = frameW * .2;
+        Path2D.Double frame = new Path2D.Double(Path2D.WIND_EVEN_ODD);
+        frame.append(new Rectangle2D.Double(left, top, frameW, frameH), false);
+        frame.append(new Rectangle2D.Double(left + band, top + band, frameW - band * 2, frameH - band * 2), false);
+        g.setColor(INK);
+        g.fill(frame);
+        g.setColor(IVORY);
+        g.setStroke(new BasicStroke((float) Math.max(.6, band * .13)));
+        for (int i = 0; i < 2; i++) {
+            double cx = left + frameW * (i == 0 ? .34 : .66);
+            paintScroll(g, cx, top + band / 2, band * .36);
+            paintScroll(g, cx, top + frameH - band / 2, band * .36);
+        }
+        for (int i = 0; i < 4; i++) {
+            double cy = top + band + (frameH - band * 2) * (i + .5) / 4;
+            paintScroll(g, left + band / 2, cy, band * .36);
+            paintScroll(g, left + frameW - band / 2, cy, band * .36);
+        }
+    }
+
+    /** 白板框上的一個花紋：兩道相背的弧線。 */
+    private static void paintScroll(Graphics2D g, double cx, double cy, double size) {
+        g.draw(new QuadCurve2D.Double(cx - size, cy - size, cx + size * .5, cy, cx - size, cy + size));
+        g.draw(new QuadCurve2D.Double(cx + size, cy - size, cx - size * .5, cy, cx + size, cy + size));
+    }
+
+    /** 春夏秋冬是數字在左、紅字在右；梅蘭竹菊是墨字在左、紅數字在右。 */
     private static void paintFlower(Graphics2D g, Tile tile, double x, double y, double w, double h) {
-        Color color = tile.rank() <= 4 ? new Color(0xC2, 0x5A, 0x10) : new Color(0x7A, 0x2E, 0x9C);
-        drawCentered(g, tile.label(), x, y + h * .12, w, h * .86, color, h * .56);
-        int seat = (tile.rank() - 1) % 4 + 1;
-        drawCentered(g, String.valueOf(seat), x, y - h * .02, w * .4, h * .26, color, h * .22);
+        String seat = String.valueOf((tile.rank() - 1) % 4 + 1);
+        double headH = h * .27;
+        Font number = new Font(Font.DIALOG, Font.BOLD, 1).deriveFont((float) (h * .21));
+        Font name = Theme.brushFont((float) (h * .25));
+        if (tile.rank() <= 4) {
+            drawCentered(g, seat, x, y, w * .4, headH, INK, number);
+            drawCentered(g, tile.label(), x + w * .45, y, w * .55, headH, CRIMSON, name);
+        } else {
+            drawCentered(g, tile.label(), x, y, w * .55, headH, INK, name);
+            drawCentered(g, seat, x + w * .6, y, w * .4, headH, CRIMSON, number);
+        }
+        TileArt.paintFlower(g, tile.rank(), x, y + headH, w, h - headH);
     }
 
     private static void drawCentered(Graphics2D g, String text, double x, double y, double w, double h,
-                                     Color color, double size) {
-        g.setFont(Theme.fixedFont(Font.BOLD, (float) size));
+                                     Color color, Font font) {
+        double size = font.getSize2D();
+        g.setFont(font);
         g.setColor(color);
         FontMetrics metrics = g.getFontMetrics();
         float tx = (float) (x + (w - metrics.stringWidth(text)) / 2);

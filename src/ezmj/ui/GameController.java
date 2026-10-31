@@ -17,6 +17,7 @@ import ezmj.engine.RoundEvent;
 import ezmj.engine.Settlement;
 import ezmj.engine.TurnOptions;
 import ezmj.model.AppSettings;
+import ezmj.model.Gender;
 import ezmj.model.Tile;
 import ezmj.rules.HandAnalyzer;
 
@@ -156,28 +157,37 @@ public final class GameController {
         }
     }
 
-    /** 喊牌和大字同時出現。打牌不喊，不然每張牌都要講一次。 */
-    private static void speak(RoundEvent event) {
+    /** 這個座位喊牌的聲音。真人看環境設定，電腦看角色的性別。 */
+    private Gender voiceOf(int seat) {
+        return seat == HUMAN_SEAT ? settings.playerGender() : round.player(seat).gender();
+    }
+
+    /** 喊牌和大字同時出現，打牌時喊出打的是什麼牌。用出聲那一家的聲音；流局沒有特定的人，用女聲。 */
+    private void speak(RoundEvent event) {
+        Gender gender = event.seat() < 0 ? Gender.FEMALE : voiceOf(event.seat());
         switch (event.type()) {
+            case DISCARD:
+                VoiceLines.play(event.tile(), gender);
+                break;
             case CHOW:
-                VoiceLines.play(VoiceLines.Line.CHOW);
+                VoiceLines.play(VoiceLines.Line.CHOW, gender);
                 break;
             case PONG:
-                VoiceLines.play(VoiceLines.Line.PONG);
+                VoiceLines.play(VoiceLines.Line.PONG, gender);
                 break;
             case KONG:
             case CONCEALED_KONG:
             case ADD_KONG:
-                VoiceLines.play(VoiceLines.Line.KONG);
+                VoiceLines.play(VoiceLines.Line.KONG, gender);
                 break;
             case WIN:
-                VoiceLines.play(VoiceLines.Line.WIN);
+                VoiceLines.play(VoiceLines.Line.WIN, gender);
                 break;
             case SELF_WIN:
-                VoiceLines.play(VoiceLines.Line.SELF_WIN);
+                VoiceLines.play(VoiceLines.Line.SELF_WIN, gender);
                 break;
             case DRAWN_GAME:
-                VoiceLines.play(VoiceLines.Line.DRAWN_GAME);
+                VoiceLines.play(VoiceLines.Line.DRAWN_GAME, gender);
                 break;
             default:
                 break;
@@ -269,7 +279,7 @@ public final class GameController {
         round.discard(HUMAN_SEAT, tile);
         listeningWaits = HandAnalyzer.waits(round.player(HUMAN_SEAT).concealed());
         if (settings.voiceEnabled()) {
-            VoiceLines.play(VoiceLines.Line.LISTEN);
+            VoiceLines.play(VoiceLines.Line.LISTEN, voiceOf(HUMAN_SEAT));
         }
         advance();
     }

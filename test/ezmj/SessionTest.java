@@ -5,6 +5,7 @@ import static ezmj.T.eq;
 import static ezmj.T.test;
 import static ezmj.T.tile;
 
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
@@ -18,6 +19,7 @@ import ezmj.engine.Settlement;
 import ezmj.model.BotLevel;
 import ezmj.model.GameConfig;
 import ezmj.model.GameRecord;
+import ezmj.model.Gender;
 import ezmj.rules.ScoreItem;
 import ezmj.rules.ScoreResult;
 
@@ -65,8 +67,11 @@ final class SessionTest {
     static void botNames() {
         test("電腦名字隨機、不重複、不與玩家相同", () -> {
             Set<String> seen = new HashSet<>();
+            Set<Gender> genders = EnumSet.noneOf(Gender.class);
             for (int seed = 0; seed < 2000; seed++) {
-                List<String> names = BotNames.pick(3, "王小明", new Random(seed));
+                List<BotNames.Identity> bots = BotNames.pick(3, "王小明", new Random(seed));
+                List<String> names = bots.stream().map(BotNames.Identity::name).toList();
+                bots.forEach(bot -> genders.add(bot.gender()));
                 eq(3, new HashSet<>(names).size(), "互不相同 " + names);
                 check(!names.contains("王小明"), "與玩家相同 " + names);
                 for (String name : names) {
@@ -75,6 +80,18 @@ final class SessionTest {
                 seen.addAll(names);
             }
             check(seen.size() > 500, "名字種類太少：" + seen.size());
+            eq(2, genders.size(), "男女都會出現");
+
+            Set<String> femaleGiven = new HashSet<>();
+            Set<String> maleGiven = new HashSet<>();
+            for (int seed = 0; seed < 2000; seed++) {
+                for (BotNames.Identity bot : BotNames.pick(3, "", new Random(seed))) {
+                    String given = bot.name().substring(bot.name().length() - 2);
+                    (bot.gender() == Gender.FEMALE ? femaleGiven : maleGiven).add(given);
+                }
+            }
+            femaleGiven.retainAll(maleGiven);
+            check(femaleGiven.isEmpty(), "名字不該男女共用 " + femaleGiven);
 
             GameSession session = session();
             check(!session.player(1).name().equals(session.player(2).name()), "牌局裡的電腦名字");
@@ -161,6 +178,18 @@ final class SessionTest {
             Settlement settlement = session.settle(tsumo(dealer, 2));
             int pay = BASE + 3 * PER_TAI;
             deltas(session, settlement, dealer, 3 * pay, -pay, -pay, -pay);
+        });
+
+        test("結算記下每家付款的台數，莊家台只算在莊家相關的付款", () -> {
+            GameSession session = session();
+            int dealer = session.dealer();
+            session.settle(RoundResult.drawnGame());
+            int idle = rel(session, 2);
+            int winner = rel(session, 3);
+            int[] tais = session.settle(tsumo(winner, 2)).tais();
+            eq(2 + 3, tais[dealer], "連一的莊家多付 3 台");
+            eq(2, tais[idle], "閒家只付牌型台");
+            eq(0, tais[winner], "贏家沒付款");
         });
 
         test("零台胡牌（屁胡）仍付底", () -> {

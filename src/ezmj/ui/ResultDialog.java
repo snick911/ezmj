@@ -1,12 +1,17 @@
 package ezmj.ui;
 
+import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.Frame;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
+import java.awt.Insets;
 import java.awt.RenderingHints;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import javax.swing.BorderFactory;
@@ -17,7 +22,9 @@ import javax.swing.JComponent;
 import javax.swing.JDialog;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.SwingConstants;
 import javax.swing.Timer;
+import javax.swing.border.Border;
 
 import ezmj.engine.GameSession;
 import ezmj.engine.Round;
@@ -27,6 +34,7 @@ import ezmj.model.Meld;
 import ezmj.model.Player;
 import ezmj.model.Tile;
 import ezmj.rules.ScoreItem;
+import ezmj.rules.ScoreResult;
 
 /** 一局結束的結果視窗：胡牌牌型、台數明細與各家輸贏。 */
 final class ResultDialog extends JDialog {
@@ -43,31 +51,21 @@ final class ResultDialog extends JDialog {
         content.setBorder(BorderFactory.createEmptyBorder(20, 26, 20, 26));
 
         RoundResult result = round.result();
-        content.add(line(headline(round, result), Font.BOLD, 24f, true));
+        content.add(line(headline(round, result), Font.BOLD, 24f, Theme.GOLD));
         content.add(Box.createVerticalStrut(12));
 
-        if (!result.isDrawnGame()) {
+        if (result.isDrawnGame()) {
+            content.add(drawnTable(session));
+        } else {
             HandStrip strip = new HandStrip(round.player(result.winner()), result.winTile());
             strip.setAlignmentX(LEFT_ALIGNMENT);
             content.add(strip);
             content.add(Box.createVerticalStrut(12));
-
-            for (ScoreItem item : result.score().items()) {
-                content.add(line(item.name() + "　" + item.tai() + " 台", Font.PLAIN, 16f, false));
-            }
-            content.add(line("牌型合計　" + result.score().totalTai() + " 台", Font.BOLD, 16f, true));
-            content.add(Box.createVerticalStrut(10));
-            for (String note : settlement.notes()) {
-                content.add(line(note, Font.PLAIN, 14f, false));
-            }
-            content.add(Box.createVerticalStrut(12));
-        }
-
-        for (int seat = 0; seat < 4; seat++) {
-            Player player = session.player(seat);
-            int delta = settlement.deltas()[seat];
-            String sign = delta > 0 ? "+" : "";
-            content.add(line(player.name() + "　" + sign + delta + "　→　" + player.chips(), Font.PLAIN, 16f, seat == 0));
+            content.add(tables(session, round, settlement));
+            content.add(Box.createVerticalStrut(8));
+            content.add(line("每筆付款＝底 " + session.config().basePay() + " ＋ 台數 × " + session.config().taiPay()
+                    + (countsDealer(round, settlement) ? "，莊家台只算與莊家相關的付款" : ""),
+                    Font.PLAIN, 14f, Theme.MUTED));
         }
         content.add(Box.createVerticalStrut(16));
 
@@ -111,12 +109,146 @@ final class ResultDialog extends JDialog {
                 : winner + " 胡牌，" + round.player(result.from()).name() + " 放槍 " + result.winTile().label();
     }
 
-    private static JLabel line(String text, int style, float size, boolean accent) {
+    private static JLabel line(String text, int style, float size, Color color) {
         JLabel label = new JLabel(text);
         label.setFont(Theme.font(style, size));
-        label.setForeground(accent ? Theme.GOLD : Theme.TEXT);
+        label.setForeground(color);
         label.setAlignmentX(LEFT_ALIGNMENT);
         return label;
+    }
+
+    /** 左邊牌型台數，右邊各家輸贏。 */
+    private static JPanel tables(GameSession session, Round round, Settlement settlement) {
+        JPanel tables = new JPanel(new GridBagLayout());
+        tables.setBackground(Theme.PANEL);
+        tables.setAlignmentX(LEFT_ALIGNMENT);
+        GridBagConstraints constraints = new GridBagConstraints();
+        constraints.anchor = GridBagConstraints.NORTH;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.insets = new Insets(0, 0, 0, 20);
+        tables.add(scoreTable(round, settlement), constraints);
+        constraints.insets = new Insets(0, 0, 0, 0);
+        constraints.weightx = 1;
+        tables.add(payTable(session, round, settlement), constraints);
+        return tables;
+    }
+
+    private static GridTable scoreTable(Round round, Settlement settlement) {
+        ScoreResult score = round.result().score();
+        GridTable table = new GridTable(1);
+        table.header("牌型", "台數");
+        for (ScoreItem item : score.items()) {
+            table.row(Font.PLAIN, item.name(), String.valueOf(item.tai()));
+        }
+        if (score.items().isEmpty()) {
+            table.row(Font.PLAIN, "屁胡", "0");
+        }
+        for (JLabel cell : table.row(Font.BOLD, "牌型合計", String.valueOf(score.totalTai()))) {
+            cell.setForeground(Theme.GOLD);
+        }
+        if (countsDealer(round, settlement)) {
+            table.row(Font.PLAIN, "＋莊家", "1");
+            if (round.streak() > 0) {
+                table.row(Font.PLAIN, "＋連" + round.streak() + "拉" + round.streak(), String.valueOf(2 * round.streak()));
+            }
+        }
+        return table;
+    }
+
+    /** 有人的付款比牌型台數多，就是這局有算到莊家台。 */
+    private static boolean countsDealer(Round round, Settlement settlement) {
+        return Arrays.stream(settlement.tais()).anyMatch(tai -> tai > round.result().score().totalTai());
+    }
+
+    private static GridTable payTable(GameSession session, Round round, Settlement settlement) {
+        GridTable table = new GridTable(2);
+        table.header("玩家", "結果", "台數", "輸贏", "籌碼");
+        for (int seat = 0; seat < 4; seat++) {
+            Player player = session.player(seat);
+            int delta = settlement.deltas()[seat];
+            String tai = delta < 0 ? String.valueOf(settlement.tais()[seat]) : "—";
+            JLabel[] cells = table.row(seat == 0 ? Font.BOLD : Font.PLAIN,
+                    player.name() + (seat == round.dealer() ? "（莊）" : ""), outcome(round.result(), seat),
+                    tai, money(delta), String.valueOf(player.chips()));
+            cells[3].setForeground(moneyColor(delta));
+        }
+        return table;
+    }
+
+    private static GridTable drawnTable(GameSession session) {
+        GridTable table = new GridTable(1);
+        table.header("玩家", "籌碼");
+        for (int seat = 0; seat < 4; seat++) {
+            Player player = session.player(seat);
+            table.row(seat == 0 ? Font.BOLD : Font.PLAIN, player.name(), String.valueOf(player.chips()));
+        }
+        return table;
+    }
+
+    private static String outcome(RoundResult result, int seat) {
+        if (seat == result.winner()) {
+            return result.isSelfDraw() ? "自摸" : "胡牌";
+        }
+        if (result.isSelfDraw()) {
+            return "被自摸";
+        }
+        return seat == result.from() ? "放槍" : "";
+    }
+
+    private static String money(int delta) {
+        return (delta > 0 ? "+" : "") + delta;
+    }
+
+    private static Color moneyColor(int delta) {
+        if (delta == 0) {
+            return Theme.MUTED;
+        }
+        return delta > 0 ? Theme.GOLD : Theme.TEXT;
+    }
+
+    /** 欄位對齊的表格。前 leftColumns 欄是文字靠左，其餘是數字靠右。 */
+    private static final class GridTable extends JPanel {
+        private static final Border HEADER_BORDER = BorderFactory.createEmptyBorder(5, 10, 5, 10);
+        private static final Border CELL_BORDER = BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 0, 1, 0, Theme.PANEL_LIGHT), HEADER_BORDER);
+
+        private final int leftColumns;
+        private int rows;
+
+        GridTable(int leftColumns) {
+            super(new GridBagLayout());
+            this.leftColumns = leftColumns;
+            setBackground(Theme.PANEL);
+            setAlignmentX(LEFT_ALIGNMENT);
+        }
+
+        void header(String... texts) {
+            for (JLabel cell : add(Font.BOLD, 14f, Theme.MUTED, HEADER_BORDER, texts)) {
+                cell.setOpaque(true);
+                cell.setBackground(Theme.PANEL_LIGHT);
+            }
+        }
+
+        JLabel[] row(int style, String... texts) {
+            return add(style, 16f, Theme.TEXT, CELL_BORDER, texts);
+        }
+
+        private JLabel[] add(int style, float size, Color color, Border border, String[] texts) {
+            JLabel[] cells = new JLabel[texts.length];
+            GridBagConstraints constraints = new GridBagConstraints();
+            constraints.gridy = rows++;
+            constraints.fill = GridBagConstraints.BOTH;
+            for (int column = 0; column < texts.length; column++) {
+                JLabel cell = line(texts[column], style, size, color);
+                cell.setHorizontalAlignment(column < leftColumns ? SwingConstants.LEFT : SwingConstants.RIGHT);
+                cell.setBorder(border);
+                constraints.gridx = column;
+                constraints.weightx = column == 0 ? 1 : 0;
+                add(cell, constraints);
+                cells[column] = cell;
+            }
+            return cells;
+        }
     }
 
     /** 胡牌者的完整牌面。 */

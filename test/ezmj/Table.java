@@ -8,6 +8,7 @@ import java.util.Random;
 import java.util.stream.Collectors;
 
 import ezmj.engine.Round;
+import ezmj.model.Gender;
 import ezmj.model.Meld;
 import ezmj.model.Player;
 import ezmj.model.Suit;
@@ -95,7 +96,7 @@ final class Table {
 
         Player[] players = new Player[4];
         for (int seat = 0; seat < 4; seat++) {
-            players[seat] = new Player("P" + seat, seat, seat == 0, 100_000);
+            players[seat] = new Player("P" + seat, seat, seat == 0, Gender.FEMALE, 100_000);
         }
         Round round = new Round(players, new Wall(order), dealer, 1, 0, message -> { });
         round.start();

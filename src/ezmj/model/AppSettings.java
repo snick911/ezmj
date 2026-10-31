@@ -33,6 +33,7 @@ public final class AppSettings {
     private static final String KEY_SOUND_VOLUME = "soundVolume";
     private static final String KEY_VOICE = "voice";
     private static final String KEY_VOICE_VOLUME = "voiceVolume";
+    private static final String KEY_PLAYER_GENDER = "playerGender";
 
     private int fontPercent = DEFAULT_FONT_PERCENT;
     private int tilePercent = DEFAULT_TILE_PERCENT;
@@ -45,6 +46,7 @@ public final class AppSettings {
     private int soundVolume = DEFAULT_SOUND_VOLUME;
     private boolean voiceEnabled = true;
     private int voiceVolume = DEFAULT_VOICE_VOLUME;
+    private Gender playerGender = Gender.FEMALE;
 
     public static AppSettings load(Path file) {
         AppSettings settings = new AppSettings();
@@ -65,6 +67,7 @@ public final class AppSettings {
         settings.setSoundVolume(intValue(values, KEY_SOUND_VOLUME, DEFAULT_SOUND_VOLUME));
         settings.setVoiceEnabled(!"false".equals(values.getProperty(KEY_VOICE, "").trim()));
         settings.setVoiceVolume(intValue(values, KEY_VOICE_VOLUME, DEFAULT_VOICE_VOLUME));
+        settings.setPlayerGender(Gender.fromKey(values.getProperty(KEY_PLAYER_GENDER, "").trim()));
         return settings;
     }
 
@@ -89,6 +92,7 @@ public final class AppSettings {
         values.setProperty(KEY_SOUND_VOLUME, String.valueOf(soundVolume));
         values.setProperty(KEY_VOICE, String.valueOf(voiceEnabled));
         values.setProperty(KEY_VOICE_VOLUME, String.valueOf(voiceVolume));
+        values.setProperty(KEY_PLAYER_GENDER, playerGender.name());
         Files.createDirectories(file.getParent());
         try (OutputStream out = Files.newOutputStream(file)) {
             values.store(out, "EZMJ");
@@ -186,5 +190,14 @@ public final class AppSettings {
 
     public void setVoiceVolume(int percent) {
         voiceVolume = Math.max(0, Math.min(100, percent));
+    }
+
+    /** 真人喊牌用的聲音。 */
+    public Gender playerGender() {
+        return playerGender;
+    }
+
+    public void setPlayerGender(Gender gender) {
+        playerGender = gender;
     }
 }

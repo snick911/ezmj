@@ -40,6 +40,7 @@ import ezmj.model.AppSettings;
 import ezmj.model.BotLevel;
 import ezmj.model.GameConfig;
 import ezmj.model.GameRecord;
+import ezmj.model.Gender;
 import ezmj.model.HonorRoll;
 import ezmj.model.MusicTrack;
 import ezmj.model.Player;
@@ -124,6 +125,7 @@ public final class MainFrame extends JFrame {
         preferences.add(menuItem("音量…", this::editVolumes));
         preferences.add(checkItem("音效", settings.soundEnabled(), this::changeSound));
         preferences.add(voiceItem);
+        preferences.add(buildPlayerVoiceMenu());
         preferences.add(checkItem("動畫", settings.animationEnabled(), this::changeAnimation));
 
         JMenu honor = topMenu("榮譽榜");
@@ -235,6 +237,31 @@ public final class MainFrame extends JFrame {
         return menu;
     }
 
+    private JMenu buildPlayerVoiceMenu() {
+        JMenu menu = new JMenu("我的語音");
+        menu.setFont(Theme.font(Font.PLAIN, 15f));
+        ButtonGroup group = new ButtonGroup();
+        for (Gender gender : Gender.values()) {
+            String suffix = gender == Gender.FEMALE ? "（預設）" : "";
+            JRadioButtonMenuItem item = new JRadioButtonMenuItem(gender.voiceLabel() + suffix,
+                    gender == settings.playerGender());
+            item.setFont(Theme.font(Font.PLAIN, 15f));
+            item.addActionListener(e -> changePlayerVoice(gender));
+            group.add(item);
+            menu.add(item);
+        }
+        return menu;
+    }
+
+    /** 選了就喊一聲，聽聽看。牌局中改也會立刻生效。 */
+    private void changePlayerVoice(Gender gender) {
+        settings.setPlayerGender(gender);
+        saveSettings();
+        if (settings.voiceEnabled()) {
+            VoiceLines.play(VoiceLines.Line.PONG, gender);
+        }
+    }
+
     private void changeMusic(MusicTrack track) {
         settings.setMusic(track);
         saveSettings();
@@ -261,7 +288,7 @@ public final class MainFrame extends JFrame {
             settings.setVoiceVolume(voice.getValue());
             VoiceLines.setVolume(voice.getValue());
             if (!voice.getValueIsAdjusting() && settings.voiceEnabled()) {
-                VoiceLines.play(VoiceLines.Line.PONG);
+                VoiceLines.play(VoiceLines.Line.PONG, settings.playerGender());
             }
         });
         Object[] message = {"背景音樂", music, "音效", sound, "語音", voice};

@@ -6,11 +6,15 @@ import static ezmj.T.test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import ezmj.model.AppSettings;
+import ezmj.model.Gender;
 import ezmj.model.MusicTrack;
 import ezmj.model.Resolution;
+import ezmj.model.Tile;
 import ezmj.ui.BackgroundMusic;
 import ezmj.ui.SoundEffects;
 import ezmj.ui.VoiceLines;
@@ -35,6 +39,17 @@ final class SettingsTest {
         return (short) ((pcm[index] & 0xFF) | (pcm[index + 1] << 8));
     }
 
+    /** from 到 to 這段樣本穿過零點的次數，用來估音調高低。 */
+    private static int crossings(byte[] pcm, int from, int to) {
+        int count = 0;
+        for (int i = from + 1; i < to; i++) {
+            if (sample(pcm, (i - 1) * 2) < 0 != sample(pcm, i * 2) < 0) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     private static void defaults(AppSettings settings) {
         eq(100, settings.fontPercent(), "字體");
         eq(100, settings.tilePercent(), "麻將大小");
@@ -47,6 +62,7 @@ final class SettingsTest {
         eq(100, settings.soundVolume(), "音效音量");
         check(settings.voiceEnabled(), "語音預設開啟");
         eq(100, settings.voiceVolume(), "語音音量");
+        eq(Gender.FEMALE, settings.playerGender(), "我的語音");
     }
 
     static void run() {
@@ -79,6 +95,7 @@ final class SettingsTest {
                     settings.setSoundVolume(70);
                     settings.setVoiceEnabled(false);
                     settings.setVoiceVolume(40);
+                    settings.setPlayerGender(Gender.MALE);
                     settings.save(file);
 
                     AppSettings loaded = AppSettings.load(file);
@@ -93,6 +110,7 @@ final class SettingsTest {
                     eq(70, loaded.soundVolume(), "音效音量");
                     check(!loaded.voiceEnabled(), "語音");
                     eq(40, loaded.voiceVolume(), "語音音量");
+                    eq(Gender.MALE, loaded.playerGender(), "我的語音");
                 }
             } finally {
                 Files.deleteIfExists(file);
@@ -106,6 +124,7 @@ final class SettingsTest {
             defaults(loadText("fontPercent=77\nwaitSeconds=-5\nresolution=\n"));
             defaults(loadText("fontPercent=\\u00zz\n"));
             defaults(loadText("music=ROCK\nmusicVolume=abc\nsoundVolume=\n"));
+            defaults(loadText("playerGender=ROBOT\n"));
             defaults(loadText("tilePercent=999\n"));
             defaults(loadText("tilePercent=abc\n"));
         });
@@ -135,6 +154,56 @@ final class SettingsTest {
             eq(0, sample(trimmed, 0), "開頭留了一點空白");
             eq(0, sample(trimmed, trimmed.length - 2), "結尾歸零");
             eq(0, VoiceLines.trimSilence(new byte[1000]).length, "全部是空白");
+        });
+
+        test("語音：每種牌的講法都不同，字牌用牌桌上的叫法", () -> {
+            Set<String> texts = new HashSet<>();
+            for (int index = 0; index < Tile.KINDS; index++) {
+                texts.add(VoiceLines.tileText(Tile.fromIndex(index)));
+            }
+            eq(Tile.KINDS, texts.size(), "牌種");
+            eq("三萬", VoiceLines.tileText(Tile.parseAll("3w").get(0)), "數牌");
+            eq("東風", VoiceLines.tileText(Tile.parseAll("1z").get(0)), "風牌");
+            eq("紅中", VoiceLines.tileText(Tile.parseAll("5z").get(0)), "三元牌");
+        });
+
+        test("語音：興奮的聲音音調更高、更短、更大聲", () -> {
+            int rate = 44_100;
+            byte[] pcm = new byte[rate * 2];
+            for (int i = 0; i < rate; i++) {
+                int value = (int) (5_000 * Math.sin(2 * Math.PI * 200 * i / rate));
+                pcm[i * 2] = (byte) value;
+                pcm[i * 2 + 1] = (byte) (value >> 8);
+            }
+            byte[] excited = VoiceLines.excite(pcm);
+            int samples = excited.length / 2;
+            check(samples > rate / 2 && samples < rate * 4 / 5, "長度 " + samples);
+            int peak = 0;
+            for (int i = 0; i < samples; i++) {
+                peak = Math.max(peak, Math.abs(sample(excited, i * 2)));
+            }
+            check(peak > 30_000 && peak < 32_000, "接近滿格但不破音 " + peak);
+            int head = crossings(excited, 0, samples / 4);
+            int tail = crossings(excited, samples * 3 / 4, samples);
+            check(head > (samples / 4) * 2 * 200 * 1.2 / rate, "音調拉高 " + head);
+            check(tail > head, "音調上揚 " + head + " → " + tail);
+            eq(0, VoiceLines.excite(new byte[0]).length, "沒有聲音");
+        });
+
+        test("語音：沒有男聲時，女聲壓低後音調更低、更長", () -> {
+            int rate = 44_100;
+            byte[] pcm = new byte[rate * 2];
+            for (int i = 0; i < rate; i++) {
+                int value = (int) (5_000 * Math.sin(2 * Math.PI * 200 * i / rate));
+                pcm[i * 2] = (byte) value;
+                pcm[i * 2 + 1] = (byte) (value >> 8);
+            }
+            byte[] lowered = VoiceLines.lowerPitch(pcm);
+            check(lowered.length > pcm.length * 1.2, "長度 " + lowered.length);
+            double before = crossings(pcm, 0, rate) / 1.0 / rate;
+            double after = crossings(lowered, 0, lowered.length / 2) / 1.0 / (lowered.length / 2);
+            check(after < before * .8, "音調 " + before + " → " + after);
+            eq(0, VoiceLines.lowerPitch(new byte[0]).length, "沒有聲音");
         });
 
         test("背景音樂：每個聲部都對齊，長度合理，循環接得起來", () -> {

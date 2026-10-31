@@ -17,6 +17,7 @@ import ezmj.engine.Round;
 import ezmj.engine.RoundEvent;
 import ezmj.engine.RoundResult;
 import ezmj.engine.TurnOptions;
+import ezmj.model.Gender;
 import ezmj.model.Meld;
 import ezmj.model.Player;
 import ezmj.model.Tile;
@@ -166,7 +167,7 @@ final class RoundFlowTest {
             for (int i = 0; i < 2000; i++) {
                 Player[] players = new Player[4];
                 for (int seat = 0; seat < 4; seat++) {
-                    players[seat] = new Player("P" + seat, seat, seat == 0, 1000);
+                    players[seat] = new Player("P" + seat, seat, seat == 0, Gender.FEMALE, 1000);
                 }
                 Round round = new Round(players, new Wall(random), i % 4, 1, 0, message -> { });
                 round.start();

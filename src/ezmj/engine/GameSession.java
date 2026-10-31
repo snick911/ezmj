@@ -1,12 +1,12 @@
 package ezmj.engine;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 import java.util.function.Consumer;
 
 import ezmj.model.GameConfig;
 import ezmj.model.GameRecord;
+import ezmj.model.Gender;
 import ezmj.model.Player;
 import ezmj.model.Wall;
 
@@ -30,10 +30,12 @@ public final class GameSession {
     public GameSession(GameConfig config, Random random) {
         this.config = config;
         this.random = random;
-        players[0] = new Player(config.playerName(), 0, true, config.startingChips());
-        List<String> botNames = BotNames.pick(SEATS - 1, config.playerName(), random);
+        // 真人的聲音牌局中也能改，喊牌時直接讀環境設定，不看這裡的性別
+        players[0] = new Player(config.playerName(), 0, true, Gender.FEMALE, config.startingChips());
+        List<BotNames.Identity> bots = BotNames.pick(SEATS - 1, config.playerName(), random);
         for (int seat = 1; seat < SEATS; seat++) {
-            players[seat] = new Player(botNames.get(seat - 1), seat, false, config.startingChips());
+            BotNames.Identity bot = bots.get(seat - 1);
+            players[seat] = new Player(bot.name(), seat, false, bot.gender(), config.startingChips());
         }
         this.firstDealer = random.nextInt(SEATS);
         this.dealer = firstDealer;
@@ -49,7 +51,7 @@ public final class GameSession {
     /** 結算金額並推進莊家與圈風。 */
     public Settlement settle(RoundResult result) {
         int[] deltas = new int[SEATS];
-        List<String> notes = new ArrayList<>();
+        int[] tais = new int[SEATS];
         if (!result.isDrawnGame()) {
             wins[result.winner()]++;
             if (result.isSelfDraw()) {
@@ -68,20 +70,14 @@ public final class GameSession {
                 int amount = config.basePay() + tai * config.taiPay();
                 deltas[seat] -= amount;
                 deltas[result.winner()] += amount;
-                notes.add(players[seat].name() + " 付 " + amount + "（底 " + config.basePay()
-                        + " + " + tai + " 台 × " + config.taiPay() + "）");
-            }
-            if (streak > 0) {
-                notes.add("莊家 1 台＋連" + streak + "拉" + streak + " " + 2 * streak + " 台（只計與莊家相關的付款）");
-            } else {
-                notes.add("莊家 1 台（只計與莊家相關的付款）");
+                tais[seat] = tai;
             }
         }
         for (int seat = 0; seat < SEATS; seat++) {
             players[seat].addChips(deltas[seat]);
         }
         advanceDealer(result);
-        return new Settlement(deltas, notes);
+        return new Settlement(deltas, tais);
     }
 
     private void advanceDealer(RoundResult result) {

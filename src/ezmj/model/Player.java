@@ -10,6 +10,7 @@ public final class Player {
     private final String name;
     private final int seat;
     private final boolean human;
+    private final Gender gender;
     private int chips;
 
     private final List<Tile> concealed = new ArrayList<>();
@@ -17,10 +18,11 @@ public final class Player {
     private final List<Tile> flowers = new ArrayList<>();
     private final List<Tile> discards = new ArrayList<>();
 
-    public Player(String name, int seat, boolean human, int chips) {
+    public Player(String name, int seat, boolean human, Gender gender, int chips) {
         this.name = name;
         this.seat = seat;
         this.human = human;
+        this.gender = gender;
         this.chips = chips;
     }
 
@@ -87,6 +89,10 @@ public final class Player {
 
     public boolean isHuman() {
         return human;
+    }
+
+    public Gender gender() {
+        return gender;
     }
 
     public int chips() {

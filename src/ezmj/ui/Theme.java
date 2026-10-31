@@ -27,7 +27,10 @@ final class Theme {
     static final Color RED = new Color(0xC9, 0x3A, 0x32);
     static final Color BUTTON = new Color(0x2C, 0x6E, 0x58);
 
-    private static final String FAMILY = pickFamily();
+    private static final String FAMILY = pickFamily(Font.DIALOG,
+            "Microsoft JhengHei", "PingFang TC", "Noto Sans CJK TC", "Noto Sans TC");
+    private static final String BRUSH_FAMILY = pickFamily(FAMILY,
+            "DFKai-SB", "標楷體", "BiauKai", "Kaiti TC", "AR PL UKai TW", "KaiTi");
 
     private static float fontScale = 1f;
     private static double tileScale = 1;
@@ -35,15 +38,20 @@ final class Theme {
     private Theme() {
     }
 
-    private static String pickFamily() {
+    private static String pickFamily(String fallback, String... families) {
         Set<String> available = new HashSet<>(Arrays.asList(
                 GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames()));
-        for (String family : new String[] {"Microsoft JhengHei", "PingFang TC", "Noto Sans CJK TC", "Noto Sans TC"}) {
+        for (String family : families) {
             if (available.contains(family)) {
                 return family;
             }
         }
-        return Font.DIALOG;
+        return fallback;
+    }
+
+    /** 牌面上的毛筆字；電腦沒有楷書字型時用一般字型。 */
+    static Font brushFont(float size) {
+        return new Font(BRUSH_FAMILY, Font.BOLD, 1).deriveFont(size);
     }
 
     /** 會隨字體大小設定縮放的字型。 */
