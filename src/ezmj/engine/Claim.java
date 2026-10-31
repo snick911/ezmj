@@ -1,6 +1,9 @@
 package ezmj.engine;
 
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import ezmj.model.Tile;
 
@@ -23,10 +26,17 @@ public record Claim(Type type, Tile tile, List<Tile> fromHand) {
         }
     }
 
-    /** 按鈕文字；吃牌可能有多種組合，所以要標出用哪兩張。 */
-    public String label() {
-        return type == Type.CHOW
-                ? verb() + " " + fromHand.get(0).label() + fromHand.get(1).label()
-                : verb();
+    /** 這些宣告用得到的所有手牌，也就是選牌時可以點的牌。 */
+    public static Set<Tile> handTiles(List<Claim> claims) {
+        Set<Tile> tiles = new LinkedHashSet<>();
+        for (Claim claim : claims) {
+            tiles.addAll(claim.fromHand());
+        }
+        return tiles;
+    }
+
+    /** 這些宣告裡有用到這張手牌的。吃牌的同一張牌可能出現在兩種組合裡。 */
+    public static List<Claim> using(List<Claim> claims, Tile tile) {
+        return claims.stream().filter(claim -> claim.fromHand().contains(tile)).collect(Collectors.toList());
     }
 }

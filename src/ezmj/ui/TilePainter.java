@@ -9,6 +9,7 @@ import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.Shape;
 import java.awt.geom.AffineTransform;
+import java.awt.geom.Area;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.Path2D;
 import java.awt.geom.QuadCurve2D;
@@ -35,6 +36,7 @@ public final class TilePainter {
     private static final int CACHE_LIMIT = 800;
     private static final Color BACK = new Color(0x1F, 0x7A, 0x5C);
     private static final Color BACK_DARK = new Color(0x12, 0x55, 0x3F);
+    private static final Color MASK = new Color(0x0B, 0x1A, 0x15, 170);
     static final Color INK = new Color(0x15, 0x1B, 0x2E);
     static final Color CRIMSON = new Color(0xB5, 0x20, 0x2A);
     static final Color JADE = new Color(0x1A, 0x6E, 0x3C);
@@ -231,6 +233,15 @@ public final class TilePainter {
         paintFace(g, Tile.of(Suit.DRAGON, 1), (size - w) / 2, (size - h) / 2, w, h);
         g.dispose();
         return image;
+    }
+
+    /** 蓋在牌上的半透明遮罩，連厚度一起蓋住，表示這張牌現在不能選。 */
+    static void paintMask(Graphics2D g, double x, double y, double w, double h) {
+        Body b = body(g, x, y, w, h);
+        Area area = new Area(shape(b, 0));
+        area.add(new Area(shape(b, 1)));
+        g.setColor(MASK);
+        g.fill(area);
     }
 
     static void paintHighlight(Graphics2D g, double x, double y, double w, double h, Color color) {

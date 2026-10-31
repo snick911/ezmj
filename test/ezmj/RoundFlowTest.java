@@ -7,6 +7,7 @@ import static ezmj.T.test;
 import static ezmj.T.tile;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -22,6 +23,7 @@ import ezmj.model.Meld;
 import ezmj.model.Player;
 import ezmj.model.Tile;
 import ezmj.model.Wall;
+import ezmj.rules.HandAnalyzer;
 
 /** 一局的行牌流程：每個案例都用排好的牌牆走實際流程。 */
 final class RoundFlowTest {
@@ -30,6 +32,10 @@ final class RoundFlowTest {
     private static final String WAITING = "1w2w3w 4w5w6w 7p8p9p 2s3s4s 5s6s 9p9p";
     /** 只聽 3w 的 16 張。 */
     private static final String WINS_ON_3W = "1w2w 4w5w6w 7p8p9p 2s3s4s 5s6s7s 9p9p";
+    /** 只聽 5w 的 16 張。 */
+    private static final String WINS_ON_5W = "3w4w 1p2p3p 7p8p9p 2s3s4s 5s6s7s 9p9p";
+    /** 九蓮寶燈加一組刻子，一到九萬都聽。 */
+    private static final String NINE_WAITS = "1w1w1w 2w3w4w5w6w7w8w 9w9w9w 3p3p3p";
 
     private RoundFlowTest() {
     }
@@ -62,6 +68,7 @@ final class RoundFlowTest {
         chow();
         pongAndKong();
         priority();
+        manyWaits();
         afterClaim();
         kongs();
         winning();
@@ -254,6 +261,19 @@ final class RoundFlowTest {
             eq(List.of(), types(round, 0), "自己不能吃");
         });
 
+        test("吃：選牌時點共用的牌會留下兩種組合，再點另一張才確定", () -> {
+            Round round = Table.dealer(0).hand(0, "3w").hand(1, "1w2w4w5w").draws("9w").start();
+            round.discard(0, tile("3w"));
+            List<Claim> options = round.claimOptions(1);
+            eq(new HashSet<>(T.hand("1w2w4w5w")), Claim.handTiles(options), "可以選的牌");
+
+            eq(1, Claim.using(options, tile("1w")).size(), "只用在一種組合");
+            List<Claim> shared = Claim.using(options, tile("2w"));
+            eq(2, shared.size(), "二萬用在兩種組合");
+            eq(new HashSet<>(T.hand("1w2w4w")), Claim.handTiles(shared), "接著只能選這些");
+            eq(T.hand("2w4w"), Claim.using(shared, tile("4w")).get(0).fromHand(), "再點四萬");
+        });
+
         test("吃：邊界牌與不同花色不能湊順", () -> {
             Round one = Table.dealer(0).hand(0, "1w").hand(1, "2w3w").draws("9w").start();
             one.discard(0, tile("1w"));
@@ -358,6 +378,148 @@ final class RoundFlowTest {
             wrapped.resolveClaims(Map.of(0, option(wrapped, 0, Claim.Type.WIN), 3, option(wrapped, 3, Claim.Type.WIN)));
             eq(3, wrapped.result().winner(), "繞過座位 0 的距離計算");
         });
+
+        test("三家同時吃、碰、胡：不管座位遠近都是胡，吃碰的人手牌不動", () -> {
+            Round round = Table.dealer(0).hand(0, "3w").hand(1, "1w2w").hand(2, "3w3w").hand(3, WINS_ON_3W)
+                    .draws("9w").start();
+            round.discard(0, tile("3w"));
+            round.resolveClaims(Map.of(
+                    1, option(round, 1, Claim.Type.CHOW),
+                    2, option(round, 2, Claim.Type.PONG),
+                    3, option(round, 3, Claim.Type.WIN)));
+            RoundResult result = round.result();
+            eq(3, result.winner(), "最遠的一家胡");
+            eq(0, result.from(), "放槍者");
+            for (int seat : new int[] {1, 2}) {
+                eq(0, round.player(seat).melds().size(), "座位 " + seat + " 宣告不成立");
+                eq(16, round.player(seat).concealed().size(), "座位 " + seat + " 手牌不變");
+            }
+            eq(List.of(), round.player(0).discards(), "牌河移除");
+            conserved(round);
+        });
+
+        test("能胡的人放棄：碰照常成立，牌局繼續", () -> {
+            Round round = Table.dealer(0).hand(0, "3w").hand(1, "3w3w").hand(3, WINS_ON_3W).draws("9w").start();
+            round.discard(0, tile("3w"));
+            check(types(round, 3).contains(Claim.Type.WIN), "座位 3 本來可以胡");
+            round.resolveClaims(Map.of(1, option(round, 1, Claim.Type.PONG)));
+            eq(Round.Phase.TURN, round.phase(), "牌局繼續");
+            eq(1, round.current(), "碰的人行動");
+            eq(1, round.player(1).melds().size(), "碰成立");
+            eq(16, round.player(3).concealed().size(), "放棄的人手牌不變");
+            conserved(round);
+        });
+
+        test("碰完打出的牌，別家可以胡，放槍算打牌的人", () -> {
+            Round round = Table.dealer(0).hand(0, "3w").hand(1, "3w3w 5w").hand(2, WINS_ON_5W).draws("9w").start();
+            round.discard(0, tile("3w"));
+            round.resolveClaims(Map.of(1, option(round, 1, Claim.Type.PONG)));
+            round.discard(1, tile("5w"));
+            check(types(round, 2).contains(Claim.Type.WIN), "下一家可以胡");
+            round.resolveClaims(Map.of(2, option(round, 2, Claim.Type.WIN)));
+            RoundResult result = round.result();
+            eq(2, result.winner(), "胡牌者");
+            eq(1, result.from(), "碰完打牌的人放槍");
+            eq(tile("5w"), result.winTile(), "胡的牌");
+            eq(Meld.Type.PONG, round.player(1).melds().get(0).type(), "碰的面子還在");
+            eq(List.of(), round.player(1).discards(), "放槍的牌離開牌河");
+            conserved(round);
+        });
+
+        test("吃完打出的牌，不是下家的人也可以胡", () -> {
+            Round round = Table.dealer(0).hand(0, "3w").hand(1, "1w2w 5w").hand(3, WINS_ON_5W).draws("9w").start();
+            round.discard(0, tile("3w"));
+            round.resolveClaims(Map.of(1, option(round, 1, Claim.Type.CHOW)));
+            round.discard(1, tile("5w"));
+            eq(List.of(Claim.Type.WIN), types(round, 3), "對面只能胡");
+            round.resolveClaims(Map.of(3, option(round, 3, Claim.Type.WIN)));
+            eq(3, round.result().winner(), "胡牌者");
+            eq(1, round.result().from(), "吃完打牌的人放槍");
+            eq(Meld.Type.CHOW, round.player(1).melds().get(0).type(), "吃的面子還在");
+            conserved(round);
+        });
+    }
+
+    private static void manyWaits() {
+        List<Tile> nine = T.hand(NINE_WAITS);
+
+        test("同時聽九張：聽牌結果正確", () -> {
+            eq(T.hand("1w2w3w4w5w6w7w8w9w"), HandAnalyzer.waits(nine), "一到九萬");
+        });
+
+        test("同時聽九張：每一張都能胡別家打的牌，不算獨聽", () -> {
+            for (Tile wait : HandAnalyzer.waits(nine)) {
+                Round round = Table.dealer(3).hand(3, code(wait)).hand(0, NINE_WAITS).draws("1p").start();
+                round.discard(3, wait);
+                check(types(round, 0).contains(Claim.Type.WIN), wait + " 可以胡");
+                round.resolveClaims(Map.of(0, option(round, 0, Claim.Type.WIN)));
+                RoundResult result = round.result();
+                eq(0, result.winner(), wait + " 胡牌者");
+                eq(3, result.from(), wait + " 放槍者");
+                eq(wait, result.winTile(), "胡的牌");
+                eq(17, round.player(0).concealed().size(), wait + " 張數");
+                check(!result.score().has("獨聽"), wait + " 不是獨聽 " + result.score());
+                conserved(round);
+            }
+        });
+
+        test("同時聽九張：每一張都能自摸，不算獨聽", () -> {
+            for (Tile wait : HandAnalyzer.waits(nine)) {
+                Round round = Table.dealer(0).hand(0, NINE_WAITS).draws(code(wait)).start();
+                check(round.turnOptions(0).canSelfWin(), wait + " 可以自摸");
+                round.declareSelfWin(0);
+                RoundResult result = round.result();
+                check(result.isSelfDraw(), wait + " 自摸");
+                eq(wait, result.winTile(), "胡的牌");
+                check(!result.score().has("獨聽"), wait + " 不是獨聽 " + result.score());
+                conserved(round);
+            }
+        });
+
+        test("同時聽多張的清一色：每一張都算到清一色", () -> {
+            String pure = "1w1w1w 2w3w4w5w6w7w8w 9w9w9w 2w3w4w";
+            List<Tile> waits = HandAnalyzer.waits(T.hand(pure));
+            check(waits.size() >= 3, "至少聽三張 " + waits);
+            for (Tile wait : waits) {
+                Round round = Table.dealer(3).hand(3, code(wait)).hand(0, pure).draws("1p").start();
+                round.discard(3, wait);
+                round.resolveClaims(Map.of(0, option(round, 0, Claim.Type.WIN)));
+                check(round.result().score().has("清一色"), wait + " 清一色 " + round.result().score());
+                check(!round.result().score().has("獨聽"), wait + " 不是獨聽");
+                conserved(round);
+            }
+        });
+
+        test("碰完還聽九張：別家打的任何一張都能胡，不算門清", () -> {
+            for (Tile wait : HandAnalyzer.waits(nine)) {
+                Round round = Table.dealer(3).hand(3, "3p").hand(0, "1w1w1w2w3w4w5w6w7w8w9w9w9w 3p3p 5z")
+                        .draws("1p 2p 2p " + code(wait)).start();
+                round.discard(3, tile("3p"));
+                round.resolveClaims(Map.of(0, option(round, 0, Claim.Type.PONG)));
+                round.discard(0, tile("5z"));
+                round.resolveClaims(Map.of());
+                Table.discardDrawnAndPass(round);
+                Table.discardDrawnAndPass(round);
+                round.discard(3, wait);
+                check(types(round, 0).contains(Claim.Type.WIN), wait + " 可以胡");
+                round.resolveClaims(Map.of(0, option(round, 0, Claim.Type.WIN)));
+                RoundResult result = round.result();
+                eq(0, result.winner(), wait + " 胡牌者");
+                check(!result.score().has("獨聽"), wait + " 不是獨聽");
+                check(!result.score().has("門清"), wait + " 不是門清");
+                conserved(round);
+            }
+        });
+
+        test("多打一張就聽九張：聽牌選項列出全部", () -> {
+            Round round = Table.dealer(0).hand(0, NINE_WAITS).draws("5z").start();
+            eq(T.hand("1w2w3w4w5w6w7w8w9w"), round.readyDiscards(0).get(tile("5z")), "打東風聽九張");
+        });
+    }
+
+    /** 牌的記法，給 Table 的劇本用。 */
+    private static String code(Tile tile) {
+        return tile.rank() + "w";
     }
 
     private static void afterClaim() {

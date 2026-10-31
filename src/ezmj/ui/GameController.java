@@ -3,8 +3,10 @@ package ezmj.ui;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import javax.swing.Timer;
@@ -30,6 +32,7 @@ public final class GameController {
     private static final int HUMAN_SEAT = 0;
     private static final int BOT_TURN_DELAY_MS = 550;
     private static final int CLAIM_DELAY_MS = 200;
+    private static final String TURN_HINT = "輪到你了：點一張手牌打出";
     private static final int MAX_LISTEN_BUTTONS = 4;
     private static final int MAX_LISTED_WAITS = 3;
 
@@ -297,6 +300,11 @@ public final class GameController {
     }
 
     private void showHumanTurn(TurnOptions options) {
+        beginPrompt(TURN_HINT, () -> humanDiscard(round.rightmostTile(HUMAN_SEAT)));
+        showTurnActions(options);
+    }
+
+    private void showTurnActions(TurnOptions options) {
         List<TablePanel.ActionItem> actions = new ArrayList<>();
         if (options.canSelfWin()) {
             actions.add(new TablePanel.ActionItem("自摸", Theme.RED, () -> {
@@ -304,22 +312,28 @@ public final class GameController {
                 advance();
             }));
         }
-        for (Tile tile : options.concealedKongs()) {
-            actions.add(new TablePanel.ActionItem("暗槓 " + tile.label(), Theme.BUTTON, () -> {
-                round.declareConcealedKong(HUMAN_SEAT, tile);
-                advance();
-            }));
-        }
-        for (Tile tile : options.addKongs()) {
-            actions.add(new TablePanel.ActionItem("加槓 " + tile.label(), Theme.BUTTON, () -> {
-                round.declareAddKong(HUMAN_SEAT, tile);
-                advance();
-            }));
+        if (!options.concealedKongs().isEmpty() || !options.addKongs().isEmpty()) {
+            actions.add(new TablePanel.ActionItem("槓", Theme.BUTTON, () -> pickTurnKong(options)));
         }
         addListenButtons(actions);
-        String hint = "輪到你了：點一張手牌打出";
-        view.showActions(hint, true, actions);
-        beginPrompt(hint, () -> humanDiscard(round.rightmostTile(HUMAN_SEAT)));
+        view.showActions(TURN_HINT, true, actions);
+        updatePromptHint(TURN_HINT);
+    }
+
+    /** 自己的回合選要槓哪張。手上四張的是暗槓，已經碰出來的是加槓，同一張牌不會兩種都能做。 */
+    private void pickTurnKong(TurnOptions options) {
+        Set<Tile> tiles = new LinkedHashSet<>(options.concealedKongs());
+        tiles.addAll(options.addKongs());
+        String hint = "選要槓的牌";
+        view.showPick(hint, tiles, null, tile -> {
+            if (options.concealedKongs().contains(tile)) {
+                round.declareConcealedKong(HUMAN_SEAT, tile);
+            } else {
+                round.declareAddKong(HUMAN_SEAT, tile);
+            }
+            advance();
+        }, List.of(new TablePanel.ActionItem("取消", Theme.PANEL_LIGHT, () -> showTurnActions(options))));
+        updatePromptHint(hint);
     }
 
     /** 真人開始考慮；時間到還沒決定就執行 onTimeout。 */
@@ -369,6 +383,16 @@ public final class GameController {
         view.setHint(promptHint + "（剩 " + secondsLeft + " 秒）");
     }
 
+    /** 換提示文字但不重新計時：進出選牌不能多賺時間。 */
+    private void updatePromptHint(String hint) {
+        promptHint = hint;
+        if (countdown != null) {
+            showSecondsLeft();
+        } else {
+            view.setHint(hint);
+        }
+    }
+
     /** 由牌桌點牌事件呼叫。 */
     void humanDiscard(Tile tile) {
         if (round.phase() == Round.Phase.TURN && round.current() == HUMAN_SEAT) {
@@ -401,18 +425,52 @@ public final class GameController {
             schedule(CLAIM_DELAY_MS, this::resolveClaims);
             return;
         }
+        beginPrompt(claimHint() + "，要宣告嗎？", this::resolveClaims);
+        showClaimActions(humanOptions);
+    }
+
+    private String claimHint() {
+        return round.player(round.discarder()).name() + " 打出 " + round.claimTile().label();
+    }
+
+    /** 每種宣告一個按鈕。胡用的是整手牌，沒有牌可選，按了就胡；其他的按了去選牌。 */
+    private void showClaimActions(List<Claim> options) {
         List<TablePanel.ActionItem> actions = new ArrayList<>();
-        for (Claim claim : humanOptions) {
-            actions.add(new TablePanel.ActionItem(claim.label(),
-                    claim.type() == Claim.Type.WIN ? Theme.RED : Theme.BUTTON, () -> {
-                pendingClaims.put(HUMAN_SEAT, claim);
-                resolveClaims();
-            }));
+        for (Claim.Type type : Claim.Type.values()) {
+            List<Claim> ofType = options.stream().filter(claim -> claim.type() == type).collect(Collectors.toList());
+            if (ofType.isEmpty()) {
+                continue;
+            }
+            Claim first = ofType.get(0);
+            actions.add(type == Claim.Type.WIN
+                    ? new TablePanel.ActionItem(first.verb(), Theme.RED, () -> declareClaim(first))
+                    : new TablePanel.ActionItem(first.verb(), Theme.BUTTON, () -> pickClaim(options, ofType, null)));
         }
         actions.add(new TablePanel.ActionItem("過", Theme.PANEL_LIGHT, this::resolveClaims));
-        String hint = round.player(round.discarder()).name() + " 打出 " + round.claimTile().label() + "，要宣告嗎？";
+        String hint = claimHint() + "，要宣告嗎？";
         view.showActions(hint, false, actions);
-        beginPrompt(hint, this::resolveClaims);
+        updatePromptHint(hint);
+    }
+
+    /** 選宣告要用的手牌。點的牌只符合一種組合就宣告；吃牌還有其他組合時留著這張，再選一張。 */
+    private void pickClaim(List<Claim> options, List<Claim> claims, Tile first) {
+        Set<Tile> tiles = Claim.handTiles(claims);
+        tiles.remove(first);
+        String hint = claimHint() + (first == null ? "：選要" + claims.get(0).verb() + "的牌" : "：再選一張");
+        view.showPick(hint, tiles, first, tile -> {
+            List<Claim> matching = Claim.using(claims, tile);
+            if (matching.size() == 1) {
+                declareClaim(matching.get(0));
+            } else {
+                pickClaim(options, matching, tile);
+            }
+        }, List.of(new TablePanel.ActionItem("取消", Theme.PANEL_LIGHT, () -> showClaimActions(options))));
+        updatePromptHint(hint);
+    }
+
+    private void declareClaim(Claim claim) {
+        pendingClaims.put(HUMAN_SEAT, claim);
+        resolveClaims();
     }
 
     /** 聽牌模式只胡不吃碰槓；代打就照電腦的判斷。 */

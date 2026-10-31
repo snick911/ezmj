@@ -6,6 +6,7 @@ import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Consumer;
 
 import javax.swing.BorderFactory;
@@ -180,6 +181,17 @@ public final class TablePanel extends JPanel {
     void showActions(String hintText, boolean discardEnabled, List<ActionItem> actions) {
         hint.setText(hintText);
         canvas.setDiscardEnabled(discardEnabled);
+        setButtons(actions);
+    }
+
+    /** 進入選牌：只有 tiles 裡的手牌能點，其他蓋上遮罩。first 是已經選好的牌，沒有就是 null。 */
+    void showPick(String hintText, Set<Tile> tiles, Tile first, Consumer<Tile> onPick, List<ActionItem> actions) {
+        hint.setText(hintText);
+        canvas.startPick(tiles, first, onPick);
+        setButtons(actions);
+    }
+
+    private void setButtons(List<ActionItem> actions) {
         actionButtons.removeAll();
         for (ActionItem action : actions) {
             JButton button = Theme.button(action.label(), action.color());

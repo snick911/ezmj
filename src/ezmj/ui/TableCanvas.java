@@ -22,6 +22,7 @@ import java.awt.geom.RoundRectangle2D;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Consumer;
 
 import javax.swing.JComponent;
@@ -102,6 +103,11 @@ final class TableCanvas extends JComponent {
     private final Timer frameTimer = new Timer(FRAME_MS, e -> nextFrame());
     private Round round;
     private boolean discardEnabled;
+    /** 選牌中可以點的牌；null 表示沒有在選牌。 */
+    private Set<Tile> pickable;
+    /** 已經選好的第一張牌；吃牌還要再選一張時才有。 */
+    private Tile picked;
+    private Consumer<Tile> onPick;
     private int hover = -1;
     private long frameNow;
     private long dealStart;
@@ -124,8 +130,8 @@ final class TableCanvas extends JComponent {
             @Override
             public void mousePressed(MouseEvent e) {
                 updateHover(e);
-                if (discardEnabled && hover >= 0 && hover < hits.size()) {
-                    onDiscard.accept(hits.get(hover).tile());
+                if (hover >= 0 && hover < hits.size()) {
+                    (pickable != null ? onPick : onDiscard).accept(hits.get(hover).tile());
                 }
             }
         };
@@ -374,20 +380,35 @@ final class TableCanvas extends JComponent {
         return false;
     }
 
+    /** 回到一般狀態，同時結束選牌。 */
     void setDiscardEnabled(boolean enabled) {
         discardEnabled = enabled;
+        pickable = null;
+        picked = null;
         hover = -1;
         repaint();
     }
 
+    /** 開始選牌：只有 tiles 裡的牌能點，其他手牌蓋上遮罩。first 是已經選好、要留著不蓋的牌。 */
+    void startPick(Set<Tile> tiles, Tile first, Consumer<Tile> onPick) {
+        discardEnabled = false;
+        pickable = tiles;
+        picked = first;
+        this.onPick = onPick;
+        hover = -1;
+        repaint();
+    }
+
+    private boolean clickable(Tile tile) {
+        return pickable != null ? pickable.contains(tile) : discardEnabled;
+    }
+
     private void updateHover(MouseEvent e) {
         int next = -1;
-        if (discardEnabled) {
-            for (int i = 0; i < hits.size(); i++) {
-                if (hits.get(i).bounds().contains(e.getPoint())) {
-                    next = i;
-                    break;
-                }
+        for (int i = 0; i < hits.size(); i++) {
+            if (hits.get(i).bounds().contains(e.getPoint())) {
+                next = clickable(hits.get(i).tile()) ? i : -1;
+                break;
             }
         }
         if (next != hover) {
@@ -682,11 +703,15 @@ final class TableCanvas extends JComponent {
     private void paintHandTile(Graphics2D g, int seat, Tile tile, double x, double y, double w, double h,
                                double hitW, boolean faceUp) {
         double drawY = y;
+        boolean masked = false;
         if (seat == 0) {
             int index = hits.size();
+            // 相同的牌只抬起第一張，看起來才是選了一張
+            boolean chosen = tile.equals(picked) && hits.stream().noneMatch(hit -> hit.tile().equals(picked));
             hits.add(new HandHit(new Rectangle((int) (x + getWidth() / 2.0), (int) (y + getHeight() / 2.0),
                     (int) Math.ceil(hitW), (int) Math.ceil(h)), tile));
-            if (discardEnabled && index == hover) {
+            masked = pickable != null && !pickable.contains(tile) && !chosen;
+            if (chosen || index == hover) {
                 drawY -= h * .16;
             }
         }
@@ -694,6 +719,9 @@ final class TableCanvas extends JComponent {
             TilePainter.paintFace(g, tile, x, drawY, w, h);
         } else {
             TilePainter.paintBack(g, x, drawY, w, h);
+        }
+        if (masked) {
+            TilePainter.paintMask(g, x, drawY, w, h);
         }
     }
 
