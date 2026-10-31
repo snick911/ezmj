@@ -1,0 +1,586 @@
+package ezmj;
+
+import static ezmj.T.check;
+import static ezmj.T.eq;
+import static ezmj.T.fails;
+import static ezmj.T.test;
+import static ezmj.T.tile;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+import java.util.stream.Collectors;
+
+import ezmj.engine.Claim;
+import ezmj.engine.Round;
+import ezmj.engine.RoundResult;
+import ezmj.engine.TurnOptions;
+import ezmj.model.Meld;
+import ezmj.model.Player;
+import ezmj.model.Tile;
+import ezmj.model.Wall;
+
+/** 一局的行牌流程：每個案例都用排好的牌牆走實際流程。 */
+final class RoundFlowTest {
+
+    /** 聽 1s、4s、7s 的 16 張。 */
+    private static final String WAITING = "1w2w3w 4w5w6w 7p8p9p 2s3s4s 5s6s 9p9p";
+    /** 只聽 3w 的 16 張。 */
+    private static final String WINS_ON_3W = "1w2w 4w5w6w 7p8p9p 2s3s4s 5s6s7s 9p9p";
+
+    private RoundFlowTest() {
+    }
+
+    private static List<Claim.Type> types(Round round, int seat) {
+        return round.claimOptions(seat).stream().map(Claim::type).collect(Collectors.toList());
+    }
+
+    private static Claim option(Round round, int seat, Claim.Type type) {
+        return round.claimOptions(seat).stream().filter(c -> c.type() == type).findFirst()
+                .orElseThrow(() -> new AssertionError("座位 " + seat + " 沒有 " + type));
+    }
+
+    private static void conserved(Round round) {
+        eq(144, Table.totalTiles(round), "全場張數");
+    }
+
+    /** 不宣告地行牌，直到牌牆可摸張數歸零且輪到某家手上有最後一張牌。 */
+    private static void playToLastTile(Round round) {
+        while (round.wall().liveCount() > 0) {
+            Table.discardDrawnAndPass(round);
+        }
+    }
+
+    static void run() {
+        T.section("行牌流程");
+        dealing();
+        flowers();
+        turnOrder();
+        chow();
+        pongAndKong();
+        priority();
+        afterClaim();
+        kongs();
+        winning();
+        endOfWall();
+        illegalActions();
+    }
+
+    private static void dealing() {
+        test("發牌：莊家 17 張、閒家 16 張，全場 144 張", () -> {
+            for (int dealer = 0; dealer < 4; dealer++) {
+                Round round = Table.dealer(dealer).start();
+                for (int seat = 0; seat < 4; seat++) {
+                    eq(seat == dealer ? 17 : 16, round.player(seat).concealed().size(), "座位 " + seat);
+                }
+                eq(dealer, round.current(), "莊家先行");
+                eq(Round.Phase.TURN, round.phase(), "階段");
+                conserved(round);
+            }
+        });
+
+        test("真實洗牌開局：花牌全部補掉、手牌張數正確", () -> {
+            Random random = new Random(31);
+            for (int i = 0; i < 2000; i++) {
+                Player[] players = new Player[4];
+                for (int seat = 0; seat < 4; seat++) {
+                    players[seat] = new Player("P" + seat, seat, seat == 0, 1000);
+                }
+                Round round = new Round(players, new Wall(random), i % 4, 1, message -> { });
+                round.start();
+                for (int seat = 0; seat < 4; seat++) {
+                    check(players[seat].concealed().stream().noneMatch(Tile::isFlower), "手牌有花");
+                    eq(seat == i % 4 ? 17 : 16, players[seat].concealed().size(), "手牌張數");
+                    check(players[seat].flowers().stream().allMatch(Tile::isFlower), "花區混入一般牌");
+                }
+                conserved(round);
+            }
+        });
+
+        test("門風由莊家起算逆時針為東南西北", () -> {
+            Round round = Table.dealer(2).start();
+            eq(1, round.seatWind(2), "莊家東");
+            eq(2, round.seatWind(3), "下家南");
+            eq(3, round.seatWind(0), "對家西");
+            eq(4, round.seatWind(1), "上家北");
+        });
+    }
+
+    private static void flowers() {
+        test("開局補花：從莊家起依序由牌尾補", () -> {
+            Round round = Table.dealer(0).hand(0, "1f").hand(2, "2f").backs("8w 9w").draws("7w").start();
+            eq(T.hand("1f"), round.player(0).flowers(), "莊家花");
+            eq(T.hand("2f"), round.player(2).flowers(), "對家花");
+            eq(1, round.player(0).countInHand(tile("8w")), "莊家補到牌尾第一張");
+            eq(1, round.player(2).countInHand(tile("9w")), "對家補到牌尾第二張");
+            eq(17, round.player(0).concealed().size(), "莊家張數");
+            eq(16, round.player(2).concealed().size(), "對家張數");
+            conserved(round);
+        });
+
+        test("補花又補到花會連續補", () -> {
+            Round round = Table.dealer(0).hand(0, "1f").backs("2f 3f 8w").draws("7w").start();
+            eq(3, round.player(0).flowers().size(), "花數");
+            eq(1, round.player(0).countInHand(tile("8w")), "最後補到的牌");
+            eq(17, round.player(0).concealed().size(), "張數");
+        });
+
+        test("摸牌摸到花：由牌尾補，並標記補到的牌為剛摸的牌", () -> {
+            Round round = Table.dealer(0).draws("3f").backs("7w").start();
+            eq(T.hand("3f"), round.player(0).flowers(), "花");
+            eq(tile("7w"), round.drawn(), "剛摸的牌");
+            eq(17, round.player(0).concealed().size(), "張數");
+        });
+    }
+
+    private static void turnOrder() {
+        test("沒人宣告時依 0→1→2→3→0 輪轉", () -> {
+            Round round = Table.dealer(0).start();
+            for (int step = 1; step <= 8; step++) {
+                Table.discardDrawnAndPass(round);
+                eq(step % 4, round.current(), "第 " + step + " 手");
+                eq(17, round.player(round.current()).concealed().size(), "摸牌後張數");
+                conserved(round);
+            }
+        });
+
+        test("打牌：手牌移到牌河並進入宣告階段", () -> {
+            Round round = Table.dealer(0).hand(0, "5w").draws("9w").start();
+            round.discard(0, tile("5w"));
+            eq(Round.Phase.CLAIMS, round.phase(), "階段");
+            eq(tile("5w"), round.claimTile(), "待宣告牌");
+            eq(0, round.discarder(), "打牌者");
+            eq(T.hand("5w"), round.player(0).discards(), "牌河");
+            eq(16, round.player(0).concealed().size(), "手牌");
+            check(round.drawn() == null, "打牌後沒有剛摸的牌");
+        });
+    }
+
+    private static void chow() {
+        test("吃：只有下家能吃，三種組合都列出", () -> {
+            Round round = Table.dealer(0).hand(0, "3w").hand(1, "1w2w4w5w").hand(2, "1w2w").hand(3, "1w2w")
+                    .draws("9w").start();
+            round.discard(0, tile("3w"));
+            List<Claim> options = round.claimOptions(1);
+            eq(3, options.size(), "組合數 " + options);
+            eq(T.hand("1w2w"), options.get(0).fromHand(), "前吃");
+            eq(T.hand("2w4w"), options.get(1).fromHand(), "中吃");
+            eq(T.hand("4w5w"), options.get(2).fromHand(), "後吃");
+            eq(List.of(), types(round, 2), "對家不能吃");
+            eq(List.of(), types(round, 3), "上家不能吃");
+            eq(List.of(), types(round, 0), "自己不能吃");
+        });
+
+        test("吃：邊界牌與不同花色不能湊順", () -> {
+            Round one = Table.dealer(0).hand(0, "1w").hand(1, "2w3w").draws("9w").start();
+            one.discard(0, tile("1w"));
+            eq(1, one.claimOptions(1).size(), "一萬只能 123");
+
+            Round nine = Table.dealer(0).hand(0, "9w").hand(1, "7w8w").draws("1w").start();
+            nine.discard(0, tile("9w"));
+            eq(1, nine.claimOptions(1).size(), "九萬只能 789");
+
+            Round mixed = Table.dealer(0).hand(0, "3w").hand(1, "1w").draws("9w").start();
+            mixed.discard(0, tile("3w"));
+            eq(List.of(), types(mixed, 1), "只有一張相關的萬子不能吃");
+        });
+
+        test("吃：字牌不能吃", () -> {
+            Round round = Table.dealer(0).hand(0, "1z").hand(1, "2z3z").draws("9w").start();
+            round.discard(0, tile("1z"));
+            check(!types(round, 1).contains(Claim.Type.CHOW), "字牌不能吃");
+        });
+
+        test("吃完：面子正確、牌河移除、輪到自己只能打牌", () -> {
+            Round round = Table.dealer(0).hand(0, "3w").hand(1, "1w2w").draws("9w").start();
+            round.discard(0, tile("3w"));
+            round.resolveClaims(Map.of(1, option(round, 1, Claim.Type.CHOW)));
+            Player player = round.player(1);
+            eq(1, player.melds().size(), "面子數");
+            eq(Meld.Type.CHOW, player.melds().get(0).type(), "類型");
+            eq(T.hand("1w2w3w"), player.melds().get(0).tiles(), "順子由小到大");
+            eq(14, player.concealed().size(), "手牌剩 14 張");
+            eq(List.of(), round.player(0).discards(), "被吃的牌離開牌河");
+            eq(1, round.current(), "輪到吃牌者");
+            eq(Round.Phase.TURN, round.phase(), "階段");
+            conserved(round);
+        });
+    }
+
+    private static void pongAndKong() {
+        test("碰：任何一家都能碰，打牌者不能碰自己", () -> {
+            for (int seat = 1; seat < 4; seat++) {
+                Round round = Table.dealer(0).hand(0, "5w").hand(seat, "5w5w").draws("9w").start();
+                round.discard(0, tile("5w"));
+                eq(List.of(Claim.Type.PONG), types(round, seat), "座位 " + seat);
+            }
+            Round self = Table.dealer(0).hand(0, "5w5w5w").draws("9w").start();
+            self.discard(0, tile("5w"));
+            eq(List.of(), types(self, 0), "不能碰自己打的牌");
+        });
+
+        test("只有一張不能碰，三張可槓也可碰", () -> {
+            Round single = Table.dealer(0).hand(0, "5w").hand(2, "5w").draws("9w").start();
+            single.discard(0, tile("5w"));
+            eq(List.of(), types(single, 2), "一張不能碰");
+
+            Round triple = Table.dealer(0).hand(0, "5w").hand(2, "5w5w5w").draws("9w").start();
+            triple.discard(0, tile("5w"));
+            eq(List.of(Claim.Type.KONG, Claim.Type.PONG), types(triple, 2), "三張");
+        });
+
+        test("下家同時可碰可吃都會列出", () -> {
+            Round round = Table.dealer(0).hand(0, "3w").hand(1, "3w3w1w2w").draws("9w").start();
+            round.discard(0, tile("3w"));
+            eq(List.of(Claim.Type.PONG, Claim.Type.CHOW), types(round, 1), "選項");
+        });
+    }
+
+    private static void priority() {
+        test("碰優先於吃，即使吃的人比較近", () -> {
+            Round round = Table.dealer(0).hand(0, "3w").hand(1, "1w2w").hand(3, "3w3w").draws("9w").start();
+            round.discard(0, tile("3w"));
+            round.resolveClaims(Map.of(1, option(round, 1, Claim.Type.CHOW), 3, option(round, 3, Claim.Type.PONG)));
+            eq(3, round.current(), "碰的人行動");
+            eq(0, round.player(1).melds().size(), "吃不成立");
+            eq(16, round.player(1).concealed().size(), "吃的人手牌不變");
+        });
+
+        test("槓優先於吃", () -> {
+            Round round = Table.dealer(0).hand(0, "3w").hand(1, "1w2w").hand(2, "3w3w3w").draws("9w").backs("9w").start();
+            round.discard(0, tile("3w"));
+            round.resolveClaims(Map.of(1, option(round, 1, Claim.Type.CHOW), 2, option(round, 2, Claim.Type.KONG)));
+            eq(2, round.current(), "槓的人行動");
+            eq(Meld.Type.OPEN_KONG, round.player(2).melds().get(0).type(), "明槓");
+        });
+
+        test("胡優先於碰與吃", () -> {
+            Round round = Table.dealer(0).hand(0, "3w").hand(1, "3w3w").hand(3, WINS_ON_3W).draws("9w").start();
+            round.discard(0, tile("3w"));
+            round.resolveClaims(Map.of(1, option(round, 1, Claim.Type.PONG), 3, option(round, 3, Claim.Type.WIN)));
+            eq(Round.Phase.FINISHED, round.phase(), "結束");
+            eq(3, round.result().winner(), "胡牌者");
+            eq(0, round.player(1).melds().size(), "碰不成立");
+        });
+
+        test("多人同胡：由打牌者下家起算最近的人胡", () -> {
+            String other = "1w2w 4w5w6w 1p2p3p 2s3s4s 5s6s7s 5p5p";
+            Round round = Table.dealer(0).hand(0, "3w").hand(1, WINS_ON_3W).hand(3, other).draws("9w").start();
+            round.discard(0, tile("3w"));
+            round.resolveClaims(Map.of(3, option(round, 3, Claim.Type.WIN), 1, option(round, 1, Claim.Type.WIN)));
+            eq(1, round.result().winner(), "下家截胡");
+
+            Round wrapped = Table.dealer(2).hand(2, "3w").hand(0, WINS_ON_3W).hand(3, other).draws("9w").start();
+            wrapped.discard(2, tile("3w"));
+            wrapped.resolveClaims(Map.of(0, option(wrapped, 0, Claim.Type.WIN), 3, option(wrapped, 3, Claim.Type.WIN)));
+            eq(3, wrapped.result().winner(), "繞過座位 0 的距離計算");
+        });
+    }
+
+    private static void afterClaim() {
+        test("碰完只能打牌，不能自摸或暗槓，打完輪到下家", () -> {
+            Round round = Table.dealer(0).hand(0, "5w").hand(2, "5w5w 8w8w8w8w").draws("9w 1w").start();
+            round.discard(0, tile("5w"));
+            round.resolveClaims(Map.of(2, option(round, 2, Claim.Type.PONG)));
+            eq(TurnOptions.DISCARD_ONLY, round.turnOptions(2), "只能打牌");
+            check(round.drawn() == null, "碰牌沒有摸牌");
+            fails(IllegalStateException.class, () -> round.declareSelfWin(2), "碰完不能自摸");
+            round.discard(2, tile("8w"));
+            round.resolveClaims(Map.of());
+            eq(3, round.current(), "輪到碰牌者的下家，跳過座位 1");
+            conserved(round);
+        });
+    }
+
+    private static void kongs() {
+        test("明槓：由牌尾補牌，可以繼續行動", () -> {
+            Round round = Table.dealer(0).hand(0, "5w").hand(2, "5w5w5w").draws("9w").backs("1w").start();
+            int wallBefore = round.wall().size();
+            round.discard(0, tile("5w"));
+            round.resolveClaims(Map.of(2, option(round, 2, Claim.Type.KONG)));
+            Meld meld = round.player(2).melds().get(0);
+            eq(Meld.Type.OPEN_KONG, meld.type(), "類型");
+            eq(4, meld.tiles().size(), "四張");
+            eq(tile("1w"), round.drawn(), "補到牌尾");
+            eq(2, round.current(), "輪到自己");
+            eq(wallBefore - 1, round.wall().size(), "牌牆少一張");
+            eq(14, round.player(2).concealed().size(), "手牌 16-3+1");
+            conserved(round);
+        });
+
+        test("明槓後補到胡牌算槓上開花", () -> {
+            Round round = Table.dealer(0).hand(0, "5w").hand(2, "5w5w5w 1w2w3w 7p8p9p 2s3s4s 5s6s 9p9p")
+                    .draws("9w").backs("4s").start();
+            round.discard(0, tile("5w"));
+            round.resolveClaims(Map.of(2, option(round, 2, Claim.Type.KONG)));
+            check(round.turnOptions(2).canSelfWin(), "應該可以自摸");
+            round.declareSelfWin(2);
+            check(round.result().score().has("槓上開花"), "槓上開花 " + round.result().score());
+            check(round.result().score().has("自摸"), "明槓不是門清");
+            check(round.result().isSelfDraw(), "算自摸");
+        });
+
+        test("暗槓：手上四張才能槓，補牌後還是門清", () -> {
+            Round round = Table.dealer(0).hand(0, "1w1w1w 2w3w4w 7p8p9p 2s3s4s 5s6s 9p9p")
+                    .draws("1w").backs("7s").start();
+            eq(T.hand("1w"), round.turnOptions(0).concealedKongs(), "可暗槓");
+            round.declareConcealedKong(0, tile("1w"));
+            eq(Meld.Type.CONCEALED_KONG, round.player(0).melds().get(0).type(), "類型");
+            eq(tile("7s"), round.drawn(), "補牌");
+            eq(0, round.current(), "仍是自己");
+            round.declareSelfWin(0);
+            RoundResult result = round.result();
+            check(result.score().has("門清一摸三"), "暗槓不破門清 " + result.score());
+            check(result.score().has("槓上開花"), "槓上開花");
+            check(!result.score().has("天胡"), "開過槓不算天胡");
+            eq(4, result.score().totalTai(), "總台數 " + result.score());
+        });
+
+        test("只有三張不能暗槓", () -> {
+            Round round = Table.dealer(0).hand(0, "1w1w1w").draws("9w").start();
+            eq(List.of(), round.turnOptions(0).concealedKongs(), "不能暗槓");
+            fails(IllegalStateException.class, () -> round.declareConcealedKong(0, tile("1w")), "暗槓");
+        });
+
+        Table addKong = Table.dealer(3).hand(3, "5w").hand(0, "5w5w 8w")
+                .hand(1, "3w4w 6w7w8w 7p8p9p 2s3s4s 5s6s7s 9p9p")
+                .draws("9w 9w 9w 9w 5w").backs("1w");
+
+        test("加槓：無人搶槓就升級為明槓並由牌尾補牌", () -> {
+            Round round = playToAddKong(addKong);
+            eq(T.hand("5w"), round.turnOptions(0).addKongs(), "可加槓");
+            round.declareAddKong(0, tile("5w"));
+            eq(Round.Phase.CLAIMS, round.phase(), "先給人搶槓");
+            check(round.isRobbing(), "搶槓中");
+            eq(Meld.Type.PONG, round.player(0).melds().get(0).type(), "還沒升級");
+            conserved(round);
+            round.resolveClaims(Map.of());
+            eq(Meld.Type.OPEN_KONG, round.player(0).melds().get(0).type(), "升級");
+            eq(tile("1w"), round.drawn(), "補牌");
+            eq(0, round.current(), "仍是自己");
+            check(!round.isRobbing(), "搶槓結束");
+            conserved(round);
+        });
+
+        test("搶槓：只能胡不能碰吃，胡了碰仍維持三張", () -> {
+            Round round = playToAddKong(addKong);
+            round.declareAddKong(0, tile("5w"));
+            eq(List.of(Claim.Type.WIN), types(round, 1), "只能胡");
+            eq(List.of(), types(round, 0), "加槓者自己不能搶");
+            round.resolveClaims(Map.of(1, option(round, 1, Claim.Type.WIN)));
+            RoundResult result = round.result();
+            eq(1, result.winner(), "胡牌者");
+            eq(0, result.from(), "加槓者放槍");
+            check(result.score().has("搶槓"), "搶槓 " + result.score());
+            eq(Meld.Type.PONG, round.player(0).melds().get(0).type(), "維持碰");
+            eq(3, round.player(0).melds().get(0).tiles().size(), "三張");
+            conserved(round);
+        });
+    }
+
+    /** 座位 3 打 5w → 座位 0 碰、打 8w → 繞一圈 → 座位 0 摸到第四張 5w。 */
+    private static Round playToAddKong(Table table) {
+        Round round = table.start();
+        round.discard(3, tile("5w"));
+        round.resolveClaims(Map.of(0, option(round, 0, Claim.Type.PONG)));
+        round.discard(0, tile("8w"));
+        round.resolveClaims(Map.of());
+        Table.discardDrawnAndPass(round);
+        Table.discardDrawnAndPass(round);
+        Table.discardDrawnAndPass(round);
+        eq(tile("5w"), round.drawn(), "座位 0 摸到第四張");
+        eq(0, round.current(), "輪到座位 0");
+        return round;
+    }
+
+    private static void winning() {
+        test("胡別人的牌：牌進手牌、離開牌河、記錄放槍者", () -> {
+            Round round = Table.dealer(0).hand(0, "3w").hand(2, WINS_ON_3W).draws("9w").start();
+            round.discard(0, tile("3w"));
+            eq(List.of(Claim.Type.WIN), types(round, 2), "可以胡");
+            round.resolveClaims(Map.of(2, option(round, 2, Claim.Type.WIN)));
+            RoundResult result = round.result();
+            eq(2, result.winner(), "胡牌者");
+            eq(0, result.from(), "放槍者");
+            eq(tile("3w"), result.winTile(), "胡的牌");
+            check(!result.isSelfDraw() && !result.isDrawnGame(), "類型");
+            eq(17, round.player(2).concealed().size(), "胡牌者 17 張");
+            eq(List.of(), round.player(0).discards(), "牌河移除");
+            conserved(round);
+        });
+
+        test("自摸：手牌 17 張不重複加牌", () -> {
+            Round round = Table.dealer(1).hand(1, WAITING).draws("4s").start();
+            check(round.turnOptions(1).canSelfWin(), "可以自摸");
+            round.declareSelfWin(1);
+            RoundResult result = round.result();
+            check(result.isSelfDraw(), "自摸");
+            eq(17, round.player(1).concealed().size(), "張數");
+            eq(tile("4s"), result.winTile(), "胡的牌");
+            conserved(round);
+        });
+
+        test("沒成牌不能自摸", () -> {
+            Round round = Table.dealer(0).hand(0, WAITING).draws("9w").start();
+            check(!round.turnOptions(0).canSelfWin(), "不能自摸");
+            fails(IllegalStateException.class, () -> round.declareSelfWin(0), "詐胡");
+            eq(Round.Phase.TURN, round.phase(), "牌局繼續");
+        });
+
+        test("天胡：莊家配牌就胡", () -> {
+            Round round = Table.dealer(0).hand(0, WAITING).draws("4s").start();
+            round.declareSelfWin(0);
+            check(round.result().score().has("天胡"), "天胡 " + round.result().score());
+            check(!round.result().score().has("地胡"), "不是地胡");
+        });
+
+        test("地胡：閒家第一次摸牌就胡", () -> {
+            Round round = Table.dealer(0).hand(1, WAITING).draws("9w 4s").start();
+            Table.discardDrawnAndPass(round);
+            round.declareSelfWin(1);
+            check(round.result().score().has("地胡"), "地胡 " + round.result().score());
+            check(!round.result().score().has("天胡"), "不是天胡");
+        });
+
+        test("有人吃碰過就不算地胡", () -> {
+            Round round = Table.dealer(0).hand(0, "5w").hand(2, "5w5w 8w").hand(3, WAITING).draws("9w 4s").start();
+            round.discard(0, tile("5w"));
+            round.resolveClaims(Map.of(2, option(round, 2, Claim.Type.PONG)));
+            round.discard(2, tile("8w"));
+            round.resolveClaims(Map.of());
+            eq(3, round.current(), "輪到座位 3");
+            round.declareSelfWin(3);
+            check(!round.result().score().has("地胡"), "不算地胡 " + round.result().score());
+        });
+
+        test("打過牌之後自摸不算天胡地胡", () -> {
+            Round round = Table.dealer(0).hand(0, WAITING).draws("9w 1p 1p 1p 4s").start();
+            for (int i = 0; i < 4; i++) {
+                Table.discardDrawnAndPass(round);
+            }
+            eq(0, round.current(), "回到莊家");
+            round.declareSelfWin(0);
+            check(!round.result().score().has("天胡"), "不算天胡");
+        });
+
+        test("花牌會算進胡牌台數", () -> {
+            Round round = Table.dealer(0).hand(0, WAITING).draws("1f").backs("4s").start();
+            eq(T.hand("1f"), round.player(0).flowers(), "補花");
+            round.declareSelfWin(0);
+            check(round.result().score().has("正花 春"), "莊家東風對應春 " + round.result().score());
+        });
+    }
+
+    private static void endOfWall() {
+        test("流局：摸完 128 張扣掉發牌，留 16 張不摸", () -> {
+            Round round = Table.dealer(0).start();
+            int draws = 1;
+            while (round.phase() != Round.Phase.FINISHED) {
+                Table.discardDrawnAndPass(round);
+                if (round.phase() != Round.Phase.FINISHED) {
+                    draws++;
+                }
+                conserved(round);
+            }
+            eq(64, draws, "總摸牌次數");
+            eq(Wall.RESERVED, round.wall().size(), "剩留牌");
+            check(round.result().isDrawnGame(), "流局");
+            eq(-1, round.result().winner(), "沒有贏家");
+        });
+
+        test("補牌也會消耗可摸張數", () -> {
+            Round round = Table.dealer(0).hand(0, "5w").hand(2, "5w5w5w").draws("9w").backs("1w").start();
+            int before = round.wall().liveCount();
+            round.discard(0, tile("5w"));
+            round.resolveClaims(Map.of(2, option(round, 2, Claim.Type.KONG)));
+            eq(before - 1, round.wall().liveCount(), "可摸張數");
+        });
+
+        test("海底撈月：最後一張自摸", () -> {
+            Round round = Table.dealer(0).hand(3, WAITING).lastLive("4s").start();
+            playToLastTile(round);
+            eq(3, round.current(), "第 64 張輪到座位 3");
+            eq(tile("4s"), round.drawn(), "最後一張");
+            round.declareSelfWin(3);
+            check(round.result().score().has("海底撈月"), "海底 " + round.result().score());
+        });
+
+        test("河底撈魚：最後一張被打出來胡", () -> {
+            Round round = Table.dealer(0).hand(0, WAITING).lastLive("4s").start();
+            playToLastTile(round);
+            round.discard(3, tile("4s"));
+            round.resolveClaims(Map.of(0, option(round, 0, Claim.Type.WIN)));
+            check(round.result().score().has("河底撈魚"), "河底 " + round.result().score());
+        });
+
+        test("最後一張打出沒人要就流局", () -> {
+            Round round = Table.dealer(0).lastLive("4s").start();
+            playToLastTile(round);
+            Table.discardDrawnAndPass(round);
+            eq(Round.Phase.FINISHED, round.phase(), "結束");
+            check(round.result().isDrawnGame(), "流局");
+        });
+
+        test("牌牆摸完不能再槓，但可以碰", () -> {
+            Round concealed = Table.dealer(0).hand(3, "1w1w1w").lastLive("1w").start();
+            playToLastTile(concealed);
+            eq(List.of(), concealed.turnOptions(3).concealedKongs(), "不能暗槓");
+
+            Round open = Table.dealer(0).hand(0, "2w2w2w").lastLive("2w").start();
+            playToLastTile(open);
+            open.discard(3, tile("2w"));
+            eq(List.of(Claim.Type.PONG), types(open, 0), "只能碰");
+        });
+    }
+
+    private static void illegalActions() {
+        test("沒輪到的人不能打牌", () -> {
+            Round round = Table.dealer(0).start();
+            Tile other = round.player(1).concealed().get(0);
+            fails(IllegalStateException.class, () -> round.discard(1, other), "搶打");
+            eq(0, round.current(), "狀態不變");
+            eq(16, round.player(1).concealed().size(), "手牌不變");
+        });
+
+        test("不能打手上沒有的牌", () -> {
+            Round round = Table.dealer(0).draws("9w").start();
+            fails(IllegalArgumentException.class, () -> round.discard(0, tile("5w")), "打沒有的牌");
+            eq(Round.Phase.TURN, round.phase(), "階段不變");
+            eq(List.of(), round.player(0).discards(), "牌河不變");
+        });
+
+        test("階段不對的動作都會被拒絕", () -> {
+            Round round = Table.dealer(0).draws("9w").start();
+            fails(IllegalStateException.class, () -> round.resolveClaims(Map.of()), "打牌前不能結算宣告");
+            fails(IllegalStateException.class, () -> round.claimOptions(1), "打牌前沒有宣告選項");
+            round.discard(0, tile("9w"));
+            fails(IllegalStateException.class, () -> round.discard(0, round.player(0).concealed().get(0)), "連打兩張");
+            fails(IllegalStateException.class, () -> round.turnOptions(0), "宣告階段沒有回合選項");
+        });
+
+        test("沒碰過不能加槓", () -> {
+            Round round = Table.dealer(0).hand(0, "5w").draws("9w").start();
+            fails(IllegalStateException.class, () -> round.declareAddKong(0, tile("5w")), "加槓");
+        });
+
+        test("不合法的宣告會被拒絕且不改變牌局", () -> {
+            Round round = Table.dealer(0).hand(0, "5w").hand(1, "1w").draws("9w").start();
+            round.discard(0, tile("5w"));
+            Claim forged = new Claim(Claim.Type.PONG, tile("5w"), T.hand("5w5w"));
+            fails(IllegalArgumentException.class, () -> round.resolveClaims(Map.of(1, forged)), "偽造的碰");
+            eq(Round.Phase.CLAIMS, round.phase(), "階段不變");
+            eq(T.hand("5w"), round.player(0).discards(), "牌河不變");
+
+            Claim forgedWin = new Claim(Claim.Type.WIN, tile("5w"), List.of());
+            fails(IllegalArgumentException.class, () -> round.resolveClaims(Map.of(2, forgedWin)), "詐胡");
+            eq(Round.Phase.CLAIMS, round.phase(), "階段不變");
+        });
+
+        test("牌局結束後不能再動作", () -> {
+            Round round = Table.dealer(0).hand(0, WAITING).draws("4s").start();
+            round.declareSelfWin(0);
+            fails(IllegalStateException.class, () -> round.discard(0, tile("1w")), "結束後打牌");
+            fails(IllegalStateException.class, () -> round.declareSelfWin(0), "重複胡牌");
+        });
+    }
+}
