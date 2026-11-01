@@ -99,7 +99,7 @@ public final class OnlineTrial {
     /** 兩人開房打牌：來賓先網路中斷再接回，之後程式被殺掉，重開再從 token 接回。 */
     private static int reconnect(Path dir, int port) throws Exception {
         Files.createDirectories(dir);
-        Process host = client(dir, "房主", "host", port, "--leaveAfter", "3", "--chips", "20000", "--expectDisconnectMark", "--autoPlay");
+        Process host = client(dir, "房主", "host", port, "--leaveAfter", "3", "--chips", "20000", "--expectDisconnectMark");
         Process guest = client(dir, "來賓", "guest", port, "--proxy", "--drop", "--killAfter", String.valueOf(KILL_AFTER_DECISIONS));
         Path killFile = dir.resolve("kill-guest");
         long deadline = System.currentTimeMillis() + 300_000;
@@ -197,7 +197,6 @@ public final class OnlineTrial {
         private TablePanel currentTable;
         private String lastHint = "";
         private int decisionsAtDrop;
-        private int autoPlayStep;
 
         Client(String[] args) throws IOException {
             role = args[1];
@@ -266,9 +265,6 @@ public final class OnlineTrial {
             }
             if (options.containsKey("--drop") && !sawLostHint) {
                 fail("斷線時應該要看到重新連線的提示");
-            }
-            if (options.containsKey("--autoPlay") && autoPlayStep < 3) {
-                fail("電腦代打的開關沒有走完");
             }
             log("通過，結果視窗 " + results + " 次，自己決定 " + decisions + " 次，本機紀錄檔 " + found);
             System.exit(0);
@@ -480,31 +476,12 @@ public final class OnlineTrial {
                 }
                 return;
             }
-            if (options.containsKey("--autoPlay") && results >= 1 && autoPlayStep < 3) {
-                tryAutoPlay(table, hint);
+            if (!role.equals("local") && ((JButton) field(table, "autoPlayButton")).isShowing()) {
+                fail("多人遊戲不該有電腦代打的按鈕");
             }
             maybeDrop();
             if (decide(table, hint)) {
                 maybeKill();
-            }
-        }
-
-        /** 按電腦代打，開關要跟著服務器的局面變，看到提示之後再關掉。 */
-        private void tryAutoPlay(TablePanel table, String hint) {
-            JButton button = (JButton) field(table, "autoPlayButton");
-            boolean on = button.getText().endsWith("開");
-            if (autoPlayStep == 0 && !on) {
-                autoPlayStep = 1;
-                log("打開電腦代打");
-                click(button);
-            } else if (autoPlayStep == 1 && on && hint.contains("電腦代打中")) {
-                autoPlayStep = 2;
-                shot("auto-play");
-                log("代打中：" + hint);
-                click(button);
-            } else if (autoPlayStep == 2 && !on) {
-                autoPlayStep = 3;
-                log("關掉電腦代打");
             }
         }
 

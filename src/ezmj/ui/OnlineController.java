@@ -321,8 +321,7 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
     private void openTable(RoomInfo info) {
         game = new OnlineGame();
         presenter = new TablePresenter(this, settings);
-        view = new TablePanel(presenter::humanDiscard, this::confirmLeave, this::toggleAutoPlay,
-                () -> host.showHistory(game));
+        view = new TablePanel(presenter::humanDiscard, this::confirmLeave, null, () -> host.showHistory(game));
         presenter.attach(view);
         view.showRoomCode(info.code());
         host.showTable(view);
@@ -363,10 +362,6 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
         leaveRoom();
     }
 
-    private void toggleAutoPlay() {
-        client.autoPlay(!game.isAutoPlay());
-    }
-
     private void onRoundStart(Map<String, Object> message) {
         if (game == null) {
             return;
@@ -389,8 +384,6 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
         }
         if (Round.Phase.FINISHED.name().equals(state.get("phase"))) {
             finishedState = state;
-            game.applyAutoPlay(state);
-            view.setAutoPlay(game.isAutoPlay());
             return;
         }
         // 開新的一局時才會走到這裡還開著結果視窗，例如結果視窗開著的時候斷線，錯過了 roundStart
@@ -402,7 +395,6 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
         List<RoundEvent> events = takeEvents();
         game.applyState(state, events);
         bindRoundOnce();
-        view.setAutoPlay(game.isAutoPlay());
         waiting = false;
         if (dealPending) {
             dealPending = false;
@@ -572,7 +564,7 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
 
     @Override
     public boolean isAutoPlay() {
-        return game.isAutoPlay();
+        return false;
     }
 
     @Override

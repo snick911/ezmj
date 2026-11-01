@@ -73,7 +73,6 @@ public final class OnlineGame implements GameView, RoundView {
     private boolean robbing;
     private RoundResult result;
     private List<Tile> listeningWaits;
-    private boolean autoPlay;
     private boolean over;
     private int finalRounds;
     private int finalDrawnGames;
@@ -138,7 +137,6 @@ public final class OnlineGame implements GameView, RoundView {
         discarder = screen(Fields.integer(state, "discarder"));
         robbing = Fields.bool(state, "robbing");
         listeningWaits = Fields.tilesOrNull(state, "listeningWaits");
-        autoPlay = Fields.bool(state, "autoPlay");
         for (RoundEvent event : events) {
             if (event.type() == RoundEvent.Type.DRAW) {
                 drawnSeat = event.seat();
@@ -160,11 +158,6 @@ public final class OnlineGame implements GameView, RoundView {
             players[seat] = player(seat, Collections.nCopies(Fields.integer(opponent, "handCount"), HIDDEN), melds,
                     Fields.tiles(opponent, "flowers"), Fields.tiles(opponent, "discards"), Fields.integer(opponent, "chips"));
         }
-    }
-
-    /** 自己的代打開關。局面還停在上一局結束時也要跟著更新。 */
-    public void applyAutoPlay(Map<String, Object> state) {
-        autoPlay = Fields.bool(state, "autoPlay");
     }
 
     /** 這局打完，四家的牌都攤開。陣列依服務器的座位排列，放進來時要轉成畫面座位。 */
@@ -281,10 +274,6 @@ public final class OnlineGame implements GameView, RoundView {
 
     public List<Tile> listeningWaits() {
         return listeningWaits;
-    }
-
-    public boolean isAutoPlay() {
-        return autoPlay;
     }
 
     /** 斷線的人名字後面標出來，全桌都看得到。 */

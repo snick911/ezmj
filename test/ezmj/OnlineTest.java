@@ -215,7 +215,6 @@ final class OnlineTest {
                 probe.client.kong(8, tile("7z"));
                 probe.client.claim(9, 2);
                 probe.client.pass(10);
-                probe.client.autoPlay(true);
                 probe.client.ready();
                 eq("{\"type\":\"discard\",\"waitId\":5,\"tile\":\"9s\"}", connection.nextLine(), "打牌");
                 eq("{\"type\":\"listen\",\"waitId\":6,\"tile\":\"1z\"}", connection.nextLine(), "聽牌");
@@ -223,7 +222,6 @@ final class OnlineTest {
                 eq("{\"type\":\"kong\",\"waitId\":8,\"tile\":\"7z\"}", connection.nextLine(), "槓");
                 eq("{\"type\":\"claim\",\"waitId\":9,\"option\":2}", connection.nextLine(), "宣告");
                 eq("{\"type\":\"pass\",\"waitId\":10}", connection.nextLine(), "過");
-                eq("{\"type\":\"autoPlay\",\"on\":true}", connection.nextLine(), "代打");
                 eq("{\"type\":\"ready\"}", connection.nextLine(), "看完結果");
             }
         });

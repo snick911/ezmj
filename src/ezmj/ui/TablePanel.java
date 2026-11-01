@@ -46,6 +46,7 @@ public final class TablePanel extends JPanel {
     private final JPanel sidebar = new JPanel();
     private final JButton autoPlayButton = Theme.button("電腦代打：關", Theme.PANEL_LIGHT);
 
+    /** onToggleAutoPlay 是 null 時沒有電腦代打的按鈕，多人遊戲不能用。 */
     TablePanel(Consumer<Tile> onDiscard, Runnable onLeave, Runnable onToggleAutoPlay, Runnable onShowHistory) {
         super(new BorderLayout());
         canvas = new TableCanvas(onDiscard);
@@ -137,10 +138,12 @@ public final class TablePanel extends JPanel {
         side.add(history);
         side.add(Box.createVerticalStrut(8));
 
-        autoPlayButton.setFont(Theme.font(Font.PLAIN, 14f));
-        autoPlayButton.addActionListener(e -> onToggleAutoPlay.run());
-        side.add(autoPlayButton);
-        side.add(Box.createVerticalStrut(8));
+        if (onToggleAutoPlay != null) {
+            autoPlayButton.setFont(Theme.font(Font.PLAIN, 14f));
+            autoPlayButton.addActionListener(e -> onToggleAutoPlay.run());
+            side.add(autoPlayButton);
+            side.add(Box.createVerticalStrut(8));
+        }
 
         JButton leave = Theme.button("離開牌局", Theme.PANEL_LIGHT);
         leave.setFont(Theme.font(Font.PLAIN, 14f));

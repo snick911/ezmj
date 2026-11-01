@@ -150,10 +150,6 @@ public final class OnlineClient {
         send(Fields.object("type", "start"));
     }
 
-    public void autoPlay(boolean on) {
-        send(Fields.object("type", "autoPlay", "on", on));
-    }
-
     public void ready() {
         send(Fields.object("type", "ready"));
     }
