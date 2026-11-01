@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 import ezmj.model.Meld;
 import ezmj.model.Tile;
@@ -12,8 +13,31 @@ import ezmj.model.Tile;
 final class Fields {
 
     private static final List<Tile> ALL_TILES = Tile.fullSet();
+    private static final Pattern HTML_START = Pattern.compile("<html>", Pattern.CASE_INSENSITIVE);
 
     private Fields() {
+    }
+
+    /**
+     * Swing 的文字只要以 &lt;html&gt; 開頭就當 HTML 顯示，圖片還會真的去下載，訊息視窗則是每一行分開看。
+     * 別的玩家的名字和服務器的訊息都不能這樣顯示，所以從網路收到時就在前面墊一個空白。
+     * 不用零寬字元：牌桌的字型會把它畫成方框。
+     */
+    static Object withoutHtml(Object value) {
+        if (value instanceof String) {
+            return HTML_START.matcher((String) value).replaceAll(" $0");
+        }
+        if (value instanceof List) {
+            List<Object> list = new ArrayList<>();
+            ((List<?>) value).forEach(item -> list.add(withoutHtml(item)));
+            return list;
+        }
+        if (value instanceof Map) {
+            Map<Object, Object> map = new LinkedHashMap<>();
+            ((Map<?, ?>) value).forEach((key, item) -> map.put(key, withoutHtml(item)));
+            return map;
+        }
+        return value;
     }
 
     /** 依序是鍵、值、鍵、值。 */

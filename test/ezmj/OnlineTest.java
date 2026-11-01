@@ -30,6 +30,8 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
+import javax.swing.plaf.basic.BasicHTML;
+
 import ezmj.engine.Claim;
 import ezmj.engine.Round;
 import ezmj.engine.RoundEvent;
@@ -159,6 +161,28 @@ final class OnlineTest {
                 server.current().send("{\"type\":\"welcome\",\"token\":\"t1\",\"room\":null}");
                 eq("loggedIn:false", probe.next(), "登入成功");
                 eq("t1", probe.client.token(), "保存 token");
+            }
+        });
+        test(name + "收到的文字不會被 Swing 當成 HTML", () -> {
+            try (FakeServer server = new FakeServer(webSocket); Probe probe = new Probe(server)) {
+                FakeConnection connection = probe.loggedIn();
+                connection.send("{\"type\":\"room\",\"name\":\"<html><h1>x\",\"note\":\"第一行\\n<HTML><img src=x>\","
+                        + "\"players\":[{\"name\":\"<HtMl>y\"}],\"plain\":\"小明 <b>不是開頭\",\"seat\":2}");
+                eq("message:room", probe.next(), "收到訊息");
+                Map<String, Object> message = probe.lastMessage;
+                plainOnScreen((String) message.get("name"), "<html><h1>x");
+                plainOnScreen((String) message.get("note"), "第一行\n<HTML><img src=x>");
+                Map<?, ?> player = (Map<?, ?>) ((List<?>) message.get("players")).get(0);
+                plainOnScreen((String) player.get("name"), "<HtMl>y");
+                eq("小明 <b>不是開頭", message.get("plain"), "沒有 <html> 的文字不動");
+                eq(2L, message.get("seat"), "數字不動");
+            }
+            try (FakeServer server = new FakeServer(webSocket); Probe probe = new Probe(server)) {
+                probe.client.loginWithName("小明");
+                server.accept().next("hello");
+                server.current().send("{\"type\":\"error\",\"code\":\"x\",\"message\":\"不行\\n<html><img src=x>\"}");
+                eq("rejected:x", probe.next(), "拒絕登入");
+                plainOnScreen(probe.lastRejection, "不行\n<html><img src=x>");
             }
         });
         test(name + "決定都帶 waitId，訊息依序送出", () -> {
@@ -583,10 +607,20 @@ final class OnlineTest {
         return (Map<String, Object>) Json.parse(text);
     }
 
+    /** 訊息視窗是每一行分開顯示，所以每一行都不能被當成 HTML；除了前面墊的空白，就是原本的文字。 */
+    private static void plainOnScreen(String shown, String original) {
+        for (String line : shown.split("\n")) {
+            check(!BasicHTML.isHTMLString(line), "不該當成 HTML：" + line);
+        }
+        eq(original, shown.replaceAll("(?i) (?=<html>)", ""), "看起來的文字");
+    }
+
     /** 把通知都變成文字排進佇列，測試一則一則對。 */
     private static final class Probe implements OnlineClient.Listener, AutoCloseable {
         final BlockingQueue<String> events = new LinkedBlockingQueue<>();
         final OnlineClient client;
+        volatile Map<String, Object> lastMessage;
+        volatile String lastRejection;
         private final FakeServer server;
 
         Probe(FakeServer server) {
@@ -628,6 +662,7 @@ final class OnlineTest {
 
         @Override
         public void message(Map<String, Object> message) {
+            lastMessage = message;
             events.add("message:" + message.get("type"));
         }
 
@@ -638,6 +673,7 @@ final class OnlineTest {
 
         @Override
         public void loginRejected(String code, String message) {
+            lastRejection = message;
             events.add("rejected:" + code);
         }
 

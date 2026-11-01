@@ -328,7 +328,7 @@ public final class OnlineClient {
             return;
         }
         try {
-            Object parsed = Json.parse(line);
+            Object parsed = Fields.withoutHtml(Json.parse(line));
             if (!(parsed instanceof Map)) {
                 throw new IllegalArgumentException("訊息要是 JSON 物件");
             }
