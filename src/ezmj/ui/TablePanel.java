@@ -20,10 +20,9 @@ import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.SwingConstants;
 
-import ezmj.engine.GameSession;
-import ezmj.engine.Round;
+import ezmj.engine.GameView;
 import ezmj.engine.RoundEvent;
-import ezmj.model.BotLevel;
+import ezmj.engine.RoundView;
 import ezmj.model.Player;
 import ezmj.model.Tile;
 
@@ -61,6 +60,12 @@ public final class TablePanel extends JPanel {
     void showThinkTime(double seconds, int count) {
         thinkInfo.setText(count == 0 ? "平均思考：—"
                 : String.format(Locale.ROOT, "平均思考：%.1f 秒（%d 次）", seconds, count));
+    }
+
+    /** 連線牌局沒有思考時間的紀錄，這一行改顯示房號。 */
+    void showRoomCode(String code) {
+        thinkInfo.setText("房號 " + code);
+        thinkInfo.setToolTipText(null);
     }
 
     void setAutoPlay(boolean on) {
@@ -171,7 +176,7 @@ public final class TablePanel extends JPanel {
         return row;
     }
 
-    void bindRound(Round round) {
+    void bindRound(RoundView round) {
         logArea.setText("");
         canvas.setRound(round);
     }
@@ -190,25 +195,20 @@ public final class TablePanel extends JPanel {
     }
 
     /** 由目前狀態更新計分板與牌桌。 */
-    void refresh(GameSession session, Round round) {
+    void refresh(GameView game, RoundView round) {
         // 結算後 session 已經換到下一局，畫面上還是這一局，要看 round
         String streak = round.streak() > 0 ? " 連" + round.streak() : "";
         roundInfo.setText(Tile.windName(round.roundWind()) + "風圈" + streak);
-        stakesInfo.setText("底 " + session.config().basePay() + " / 每台 " + session.config().taiPay());
+        stakesInfo.setText("底 " + game.basePay() + " / 每台 " + game.taiPay());
         for (int seat = 0; seat < 4; seat++) {
-            Player player = session.player(seat);
+            Player player = game.player(seat);
             scoreCells[seat][0].setText(Tile.windName(round.seatWind(seat)) + (round.dealer() == seat ? " 莊" : ""));
             scoreCells[seat][1].setText(player.name());
-            scoreCells[seat][1].setToolTipText(seat == 0 ? player.name() : player.name() + "（" + botTraits(session, seat) + "）");
+            String traits = game.traits(seat);
+            scoreCells[seat][1].setToolTipText(traits == null ? player.name() : player.name() + "（" + traits + "）");
             scoreCells[seat][2].setText(String.valueOf(player.chips()));
         }
         canvas.repaint();
-    }
-
-    /** 等級與個性。初學者憑感覺打，沒有個性之分。 */
-    private static String botTraits(GameSession session, int seat) {
-        BotLevel level = session.config().botLevels().get(seat - 1);
-        return level == BotLevel.BEGINNER ? level.label() : level.label() + "・" + session.personality(seat).label();
     }
 
     /** 只更新提示文字，按鈕不動。 */

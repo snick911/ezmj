@@ -29,9 +29,9 @@ import javax.swing.Timer;
 import javax.swing.border.Border;
 
 import ezmj.engine.Achievement;
-import ezmj.engine.GameSession;
-import ezmj.engine.Round;
+import ezmj.engine.GameView;
 import ezmj.engine.RoundResult;
+import ezmj.engine.RoundView;
 import ezmj.engine.Settlement;
 import ezmj.model.Meld;
 import ezmj.model.Player;
@@ -46,7 +46,7 @@ final class ResultDialog extends JDialog {
     private static final int SCROLLBAR_ROOM = 24;
 
     /** 時間到自動關閉，電腦代打才能一直打下去。 */
-    ResultDialog(Frame owner, GameSession session, Round round, Settlement settlement, List<Achievement> earned,
+    ResultDialog(Frame owner, GameView game, RoundView round, Settlement settlement, List<Achievement> earned,
                  String buttonText, int autoCloseSeconds) {
         super(owner, "本局結果", true);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
@@ -61,15 +61,15 @@ final class ResultDialog extends JDialog {
         content.add(Box.createVerticalStrut(12));
 
         if (result.isDrawnGame()) {
-            content.add(drawnTable(session));
+            content.add(drawnTable(game));
         } else {
             HandStrip strip = HandStrip.large(round.player(result.winner()), result.winTile());
             strip.setAlignmentX(LEFT_ALIGNMENT);
             content.add(strip);
             content.add(Box.createVerticalStrut(12));
-            content.add(tables(session, round, settlement));
+            content.add(tables(game, round, settlement));
             content.add(Box.createVerticalStrut(8));
-            content.add(line("每筆付款＝底 " + session.config().basePay() + " ＋ 台數 × " + session.config().taiPay()
+            content.add(line("每筆付款＝底 " + game.basePay() + " ＋ 台數 × " + game.taiPay()
                     + (countsDealer(round, settlement) ? "，莊家台只算與莊家相關的付款" : ""),
                     Font.PLAIN, 14f, Theme.MUTED));
         }
@@ -123,7 +123,7 @@ final class ResultDialog extends JDialog {
         timer.start();
     }
 
-    private static String headline(Round round, RoundResult result) {
+    private static String headline(RoundView round, RoundResult result) {
         if (result.isDrawnGame()) {
             return "流局";
         }
@@ -139,7 +139,7 @@ final class ResultDialog extends JDialog {
     }
 
     /** 其他家的手牌，打完才看得到別人在做什麼。胡牌者上面已經有了；靠花牌胡的上面只有花牌，這裡也列手牌。 */
-    private static JPanel otherHands(Round round) {
+    private static JPanel otherHands(RoundView round) {
         RoundResult result = round.result();
         JPanel hands = new JPanel(new GridBagLayout());
         hands.setBackground(Theme.PANEL);
@@ -183,7 +183,7 @@ final class ResultDialog extends JDialog {
     }
 
     /** 左邊牌型台數，右邊各家輸贏。 */
-    private static JPanel tables(GameSession session, Round round, Settlement settlement) {
+    private static JPanel tables(GameView game, RoundView round, Settlement settlement) {
         JPanel tables = new JPanel(new GridBagLayout());
         tables.setBackground(Theme.PANEL);
         tables.setAlignmentX(LEFT_ALIGNMENT);
@@ -194,11 +194,11 @@ final class ResultDialog extends JDialog {
         tables.add(scoreTable(round, settlement), constraints);
         constraints.insets = new Insets(0, 0, 0, 0);
         constraints.weightx = 1;
-        tables.add(payTable(session, round, settlement), constraints);
+        tables.add(payTable(game, round, settlement), constraints);
         return tables;
     }
 
-    private static GridTable scoreTable(Round round, Settlement settlement) {
+    private static GridTable scoreTable(RoundView round, Settlement settlement) {
         ScoreResult score = round.result().score();
         GridTable table = new GridTable(1);
         table.header("牌型", "台數");
@@ -221,15 +221,15 @@ final class ResultDialog extends JDialog {
     }
 
     /** 有人的付款比牌型台數多，就是這局有算到莊家台。 */
-    private static boolean countsDealer(Round round, Settlement settlement) {
+    private static boolean countsDealer(RoundView round, Settlement settlement) {
         return Arrays.stream(settlement.tais()).anyMatch(tai -> tai > round.result().score().totalTai());
     }
 
-    private static GridTable payTable(GameSession session, Round round, Settlement settlement) {
+    private static GridTable payTable(GameView game, RoundView round, Settlement settlement) {
         GridTable table = new GridTable(2);
         table.header("玩家", "結果", "台數", "輸贏", "籌碼");
         for (int seat = 0; seat < 4; seat++) {
-            Player player = session.player(seat);
+            Player player = game.player(seat);
             int delta = settlement.deltas()[seat];
             String tai = delta < 0 ? String.valueOf(settlement.tais()[seat]) : "—";
             JLabel[] cells = table.row(seat == 0 ? Font.BOLD : Font.PLAIN,
@@ -240,11 +240,11 @@ final class ResultDialog extends JDialog {
         return table;
     }
 
-    private static GridTable drawnTable(GameSession session) {
+    private static GridTable drawnTable(GameView game) {
         GridTable table = new GridTable(1);
         table.header("玩家", "籌碼");
         for (int seat = 0; seat < 4; seat++) {
-            Player player = session.player(seat);
+            Player player = game.player(seat);
             table.row(seat == 0 ? Font.BOLD : Font.PLAIN, player.name(), String.valueOf(player.chips()));
         }
         return table;

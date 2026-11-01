@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Random;
 import java.util.function.Consumer;
 
+import ezmj.model.BotLevel;
 import ezmj.model.GameConfig;
 import ezmj.model.GameRecord;
 import ezmj.model.Gender;
@@ -13,7 +14,7 @@ import ezmj.model.Player;
 import ezmj.model.Wall;
 
 /** 整場牌局：籌碼、莊家輪替、連莊、圈風。四圈打完或有人輸光即結束。 */
-public final class GameSession {
+public final class GameSession implements GameView {
 
     private static final int SEATS = 4;
 
@@ -145,11 +146,33 @@ public final class GameSession {
         return false;
     }
 
+    @Override
     public Player player(int seat) {
         return players[seat];
     }
 
+    @Override
+    public int basePay() {
+        return config.basePay();
+    }
+
+    @Override
+    public int taiPay() {
+        return config.taiPay();
+    }
+
+    /** 電腦的等級與個性。初學者憑感覺打，沒有個性之分。 */
+    @Override
+    public String traits(int seat) {
+        if (seat == 0) {
+            return null;
+        }
+        BotLevel level = config.botLevels().get(seat - 1);
+        return level == BotLevel.BEGINNER ? level.label() : level.label() + "・" + personalities[seat].label();
+    }
+
     /** 到目前為止這個座位的成績。 */
+    @Override
     public GameRecord record(int seat, String date) {
         return new GameRecord(players[seat].name(), date, wins[seat], selfDraws[seat],
                 players[seat].chips() - config.startingChips(), dealIns[seat],
@@ -157,15 +180,18 @@ public final class GameSession {
     }
 
     /** 已經結算的局數，包含流局。 */
+    @Override
     public int roundsPlayed() {
         return roundsPlayed;
     }
 
+    @Override
     public int drawnGames() {
         return drawnGames;
     }
 
     /** 這場打完的每一局，先打的在前面。 */
+    @Override
     public List<RoundRecord> history() {
         return List.copyOf(history);
     }

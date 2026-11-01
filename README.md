@@ -47,6 +47,8 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 
 `RefereeTest` 照「基本規則」與「台數計算」的文字另外實作一套規則，和引擎逐步比對。改規則時，說明、`Scorer`／`Round` 與這份裁判要一起改。
 
+`OnlineTest` 測連線層，對面是測試自己開的假服務器，走真的 TCP 與 WebSocket，同一批測試兩種連線各跑一次。協定改了要和 `ezmjService` 的 README 一起看。
+
 ## 程式結構
 
 | 套件 | 職責 |
@@ -56,7 +58,34 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 | `ezmj.engine` | 單局流程、整場牌局與結算（不依賴 Swing） |
 | `ezmj.bot` | 電腦玩家：四個等級的思考邏輯 |
 | `ezmj.table` | 一桌牌的行牌流程：輪到誰、等誰決定、倒數與代打（不依賴 Swing，可有多位真人） |
+| `ezmj.online` | 連線對戰的客戶端：TCP 與 WebSocket 連線、登入、ping 與重連，把服務器的訊息翻成局面（不依賴 Swing，不算規則） |
 | `ezmj.ui` | Swing 畫面，把牌桌流程演出來 |
+
+牌桌畫面只讀 `engine.RoundView` 與 `engine.GameView`，不管局面從哪裡來：單機是 `Round` 與 `GameSession`，連線是 `online.OnlineGame`。動畫、音效與按鈕都在 `ui.TablePresenter`，局面來源與決定的去處由它的 `Table` 介面決定：單機是 `GameController`，連線是 `OnlineController`。畫面上的座位 0 一定是自己，連線時服務器的座位在 `OnlineGame` 就轉好了。
+
+## 連線對戰
+
+開始畫面按「連線對戰」，輸入 [EZMJ Server](https://github.com/snick911/ezmjService) 的位址與名字，就可以用六碼房號加入，或開一間新房間。規則全部在服務器上跑，客戶端只送決定。
+
+位址有兩種寫法：`host` 或 `host:port` 走 TCP，預設 port 7788；`ws://` 或 `wss://` 開頭的網址走 WebSocket，放在只轉 HTTP 的主機上時要用這個，例如 `wss://ezmj-server.onrender.com/ws`。免費主機閒置後會睡著，第一個連線可能要等一分鐘。
+
+- **開房間**：選籌碼本金、底、每台、補位電腦的等級、每次等待秒數（5 到 300，多人桌不能不限時）與電腦速度。把房號告訴朋友，房間畫面會列出玩家與連線狀態。
+- **開局**：只有房主可以，不到四人由電腦補滿。打完整場回到房間，可以再開一場。
+- **結果視窗**：大家都看完就開下一局，沒看完時最多等服務器的時間（流局 10 秒，其他 60 秒）。
+
+等待時間與速度看房間的設定，環境設定裡的兩項只影響單機。平均思考時間只有單機才有，連線牌局那一行顯示房號。
+
+**斷線重連**：連線斷了會自己重連，最多試 3 分鐘，這段時間座位由電腦代打，別人會看到名字旁標著「（斷線）」。接回來時局面、還在等你決定的詢問都會補上。程式被關掉的話，重開之後按「連線對戰」的「接回牌局」。還沒開局時斷線就等於離開房間，牌局中按「離開牌局」也回不來了。
+
+**存檔**：連線牌局不寫入本機的牌局存檔、統計、成就與榮譽榜。輸贏歷程只記這次開著程式時看到的局。使用者目錄的 `.ezmj\online.properties` 記著上次的服務器與名字；牌局中還有 token 與房號，牌局結束就清掉。token 等於這個座位的身分，不要給別人。
+
+只有 `wss://` 有加密。`host:port` 與 `ws://` 都是明碼，名字和 token 看得到，只適合自己架的服務器或信任的網路。
+
+要實際跑一遍，先編好 `ezmjService`，再用下面的指令開一台服務器和好幾個視窗，自己按按鈕打牌，驗證開房、加入、打完整場、斷線重連與殺掉程式後接回。截圖與紀錄都在輸出資料夾，不會碰到真正的設定與存檔：
+
+```
+java -cp build\classes;build\test-classes ezmj.ui.OnlineTrial <服務器的 classpath> <輸出資料夾>
+```
 
 ## 環境設定
 

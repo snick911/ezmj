@@ -23,6 +23,7 @@ public final class AllTests {
         SimulationTest.run();
         BotTest.run();
         TableFlowTest.run();
+        OnlineTest.run();
         System.exit(T.report() == 0 ? 0 : 1);
     }
 }

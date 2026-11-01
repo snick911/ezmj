@@ -31,6 +31,7 @@ import javax.swing.Timer;
 import ezmj.engine.Round;
 import ezmj.engine.RoundEvent;
 import ezmj.engine.RoundResult;
+import ezmj.engine.RoundView;
 import ezmj.model.Meld;
 import ezmj.model.Player;
 import ezmj.model.Tile;
@@ -114,7 +115,7 @@ final class TableCanvas extends JComponent {
     private final List<Flight> flights = new ArrayList<>();
     private final List<Banner> banners = new ArrayList<>();
     private final Timer frameTimer = new Timer(FRAME_MS, e -> nextFrame());
-    private Round round;
+    private RoundView round;
     private boolean discardEnabled;
     /** 選牌中可以點的牌；null 表示沒有在選牌。 */
     private Set<Tile> pickable;
@@ -152,7 +153,7 @@ final class TableCanvas extends JComponent {
         addMouseMotionListener(mouse);
     }
 
-    void setRound(Round round) {
+    void setRound(RoundView round) {
         this.round = round;
         flights.clear();
         banners.clear();
@@ -822,7 +823,7 @@ final class TableCanvas extends JComponent {
         drawCenteredLine(g, Tile.windName(round.roundWind()) + "風圈", -14 * unit);
         g.setColor(Theme.TEXT);
         g.setFont(Theme.font(Font.PLAIN, (float) (16 * unit)));
-        drawCenteredLine(g, "剩餘 " + (round.wall().liveCount() + undealtTiles()) + " 張", 22 * unit);
+        drawCenteredLine(g, "剩餘 " + (round.liveTiles() + undealtTiles()) + " 張", 22 * unit);
     }
 
     private static void drawCenteredLine(Graphics2D g, String text, double y) {

@@ -1,6 +1,7 @@
 package ezmj.ui;
 
 import java.awt.Dimension;
+import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.GradientPaint;
 import java.awt.Graphics;
@@ -31,13 +32,13 @@ import ezmj.model.GameConfig;
 import ezmj.model.Suit;
 import ezmj.model.Tile;
 
-/** 開始畫面：輸入姓名、選擇籌碼本金、底與台、電腦等級，按下按鈕即開始；有存檔時也能繼續上次的牌局。 */
+/** 開始畫面：輸入姓名、選擇籌碼本金、底與台、電腦等級，按下按鈕即開始；有存檔時也能繼續上次的牌局，也可以進入連線對戰。 */
 public final class StartPanel extends JPanel {
 
     private static final int MAX_NAME_LENGTH = 8;
-    private static final Integer[] CHIP_OPTIONS = {10_000, 20_000, 50_000, 100_000, 500_000};
-    private static final Integer[] BASE_OPTIONS = {50, 100, 300, 500, 1_000};
-    private static final Integer[] TAI_OPTIONS = {10, 20, 50, 100, 200};
+    static final Integer[] CHIP_OPTIONS = {10_000, 20_000, 50_000, 100_000, 500_000};
+    static final Integer[] BASE_OPTIONS = {50, 100, 300, 500, 1_000};
+    static final Integer[] TAI_OPTIONS = {10, 20, 50, 100, 200};
 
     private final JTextField nameField = new JTextField(14);
     private final JComboBox<Integer> chipBox = combo(CHIP_OPTIONS, 20_000);
@@ -48,9 +49,10 @@ public final class StartPanel extends JPanel {
             combo(BotLevel.values(), BotLevel.NORMAL), combo(BotLevel.values(), BotLevel.NORMAL));
     private final JButton startButton = Theme.button("開始遊戲", Theme.RED);
     private final JButton resumeButton = Theme.button("繼續上次的牌局", Theme.BUTTON);
+    private final JButton onlineButton = Theme.button("連線對戰", Theme.BUTTON);
     private final JLabel resumeInfo = new JLabel(" ", SwingConstants.CENTER);
 
-    public StartPanel(Consumer<GameConfig> onStart, Runnable onResume) {
+    public StartPanel(Consumer<GameConfig> onStart, Runnable onResume, Runnable onOnline) {
         super(new GridBagLayout());
 
         JPanel card = new JPanel(new GridBagLayout());
@@ -78,7 +80,7 @@ public final class StartPanel extends JPanel {
         addRow(card, c, "籌碼本金", chipBox);
         addRow(card, c, "底", baseBox);
         addRow(card, c, "每台", taiBox);
-        addRow(card, c, "電腦等級", buildLevelRow());
+        addRow(card, c, "電腦等級", levelRow(levelBoxes));
 
         startButton.setFont(Theme.font(Font.BOLD, 20f));
         syncSizes();
@@ -93,9 +95,16 @@ public final class StartPanel extends JPanel {
 
         resumeButton.setFont(Theme.font(Font.BOLD, 17f));
         resumeButton.addActionListener(e -> onResume.run());
+        onlineButton.setFont(Theme.font(Font.BOLD, 17f));
+        onlineButton.addActionListener(e -> onOnline.run());
+        // 排在同一列，視窗最小的時候開始畫面才放得下
+        JPanel moreButtons = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 0));
+        moreButtons.setOpaque(false);
+        moreButtons.add(resumeButton);
+        moreButtons.add(onlineButton);
         c.gridy++;
         c.insets = new Insets(10, 0, 0, 0);
-        card.add(resumeButton, c);
+        card.add(moreButtons, c);
         resumeInfo.setFont(Theme.font(Font.PLAIN, 14f));
         resumeInfo.setForeground(Theme.MUTED);
         c.gridy++;
@@ -125,7 +134,7 @@ public final class StartPanel extends JPanel {
     }
 
     /** 三家排成一列，開始畫面才不會變高，字體調大時還放得下。 */
-    private JPanel buildLevelRow() {
+    static JPanel levelRow(List<JComboBox<BotLevel>> boxes) {
         JPanel row = new JPanel(new GridLayout(2, 3, 6, 2));
         row.setOpaque(false);
         for (String seat : List.of("右家", "對家", "左家")) {
@@ -134,7 +143,7 @@ public final class StartPanel extends JPanel {
             label.setForeground(Theme.MUTED);
             row.add(label);
         }
-        levelBoxes.forEach(row::add);
+        boxes.forEach(row::add);
         return row;
     }
 
@@ -148,7 +157,8 @@ public final class StartPanel extends JPanel {
     /** 字體大小改變後，讓開始按鈕跟著調整。 */
     void syncSizes() {
         startButton.setPreferredSize(new Dimension(Theme.scaled(300), Theme.scaled(50)));
-        resumeButton.setPreferredSize(new Dimension(Theme.scaled(300), Theme.scaled(40)));
+        resumeButton.setPreferredSize(new Dimension(Theme.scaled(190), Theme.scaled(40)));
+        onlineButton.setPreferredSize(new Dimension(Theme.scaled(190), Theme.scaled(40)));
     }
 
     private void styleName() {
@@ -181,7 +191,7 @@ public final class StartPanel extends JPanel {
         nameField.requestFocusInWindow();
     }
 
-    private static void addRow(JPanel card, GridBagConstraints c, String label, JComponent field) {
+    static void addRow(JPanel card, GridBagConstraints c, String label, JComponent field) {
         JLabel text = new JLabel(label);
         text.setFont(Theme.font(Font.PLAIN, 17f));
         text.setForeground(Theme.TEXT);
@@ -198,7 +208,7 @@ public final class StartPanel extends JPanel {
         card.add(field, c);
     }
 
-    private static <T> JComboBox<T> combo(T[] options, T selected) {
+    static <T> JComboBox<T> combo(T[] options, T selected) {
         JComboBox<T> box = new JComboBox<>(options);
         box.setSelectedItem(selected);
         box.setFont(Theme.font(Font.PLAIN, 17f));

@@ -21,7 +21,7 @@ import ezmj.rules.WinContext;
  * 一局牌的狀態機，不依賴 UI。
  * TURN：current 必須打牌或宣告；CLAIMS：等待其他家對 claimTile 宣告；FINISHED：已結束。
  */
-public final class Round {
+public final class Round implements RoundView {
 
     public enum Phase { TURN, CLAIMS, FINISHED }
 
@@ -479,42 +479,52 @@ public final class Round {
     }
 
     /** 門風 1-4；莊家固定為東。 */
+    @Override
     public int seatWind(int seat) {
         return (seat - dealer + SEATS) % SEATS + 1;
     }
 
+    @Override
     public Phase phase() {
         return phase;
     }
 
+    @Override
     public int current() {
         return current;
     }
 
+    @Override
     public Tile drawn() {
         return drawn;
     }
 
+    @Override
     public Tile claimTile() {
         return claimTile;
     }
 
+    @Override
     public int discarder() {
         return discarder;
     }
 
+    @Override
     public boolean isRobbing() {
         return robbing;
     }
 
+    @Override
     public int dealer() {
         return dealer;
     }
 
+    @Override
     public int roundWind() {
         return roundWind;
     }
 
+    @Override
     public int streak() {
         return streak;
     }
@@ -523,15 +533,22 @@ public final class Round {
         return Collections.unmodifiableList(discardHistory);
     }
 
+    @Override
     public RoundResult result() {
         return result;
     }
 
+    @Override
     public Player player(int seat) {
         return players[seat];
     }
 
     public Wall wall() {
         return wall;
+    }
+
+    @Override
+    public int liveTiles() {
+        return wall.liveCount();
     }
 }

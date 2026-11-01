@@ -4,6 +4,7 @@ import java.awt.CardLayout;
 import java.awt.Dialog;
 import java.awt.Dimension;
 import java.awt.Font;
+import java.awt.Frame;
 import java.awt.Toolkit;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
@@ -40,6 +41,7 @@ import ezmj.engine.Achievement;
 import ezmj.engine.AchievementBook;
 import ezmj.engine.GameSave;
 import ezmj.engine.GameSession;
+import ezmj.engine.GameView;
 import ezmj.engine.PlayerStats;
 import ezmj.engine.Round;
 import ezmj.engine.Settlement;
@@ -53,12 +55,16 @@ import ezmj.model.HonorRoll;
 import ezmj.model.MusicTrack;
 import ezmj.model.Resolution;
 import ezmj.model.Tile;
+import ezmj.online.OnlineProfile;
+import ezmj.online.RoomSettings;
 
 /** 主視窗：以 CardLayout 切換開始畫面與牌桌。 */
 public final class MainFrame extends JFrame {
 
     private static final String CARD_START = "start";
     private static final String CARD_TABLE = "table";
+    private static final String CARD_ONLINE = "online";
+    private static final String CARD_ROOM = "room";
     private static final int DRAWN_RESULT_SECONDS = 10;
     private static final int RESULT_SECONDS = 60;
     private static final Path SETTINGS_FILE = Path.of(System.getProperty("user.home"), ".ezmj", "settings.properties");
@@ -67,6 +73,7 @@ public final class MainFrame extends JFrame {
     private static final Path STATS_FILE = Path.of(System.getProperty("user.home"), ".ezmj", "stats.properties");
     private static final Path SAVE_FILE = Path.of(System.getProperty("user.home"), ".ezmj", "save.properties");
     private static final Path VOICE_DIR =Path.of(System.getProperty("user.home"), ".ezmj", "voice");
+    private static final Path ONLINE_FILE = Path.of(System.getProperty("user.home"), ".ezmj", "online.properties");
 
     // 要在建立任何畫面之前讀取，字型才會一開始就是設定的大小
     private final AppSettings settings = loadSettings();
@@ -75,11 +82,36 @@ public final class MainFrame extends JFrame {
     private final PlayerStats stats = PlayerStats.load(STATS_FILE);
     private final CardLayout cards = new CardLayout();
     private final JPanel root = new JPanel(cards);
-    private final StartPanel startPanel = new StartPanel(this::startGame, this::resumeGame);
+    private final StartPanel startPanel = new StartPanel(this::startGame, this::resumeGame, () -> showOnlineForm(null));
+    private final OnlinePanel onlinePanel = new OnlinePanel(new OnlinePanel.Actions() {
+        @Override
+        public void create(String server, String name, RoomSettings roomSettings) {
+            connecting(server).createRoom(server, name, roomSettings);
+        }
+
+        @Override
+        public void join(String server, String name, String code) {
+            connecting(server).joinRoom(server, name, code);
+        }
+
+        @Override
+        public void resume(OnlineProfile profile) {
+            connecting(profile.server()).resume(profile);
+        }
+
+        @Override
+        public void back() {
+            leaveOnline();
+            cards.show(root, CARD_START);
+            startPanel.focusName();
+        }
+    });
     private final HelpDialog helpDialog = new HelpDialog(this);
     private final JCheckBoxMenuItem voiceItem = checkItem("語音", settings.voiceEnabled(), this::changeVoice);
     private TablePanel tablePanel;
     private GameController controller;
+    private OnlineController online;
+    private RoomPanel roomPanel;
     private HistoryDialog historyDialog;
     private boolean achievementSaveWarned;
     private boolean statsSaveWarned;
@@ -101,6 +133,7 @@ public final class MainFrame extends JFrame {
         ErrorReporter.setUiHandler(this::recoverFromError);
         setIconImages(List.of(TilePainter.appIcon(32), TilePainter.appIcon(64)));
         root.add(startPanel, CARD_START);
+        root.add(onlinePanel, CARD_ONLINE);
         setContentPane(root);
         setJMenuBar(buildMenuBar());
         refreshResume();
@@ -486,6 +519,81 @@ public final class MainFrame extends JFrame {
         return current;
     }
 
+    /** 連線對戰的入口。連線牌局不碰本機的存檔、統計、成就與榮譽榜。 */
+    private void showOnlineForm(String message) {
+        online = null;
+        onlinePanel.setProfile(OnlineProfile.load(ONLINE_FILE));
+        cards.show(root, CARD_ONLINE);
+        if (message != null) {
+            JOptionPane.showMessageDialog(this, message, "連線對戰", JOptionPane.WARNING_MESSAGE);
+        }
+    }
+
+    private OnlineController connecting(String server) {
+        leaveOnline();
+        onlinePanel.setBusy("正在連線到 " + server + "…");
+        online = new OnlineController(onlineHost(), settings, ONLINE_FILE);
+        return online;
+    }
+
+    private void leaveOnline() {
+        if (online != null) {
+            online.shutdown();
+            online = null;
+        }
+    }
+
+    private OnlineController.Host onlineHost() {
+        return new OnlineController.Host() {
+            @Override
+            public Frame frame() {
+                return MainFrame.this;
+            }
+
+            @Override
+            public void showRoom(RoomPanel room) {
+                if (roomPanel != null) {
+                    root.remove(roomPanel);
+                }
+                roomPanel = room;
+                root.add(room, CARD_ROOM);
+                cards.show(root, CARD_ROOM);
+            }
+
+            @Override
+            public void showTable(TablePanel table) {
+                if (tablePanel != null) {
+                    root.remove(tablePanel);
+                }
+                tablePanel = table;
+                root.add(table, CARD_TABLE);
+                cards.show(root, CARD_TABLE);
+            }
+
+            @Override
+            public void showHistory(GameView game) {
+                MainFrame.this.showHistory(game);
+            }
+
+            @Override
+            public void refreshHistory() {
+                if (historyDialog != null && historyDialog.isDisplayable()) {
+                    historyDialog.refresh();
+                }
+            }
+
+            @Override
+            public void closeHistory() {
+                MainFrame.this.closeHistory();
+            }
+
+            @Override
+            public void backToForm(String message) {
+                showOnlineForm(message);
+            }
+        };
+    }
+
     /** 開始畫面的繼續按鈕跟著存檔走；讀不懂的存檔就當作沒有，開新局時會蓋掉。 */
     private void refreshResume() {
         hasSavedGame = false;
@@ -529,6 +637,9 @@ public final class MainFrame extends JFrame {
     }
 
     private String describeGame() {
+        if (online != null) {
+            return online.describe();
+        }
         return controller == null ? "不在牌局中" : "種子 " + gameSeed + "，" + controller.describe();
     }
 
@@ -536,6 +647,10 @@ public final class MainFrame extends JFrame {
     private void recoverFromError() {
         boolean inGame = controller != null;
         if (inGame) {
+            returnToStart();
+        } else if (online != null) {
+            // 連線牌局的 token 還留著，可以從連線對戰接回
+            leaveOnline();
             returnToStart();
         }
         JOptionPane.showMessageDialog(this, "遊戲發生錯誤，內容記在：\n" + ErrorReporter.logFile()
@@ -548,9 +663,9 @@ public final class MainFrame extends JFrame {
     }
 
     /** 已經開著就拿到最前面，不開第二個。 */
-    private void showHistory(GameSession session) {
+    private void showHistory(GameView game) {
         if (historyDialog == null || !historyDialog.isDisplayable()) {
-            historyDialog = new HistoryDialog(this, Dialog.ModalityType.MODELESS, session);
+            historyDialog = new HistoryDialog(this, Dialog.ModalityType.MODELESS, game);
         }
         historyDialog.setVisible(true);
         historyDialog.toFront();
@@ -598,7 +713,7 @@ public final class MainFrame extends JFrame {
             return;
         }
         if (over) {
-            new FinalDialog(this, session, note, gameEarned).setVisible(true);
+            new FinalDialog(this, session, note, gameEarned, "回到開始畫面").setVisible(true);
             returnToStart();
         } else {
             next.run();
@@ -670,6 +785,9 @@ public final class MainFrame extends JFrame {
     }
 
     private void confirmExit() {
+        if (online != null && !online.confirmExit()) {
+            return;
+        }
         if (controller == null || controller.isOver()
                 || askToSave("關閉遊戲", "要存檔之後再關閉嗎？下次可以從開始畫面繼續。", "存檔並關閉", "不存檔關閉")) {
             dispose();

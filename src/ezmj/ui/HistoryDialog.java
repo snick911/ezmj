@@ -21,7 +21,7 @@ import javax.swing.JScrollPane;
 import javax.swing.JViewport;
 import javax.swing.SwingUtilities;
 
-import ezmj.engine.GameSession;
+import ezmj.engine.GameView;
 import ezmj.engine.RoundRecord;
 import ezmj.engine.RoundResult;
 import ezmj.model.Tile;
@@ -38,12 +38,12 @@ final class HistoryDialog extends JDialog {
     private static final int FIRST_MONEY_COLUMN = 4;
     private static final int COLUMNS = FIRST_MONEY_COLUMN + SEATS + 1;
 
-    private final GameSession session;
+    private final GameView game;
 
     /** 打牌中開著可以繼續打，所以不擋住牌桌；牌局結束視窗上開的才要 modal。 */
-    HistoryDialog(Window owner, ModalityType modality, GameSession session) {
+    HistoryDialog(Window owner, ModalityType modality, GameView game) {
         super(owner, "輸贏歷程", modality);
-        this.session = session;
+        this.game = game;
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         refresh();
         setLocationRelativeTo(owner);
@@ -56,7 +56,7 @@ final class HistoryDialog extends JDialog {
         content.setBackground(Theme.PANEL);
         content.setBorder(BorderFactory.createEmptyBorder(20, 26, 20, 26));
 
-        List<RoundRecord> history = session.history();
+        List<RoundRecord> history = game.history();
         content.add(ResultDialog.line("輸贏歷程", Font.BOLD, 24f, Theme.GOLD));
         content.add(Box.createVerticalStrut(6));
         content.add(ResultDialog.line(history.isEmpty() ? "還沒有打完的局" : "共打 " + history.size() + " 局，把滑鼠停在結果上可以看牌型",
@@ -126,13 +126,13 @@ final class HistoryDialog extends JDialog {
         GridTable table = new GridTable(LEFT_COLUMNS);
         List<String> header = new ArrayList<>(List.of("局", "圈風", "結果", "牌型台"));
         for (int seat = 0; seat < SEATS; seat++) {
-            header.add(session.player(seat).name());
+            header.add(game.player(seat).name());
         }
         header.add("我的累計");
         table.header(header.toArray(new String[0]));
 
         int[] totals = new int[SEATS];
-        for (RoundRecord record : session.history()) {
+        for (RoundRecord record : game.history()) {
             for (int seat = 0; seat < SEATS; seat++) {
                 totals[seat] += record.deltas()[seat];
             }
@@ -177,7 +177,7 @@ final class HistoryDialog extends JDialog {
     }
 
     private String windText(RoundRecord record) {
-        return Tile.windName(record.roundWind()) + "風 莊" + session.player(record.dealer()).name()
+        return Tile.windName(record.roundWind()) + "風 莊" + game.player(record.dealer()).name()
                 + (record.streak() > 0 ? " 連" + record.streak() : "");
     }
 
@@ -185,15 +185,15 @@ final class HistoryDialog extends JDialog {
         if (result.isDrawnGame()) {
             return "流局";
         }
-        String winner = session.player(result.winner()).name();
+        String winner = game.player(result.winner()).name();
         if (result.isFlowerWin()) {
             return result.isSelfDraw()
                     ? winner + " 八仙過海"
-                    : winner + " 七搶一 " + session.player(result.from()).name() + " 的 " + result.winTile().label();
+                    : winner + " 七搶一 " + game.player(result.from()).name() + " 的 " + result.winTile().label();
         }
         return result.isSelfDraw()
                 ? winner + " 自摸 " + result.winTile().label()
-                : winner + " 胡 " + session.player(result.from()).name() + " 的 " + result.winTile().label();
+                : winner + " 胡 " + game.player(result.from()).name() + " 的 " + result.winTile().label();
     }
 
     /** 滑鼠提示裡的牌型明細；流局沒有。 */

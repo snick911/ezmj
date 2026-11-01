@@ -18,15 +18,15 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 
 import ezmj.engine.Achievement;
-import ezmj.engine.GameSession;
+import ezmj.engine.GameView;
 import ezmj.model.GameRecord;
 import ezmj.model.Player;
 
 /** 牌局結束的視窗：結束原因與四家的最終排名和整場成績。 */
 final class FinalDialog extends JDialog {
 
-    /** note 是表格下方要告訴玩家的話，沒有就傳空字串。 */
-    FinalDialog(Frame owner, GameSession session, String note, List<Achievement> earned) {
+    /** note 是表格下方要告訴玩家的話，沒有就傳空字串。closeLabel 是關閉按鈕的文字。 */
+    FinalDialog(Frame owner, GameView game, String note, List<Achievement> earned, String closeLabel) {
         super(owner, "牌局結束", true);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
 
@@ -35,15 +35,15 @@ final class FinalDialog extends JDialog {
         content.setBackground(Theme.PANEL);
         content.setBorder(BorderFactory.createEmptyBorder(20, 26, 20, 26));
 
-        Player[] ranking = {session.player(0), session.player(1), session.player(2), session.player(3)};
+        Player[] ranking = {game.player(0), game.player(1), game.player(2), game.player(3)};
         Arrays.sort(ranking, Comparator.comparingInt(Player::chips).reversed());
 
         content.add(ResultDialog.line(headline(ranking), Font.BOLD, 24f, Theme.GOLD));
         content.add(Box.createVerticalStrut(6));
-        content.add(ResultDialog.line("共打 " + session.roundsPlayed() + " 局，流局 " + session.drawnGames() + " 次",
+        content.add(ResultDialog.line("共打 " + game.roundsPlayed() + " 局，流局 " + game.drawnGames() + " 次",
                 Font.PLAIN, 14f, Theme.MUTED));
         content.add(Box.createVerticalStrut(12));
-        content.add(table(session, ranking));
+        content.add(table(game, ranking));
         content.add(Box.createVerticalStrut(8));
         content.add(ResultDialog.line("胡牌次數包含自摸", Font.PLAIN, 14f, Theme.MUTED));
         if (!note.isEmpty()) {
@@ -53,11 +53,11 @@ final class FinalDialog extends JDialog {
         ResultDialog.addEarned(content, earned);
         content.add(Box.createVerticalStrut(16));
 
-        JButton close = Theme.button("回到開始畫面", Theme.RED);
+        JButton close = Theme.button(closeLabel, Theme.RED);
         close.addActionListener(e -> dispose());
         JButton history = Theme.button("輸贏歷程", Theme.BUTTON);
         history.addActionListener(e ->
-                new HistoryDialog(this, ModalityType.APPLICATION_MODAL, session).setVisible(true));
+                new HistoryDialog(this, ModalityType.APPLICATION_MODAL, game).setVisible(true));
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         buttons.setOpaque(false);
         buttons.setAlignmentX(LEFT_ALIGNMENT);
@@ -81,7 +81,7 @@ final class FinalDialog extends JDialog {
         return broke.isEmpty() ? "四圈打完，牌局結束" : broke + " 輸光籌碼，牌局提早結束";
     }
 
-    private static ResultDialog.GridTable table(GameSession session, Player[] ranking) {
+    private static ResultDialog.GridTable table(GameView game, Player[] ranking) {
         ResultDialog.GridTable table = new ResultDialog.GridTable(1);
         table.header("名次　玩家", "胡牌", "自摸", "放槍", "輸贏", "籌碼");
         String date = LocalDate.now().toString();
@@ -92,8 +92,8 @@ final class FinalDialog extends JDialog {
             if (i == 0 || player.chips() != ranking[i - 1].chips()) {
                 rank = i + 1;
             }
-            GameRecord record = session.record(player.seat(), date);
-            JLabel[] cells = table.row(player.isHuman() ? Font.BOLD : Font.PLAIN, rank + "　" + player.name(),
+            GameRecord record = game.record(player.seat(), date);
+            JLabel[] cells = table.row(player.seat() == 0 ? Font.BOLD : Font.PLAIN, rank + "　" + player.name(),
                     String.valueOf(record.wins()), String.valueOf(record.selfDraws()), String.valueOf(record.dealIns()),
                     ResultDialog.money(record.winnings()), String.valueOf(player.chips()));
             cells[4].setForeground(ResultDialog.moneyColor(record.winnings()));

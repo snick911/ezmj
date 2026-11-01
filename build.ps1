@@ -77,7 +77,7 @@ Invoke-Tool jpackage @(
     '--main-jar', $jarName,
     '--main-class', 'ezmj.Main',
     '--icon', 'packaging\ezmj.ico',
-    '--add-modules', 'java.desktop',
+    '--add-modules', 'java.desktop,java.net.http,jdk.crypto.ec',
     '--jlink-options', '--strip-native-commands --strip-debug --no-man-pages --no-header-files --compress=2',
     '--dest', 'build\image'
 )
