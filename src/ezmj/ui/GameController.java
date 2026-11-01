@@ -5,7 +5,6 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -21,18 +20,17 @@ import ezmj.engine.GameSession;
 import ezmj.engine.Round;
 import ezmj.engine.RoundEvent;
 import ezmj.engine.Settlement;
-import ezmj.engine.ThinkTimer;
 import ezmj.engine.TurnOptions;
 import ezmj.model.AppSettings;
 import ezmj.model.Gender;
 import ezmj.model.Tile;
-import ezmj.rules.HandAnalyzer;
+import ezmj.table.TableFlow;
 
 /**
- * 串接引擎與畫面的流程控制，全部在 EDT 上執行。
- * 電腦的動作以 Timer 延遲，真人的動作則等待按鈕或點牌事件。
+ * 串接牌桌流程與畫面，全部在 EDT 上執行。行牌的流程在 TableFlow，這裡負責演出來、顯示按鈕，
+ * 再把真人的決定交回去。
  */
-public final class GameController {
+public final class GameController implements TableFlow.Listener {
 
     private static final int HUMAN_SEAT = 0;
     private static final String TURN_HINT = "輪到你了：點一張手牌打出";
@@ -45,29 +43,17 @@ public final class GameController {
     }
 
     private final GameSession session;
-    private final Bot bot;
-    private final Bot proxy;
+    private final TableFlow flow;
     private final RoundEndHandler roundEndHandler;
     private final AppSettings settings;
     private final Runnable checkpoint;
-    private final ThinkTimer thinking = new ThinkTimer();
     private TablePanel view;
-    private Round round;
-    private Timer timer;
-    private Map<Integer, Claim> pendingClaims;
     private boolean stopped;
-    /** 正在開局。這時的補花與摸牌都在發牌動畫之前，不個別演出來。 */
-    private boolean starting;
-    private Timer countdown;
     private int secondsLeft;
     private String promptHint;
-    private Runnable promptTimeout;
-    /** 每次等待真人時加一，分得出按鈕是不是這次等待的。 */
+    /** 目前等待的編號，分得出按鈕是不是這次等待的。 */
     private int promptId;
-    private boolean autoPlay;
     private boolean usedAutoPlay;
-    /** 聽牌模式等的牌；null 表示沒有鎖定手牌。 */
-    private List<Tile> listeningWaits;
 
     /**
      * proxy 是電腦代打時替真人決定的電腦。settings 隨時會被選單改變，每次要用時才讀。
@@ -76,11 +62,25 @@ public final class GameController {
     public GameController(GameSession session, Bot bot, Bot proxy, RoundEndHandler roundEndHandler,
                           AppSettings settings, Runnable checkpoint) {
         this.session = session;
-        this.bot = bot;
-        this.proxy = proxy;
         this.roundEndHandler = roundEndHandler;
         this.settings = settings;
         this.checkpoint = checkpoint;
+        this.flow = new TableFlow(session, Set.of(HUMAN_SEAT), bot, proxy, new TableFlow.Pacing() {
+            @Override
+            public int turnDelayMs() {
+                return settings.gameSpeed().turnDelayMs();
+            }
+
+            @Override
+            public int claimDelayMs() {
+                return settings.gameSpeed().claimDelayMs();
+            }
+
+            @Override
+            public int waitSeconds() {
+                return settings.waitSeconds();
+            }
+        }, GameController::after, this);
     }
 
     void attach(TablePanel view) {
@@ -89,16 +89,12 @@ public final class GameController {
 
     /** 電腦代打的開關。正在等真人決定時，打開就立刻交給電腦。 */
     void toggleAutoPlay() {
-        autoPlay = !autoPlay;
-        view.setAutoPlay(autoPlay);
-        if (autoPlay) {
+        boolean on = !flow.isAutoPlay(HUMAN_SEAT);
+        view.setAutoPlay(on);
+        if (on) {
             usedAutoPlay = true;
-            thinking.cancel();
-            checkpoint.run();
-            if (promptTimeout != null) {
-                advance();
-            }
         }
+        flow.setAutoPlay(HUMAN_SEAT, on);
     }
 
     /** 這場牌局已經打完，結果視窗還沒看完。 */
@@ -108,7 +104,7 @@ public final class GameController {
 
     /** 出錯時記下的局面。 */
     String describe() {
-        String state = round == null ? "還沒開局" : "階段 " + round.phase() + "，輪到座位 " + round.current();
+        String state = round() == null ? "還沒開局" : "階段 " + round().phase() + "，輪到座位 " + round().current();
         return "打完 " + session.roundsPlayed() + " 局，" + state + "，電腦 " + session.config().botLevels();
     }
 
@@ -119,55 +115,71 @@ public final class GameController {
 
     /** 這場到目前的平均思考秒數。 */
     double averageThinkSeconds() {
-        return thinking.averageSeconds();
+        return flow.thinking(HUMAN_SEAT).averageSeconds();
     }
 
     int thinkCount() {
-        return thinking.count();
+        return flow.thinking(HUMAN_SEAT).count();
     }
 
     public void startRound() {
-        listeningWaits = null;
-        round = session.newRound(message -> view.appendLog(message));
-        round.setListener(this::onRoundEvent);
-        view.bindRound(round);
-        starting = true;
-        round.start();
-        starting = false;
-        if (settings.animationEnabled() && round.phase() != Round.Phase.FINISHED) {
-            dealThenAdvance();
-        } else {
-            advance();
-        }
+        flow.startRound();
     }
 
     /** 接回存檔的牌局。下一局還沒開始的話就直接開局。 */
     void resume(GameSave.Loaded saved) {
         usedAutoPlay = saved.usedAutoPlay();
-        thinking.restore(saved.thinkNanos(), saved.thinkCount());
-        view.showThinkTime(thinking.averageSeconds(), thinking.count());
+        flow.thinking(HUMAN_SEAT).restore(saved.thinkNanos(), saved.thinkCount());
+        view.showThinkTime(averageThinkSeconds(), thinkCount());
         if (saved.round() == null) {
             startRound();
             return;
         }
-        listeningWaits = saved.listeningWaits();
-        round = saved.round();
-        round.setLog(message -> view.appendLog(message));
-        round.setListener(this::onRoundEvent);
-        view.bindRound(round);
-        view.appendLog("接續上次的牌局");
-        advance();
+        flow.setListening(HUMAN_SEAT, saved.listeningWaits());
+        flow.resume(saved.round());
     }
 
     /** 存下目前的牌局，事件之間的狀態都是完整的，隨時可以存。 */
     void save(Path file, long seed) throws IOException {
-        GameSave.save(file, seed, session, round, usedAutoPlay, listeningWaits, thinking);
+        GameSave.save(file, seed, session, round(), usedAutoPlay, flow.listeningWaits(HUMAN_SEAT), flow.thinking(HUMAN_SEAT));
+    }
+
+    public void stop() {
+        stopped = true;
+        flow.stop();
+    }
+
+    public Round round() {
+        return flow.round();
+    }
+
+    void restartCountdown() {
+        flow.restartCountdown();
+    }
+
+    /** 由牌桌點牌事件呼叫。 */
+    void humanDiscard(Tile tile) {
+        flow.discard(HUMAN_SEAT, promptId, tile);
+    }
+
+    @Override
+    public void log(String message) {
+        view.appendLog(message);
+    }
+
+    @Override
+    public void roundOpened(Round round) {
+        view.bindRound(round);
     }
 
     /** 發牌動畫演完才開始行牌，這段時間誰都不能動作。 */
-    private void dealThenAdvance() {
+    @Override
+    public int dealt(Round round) {
+        if (!settings.animationEnabled() || round.phase() == Round.Phase.FINISHED) {
+            return 0;
+        }
         view.refresh(session, round);
-        idle("發牌中…");
+        showIdle("發牌中…");
         view.animateDeal();
         if (settings.soundEnabled()) {
             for (int packet = 0; packet < TableCanvas.DEAL_PACKETS; packet++) {
@@ -177,22 +189,20 @@ public final class GameController {
                 playSound(SoundEffects.Cue.FLOWER, TableCanvas.DEAL_MS);
             }
         }
-        schedule(TableCanvas.DEAL_MS, this::advance);
+        return TableCanvas.DEAL_MS;
     }
 
     private boolean anyFlowerExposed() {
         for (int seat = 0; seat < 4; seat++) {
-            if (!round.player(seat).flowers().isEmpty()) {
+            if (!round().player(seat).flowers().isEmpty()) {
                 return true;
             }
         }
         return false;
     }
 
-    private void onRoundEvent(RoundEvent event) {
-        if (starting && (event.type() == RoundEvent.Type.DRAW || event.type() == RoundEvent.Type.FLOWER)) {
-            return;
-        }
+    @Override
+    public void event(RoundEvent event) {
         boolean animated = settings.animationEnabled();
         if (animated) {
             view.animate(event);
@@ -242,7 +252,7 @@ public final class GameController {
 
     /** 這個座位喊牌的聲音。真人看環境設定，電腦看角色的性別。 */
     private Gender voiceOf(int seat) {
-        return seat == HUMAN_SEAT ? settings.playerGender() : round.player(seat).gender();
+        return seat == HUMAN_SEAT ? settings.playerGender() : round().player(seat).gender();
     }
 
     /** 喊牌和大字同時出現，打牌時喊出打的是什麼牌。用出聲那一家的聲音；流局沒有特定的人，用女聲。 */
@@ -288,109 +298,65 @@ public final class GameController {
         delay.start();
     }
 
-    public void stop() {
-        stopped = true;
-        if (timer != null) {
-            timer.stop();
-        }
-        endPrompt();
-    }
-
-    public Round round() {
-        return round;
-    }
-
-    private void advance() {
-        endPrompt();
-        if (stopped) {
-            return;
-        }
-        finishThinkingIfDone();
+    @Override
+    public void refresh(Round round) {
         view.refresh(session, round);
-        switch (round.phase()) {
-            case FINISHED:
-                finishRound();
-                break;
-            case TURN:
-                beginTurn();
-                break;
-            default:
-                beginClaims();
-                break;
-        }
     }
 
-    /**
-     * 吃碰槓之後還是輪到真人，要打出牌才算想完；加槓等別家搶槓時也還沒完。
-     * 其他情況代表真人已經打牌或胡了，過牌在 passClaim 就算完。
-     */
-    private void finishThinkingIfDone() {
-        boolean stillHuman = round.phase() == Round.Phase.TURN && round.current() == HUMAN_SEAT;
-        if (thinking.isRunning() && !stillHuman && !round.isRobbing()) {
-            finishThinking();
-        }
+    @Override
+    public void idle(int seat) {
+        showIdle(seat < 0 || seat == HUMAN_SEAT ? " " : "等待 " + round().player(seat).name() + " 出牌…");
     }
 
-    private void finishThinking() {
-        thinking.finish(System.nanoTime());
-        view.showThinkTime(thinking.averageSeconds(), thinking.count());
+    @Override
+    public void checkpoint() {
+        checkpoint.run();
     }
 
-    private void beginTurn() {
-        int seat = round.current();
-        TurnOptions options = round.turnOptions(seat);
-        if (seat != HUMAN_SEAT) {
-            idle("等待 " + round.player(seat).name() + " 出牌…");
-            schedule(settings.gameSpeed().turnDelayMs(), () -> {
-                bot.playTurn(round, seat, options);
-                advance();
-            });
-        } else if (listeningWaits != null) {
-            idle(" ");
-            schedule(settings.gameSpeed().turnDelayMs(), () -> playListeningTurn(options));
-        } else if (autoPlay) {
-            idle(" ");
-            schedule(settings.gameSpeed().turnDelayMs(), () -> playProxyTurn(options));
-        } else {
-            showHumanTurn(options);
-        }
+    @Override
+    public void askTurn(int seat, int waitId, TurnOptions options) {
+        promptId = waitId;
+        showTurnActions(options);
     }
 
-    /** 聽牌模式：摸到胡的牌就自摸，其餘摸到什麼打什麼。 */
-    private void playListeningTurn(TurnOptions options) {
-        if (options.canSelfWin()) {
-            round.declareSelfWin(HUMAN_SEAT);
-        } else {
-            round.discard(HUMAN_SEAT, round.rightmostTile(HUMAN_SEAT));
-        }
-        advance();
+    @Override
+    public void askClaim(int seat, int waitId, List<Claim> options) {
+        promptId = waitId;
+        showClaimActions(options);
     }
 
-    /** 等待的這段時間裡代打被關掉的話，就還給真人。 */
-    private void playProxyTurn(TurnOptions options) {
-        if (autoPlay) {
-            proxy.playTurn(round, HUMAN_SEAT, options);
-        }
-        advance();
-    }
-
-    /** 打出這張牌並鎖定手牌，之後不能再吃碰槓。 */
-    private void declareListening(Tile tile) {
-        round.discard(HUMAN_SEAT, tile);
-        listeningWaits = HandAnalyzer.waits(round.player(HUMAN_SEAT).concealed(), round.player(HUMAN_SEAT).melds());
+    @Override
+    public void listening(int seat) {
         if (settings.voiceEnabled()) {
-            VoiceLines.play(VoiceLines.Line.LISTEN, voiceOf(HUMAN_SEAT));
+            VoiceLines.play(VoiceLines.Line.LISTEN, voiceOf(seat));
         }
-        advance();
+    }
+
+    @Override
+    public void thinkingFinished(int seat) {
+        view.showThinkTime(averageThinkSeconds(), thinkCount());
+    }
+
+    @Override
+    public void roundFinished(Round round, Settlement settlement) {
+        showIdle(" ");
+        view.refresh(session, round);
+        Runnable showResult = roundEndHandler.onRoundEnd(session, round, settlement, this::startRound);
+        // 有動畫時先讓胡牌的大字演完，再跳出結果
+        after(settings.animationEnabled() ? TableCanvas.WIN_BANNER_MS : 0, () -> {
+            if (!stopped) {
+                showResult.run();
+            }
+        });
     }
 
     private void addListenButtons(List<TablePanel.ActionItem> actions) {
-        round.readyDiscards(HUMAN_SEAT).entrySet().stream()
+        round().readyDiscards(HUMAN_SEAT).entrySet().stream()
                 .sorted(Comparator.comparingInt((Map.Entry<Tile, List<Tile>> entry) -> entry.getValue().size()).reversed())
                 .limit(MAX_LISTEN_BUTTONS)
                 .forEach(entry -> actions.add(promptAction(
                         "打" + entry.getKey().label() + " 聽" + waitsLabel(entry.getValue()), Theme.BUTTON,
-                        () -> declareListening(entry.getKey()))));
+                        () -> flow.declareListening(HUMAN_SEAT, promptId, entry.getKey()))));
     }
 
     private static String waitsLabel(List<Tile> waits) {
@@ -400,20 +366,10 @@ public final class GameController {
         return waits.stream().map(Tile::label).collect(Collectors.joining("、"));
     }
 
-    private void showHumanTurn(TurnOptions options) {
-        checkpoint.run();
-        thinking.start(System.nanoTime());
-        beginPrompt(TURN_HINT, () -> humanDiscard(round.rightmostTile(HUMAN_SEAT)));
-        showTurnActions(options);
-    }
-
     private void showTurnActions(TurnOptions options) {
         List<TablePanel.ActionItem> actions = new ArrayList<>();
         if (options.canSelfWin()) {
-            actions.add(promptAction("自摸", Theme.RED, () -> {
-                round.declareSelfWin(HUMAN_SEAT);
-                advance();
-            }));
+            actions.add(promptAction("自摸", Theme.RED, () -> flow.declareSelfWin(HUMAN_SEAT, promptId)));
         }
         if (!options.concealedKongs().isEmpty() || !options.addKongs().isEmpty()) {
             actions.add(promptAction("槓", Theme.BUTTON, () -> pickTurnKong(options)));
@@ -423,136 +379,48 @@ public final class GameController {
         updatePromptHint(TURN_HINT);
     }
 
-    /** 自己的回合選要槓哪張，只有一張能槓就直接槓。手上四張的是暗槓，已經碰出來的是加槓，同一張牌不會兩種都能做。 */
+    /** 自己的回合選要槓哪張，只有一張能槓就直接槓。 */
     private void pickTurnKong(TurnOptions options) {
         Set<Tile> tiles = new LinkedHashSet<>(options.concealedKongs());
         tiles.addAll(options.addKongs());
         if (tiles.size() == 1) {
-            declareTurnKong(options, tiles.iterator().next());
+            flow.declareKong(HUMAN_SEAT, promptId, tiles.iterator().next());
             return;
         }
         String hint = "選要槓的牌";
-        view.showPick(hint, tiles, null, tile -> declareTurnKong(options, tile),
+        view.showPick(hint, tiles, null, tile -> flow.declareKong(HUMAN_SEAT, promptId, tile),
                 List.of(promptAction("取消", Theme.PANEL_LIGHT, () -> showTurnActions(options))));
         updatePromptHint(hint);
-    }
-
-    private void declareTurnKong(TurnOptions options, Tile tile) {
-        if (options.concealedKongs().contains(tile)) {
-            round.declareConcealedKong(HUMAN_SEAT, tile);
-        } else {
-            round.declareAddKong(HUMAN_SEAT, tile);
-        }
-        advance();
-    }
-
-    /** 真人開始考慮；時間到還沒決定就執行 onTimeout。 */
-    private void beginPrompt(String hint, Runnable onTimeout) {
-        promptId++;
-        promptHint = hint;
-        promptTimeout = onTimeout;
-        restartCountdown();
     }
 
     /** 這次等待的按鈕。按住時倒數到了、放開才送出的話，局面已經往下走，舊按鈕不能再有作用。 */
     private TablePanel.ActionItem promptAction(String label, Color color, Runnable action) {
         int id = promptId;
         return new TablePanel.ActionItem(label, color, () -> {
-            if (promptTimeout != null && promptId == id) {
+            if (flow.isWaiting(HUMAN_SEAT, id)) {
                 action.run();
             }
         });
     }
 
-    /** 真人已經決定，或局面已經往下走。 */
-    private void endPrompt() {
-        promptTimeout = null;
-        stopCountdown();
+    @Override
+    public void secondsLeft(int seconds) {
+        secondsLeft = seconds;
+        showPromptHint();
     }
 
-    /** 從頭計時目前的等待；等待時間設定改變時也會呼叫。 */
-    void restartCountdown() {
-        stopCountdown();
-        if (promptTimeout == null) {
-            return;
-        }
-        secondsLeft = settings.waitSeconds();
-        if (secondsLeft <= 0) {
-            view.setHint(promptHint);
-            return;
-        }
-        showSecondsLeft();
-        countdown = new Timer(1000, e -> {
-            secondsLeft--;
-            if (secondsLeft > 0) {
-                showSecondsLeft();
-            } else {
-                promptTimeout.run();
-            }
-        });
-        countdown.start();
-    }
-
-    private void stopCountdown() {
-        if (countdown != null) {
-            countdown.stop();
-            countdown = null;
-        }
-    }
-
-    private void showSecondsLeft() {
-        view.setHint(promptHint + "（剩 " + secondsLeft + " 秒）");
+    private void showPromptHint() {
+        view.setHint(secondsLeft > 0 ? promptHint + "（剩 " + secondsLeft + " 秒）" : promptHint);
     }
 
     /** 換提示文字但不重新計時：進出選牌不能多賺時間。 */
     private void updatePromptHint(String hint) {
         promptHint = hint;
-        if (countdown != null) {
-            showSecondsLeft();
-        } else {
-            view.setHint(hint);
-        }
-    }
-
-    /** 由牌桌點牌事件呼叫。 */
-    void humanDiscard(Tile tile) {
-        if (round.phase() == Round.Phase.TURN && round.current() == HUMAN_SEAT) {
-            round.discard(HUMAN_SEAT, tile);
-            advance();
-        }
-    }
-
-    private void beginClaims() {
-        pendingClaims = new HashMap<>();
-        for (int seat = 1; seat < 4; seat++) {
-            List<Claim> options = round.claimOptions(seat);
-            if (!options.isEmpty()) {
-                Claim claim = bot.chooseClaim(round, seat, options);
-                if (claim != null) {
-                    pendingClaims.put(seat, claim);
-                }
-            }
-        }
-        List<Claim> humanOptions = round.claimOptions(HUMAN_SEAT);
-        if (!humanOptions.isEmpty() && (listeningWaits != null || autoPlay)) {
-            Claim claim = automatedClaim(humanOptions);
-            if (claim != null) {
-                pendingClaims.put(HUMAN_SEAT, claim);
-            }
-            humanOptions = List.of();
-        }
-        if (humanOptions.isEmpty()) {
-            idle(" ");
-            schedule(settings.gameSpeed().claimDelayMs(), this::resolveClaims);
-            return;
-        }
-        checkpoint.run();
-        thinking.start(System.nanoTime());
-        beginPrompt(claimHint() + "，要宣告嗎？", this::passClaim);
-        showClaimActions(humanOptions);
+        showPromptHint();
     }
 
     private String claimHint() {
+        Round round = round();
         return round.player(round.discarder()).name() + (round.isRobbing() ? " 加槓 " : " 打出 ") + round.claimTile().label();
     }
 
@@ -568,7 +436,7 @@ public final class GameController {
             actions.add(promptAction(first.verb(), type == Claim.Type.WIN ? Theme.RED : Theme.BUTTON,
                     ofType.size() == 1 ? () -> declareClaim(first) : () -> pickClaim(options, ofType, null)));
         }
-        actions.add(promptAction("過", Theme.PANEL_LIGHT, this::passClaim));
+        actions.add(promptAction("過", Theme.PANEL_LIGHT, () -> declareClaim(null)));
         String hint = claimHint() + "，要宣告嗎？";
         view.showActions(hint, false, actions);
         updatePromptHint(hint);
@@ -590,58 +458,26 @@ public final class GameController {
         updatePromptHint(hint);
     }
 
-    /** 過牌就算想完了，下一家就算是自己，摸牌後也是新的一次。 */
-    private void passClaim() {
-        finishThinking();
-        resolveClaims();
-    }
-
     private void declareClaim(Claim claim) {
-        pendingClaims.put(HUMAN_SEAT, claim);
-        resolveClaims();
+        flow.answerClaim(HUMAN_SEAT, promptId, claim);
     }
 
-    /** 聽牌模式只胡不吃碰槓；代打就照電腦的判斷。 */
-    private Claim automatedClaim(List<Claim> options) {
-        if (listeningWaits == null) {
-            return proxy.chooseClaim(round, HUMAN_SEAT, options);
-        }
-        return options.stream().filter(claim -> claim.type() == Claim.Type.WIN).findFirst().orElse(null);
-    }
-
-    private void resolveClaims() {
-        round.resolveClaims(pendingClaims);
-        pendingClaims = null;
-        advance();
-    }
-
-    private void finishRound() {
-        idle(" ");
-        Settlement settlement = session.settle(round.result());
-        view.refresh(session, round);
-        Runnable showResult = roundEndHandler.onRoundEnd(session, round, settlement, this::startRound);
-        // 有動畫時先讓胡牌的大字演完，再跳出結果
-        schedule(settings.animationEnabled() ? TableCanvas.WIN_BANNER_MS : 0, showResult);
-    }
-
-    private void idle(String hint) {
+    private void showIdle(String hint) {
         view.showActions(status() + hint, false, List.of());
     }
 
     private String status() {
-        if (listeningWaits != null) {
-            return "【聽牌中：等 " + listeningWaits.stream().map(Tile::label).collect(Collectors.joining("、")) + "】";
+        List<Tile> waits = flow.listeningWaits(HUMAN_SEAT);
+        if (waits != null) {
+            return "【聽牌中：等 " + waits.stream().map(Tile::label).collect(Collectors.joining("、")) + "】";
         }
-        return autoPlay ? "【電腦代打中】" : "";
+        return flow.isAutoPlay(HUMAN_SEAT) ? "【電腦代打中】" : "";
     }
 
-    private void schedule(int delayMs, Runnable action) {
-        timer = new Timer(delayMs, e -> {
-            if (!stopped) {
-                action.run();
-            }
-        });
+    private static Runnable after(int delayMs, Runnable action) {
+        Timer timer = new Timer(delayMs, e -> action.run());
         timer.setRepeats(false);
         timer.start();
+        return timer::stop;
     }
 }

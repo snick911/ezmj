@@ -22,6 +22,7 @@ public final class AllTests {
         RefereeTest.run();
         SimulationTest.run();
         BotTest.run();
+        TableFlowTest.run();
         System.exit(T.report() == 0 ? 0 : 1);
     }
 }

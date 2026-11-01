@@ -55,7 +55,8 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 | `ezmj.rules` | 胡牌判定、計台 |
 | `ezmj.engine` | 單局流程、整場牌局與結算（不依賴 Swing） |
 | `ezmj.bot` | 電腦玩家：四個等級的思考邏輯 |
-| `ezmj.ui` | Swing 畫面與流程控制 |
+| `ezmj.table` | 一桌牌的行牌流程：輪到誰、等誰決定、倒數與代打（不依賴 Swing，可有多位真人） |
+| `ezmj.ui` | Swing 畫面，把牌桌流程演出來 |
 
 ## 環境設定
 
