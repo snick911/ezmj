@@ -29,27 +29,25 @@ import ezmj.model.BotLevel;
 import ezmj.model.GameSpeed;
 import ezmj.online.OnlineProfile;
 import ezmj.online.RoomSettings;
-import ezmj.online.ServerAddress;
 
-/** 連線對戰的入口：輸入服務器位址與名字，開房間或用房號加入；牌局中斷過的話也能接回去。 */
+/** 連線對戰的入口：輸入名字，開房間或用房號加入；牌局中斷過的話也能接回去。服務器是固定的。 */
 final class OnlinePanel extends JPanel {
 
     private static final int MAX_NAME_LENGTH = 16;
     private static final int ROOM_CODE_LENGTH = 6;
     private static final int DEFAULT_WAIT_SECONDS = 30;
 
-    /** 按鈕送出的要求。server 與 name 都檢查過了。 */
+    /** 按鈕送出的要求。name 檢查過了。 */
     interface Actions {
-        void create(String server, String name, RoomSettings settings);
+        void create(String name, RoomSettings settings);
 
-        void join(String server, String name, String code);
+        void join(String name, String code);
 
         void resume(OnlineProfile profile);
 
         void back();
     }
 
-    private final JTextField serverField = new JTextField(16);
     private final JTextField nameField = new JTextField(16);
     private final JTextField codeField = new JTextField(8);
     private final JComboBox<Integer> chipBox = StartPanel.combo(StartPanel.CHIP_OPTIONS, 20_000);
@@ -80,7 +78,7 @@ final class OnlinePanel extends JPanel {
         title.setFont(Theme.font(Font.BOLD, 30f));
         title.setForeground(Theme.GOLD);
 
-        for (JTextField field : List.of(serverField, nameField, codeField)) {
+        for (JTextField field : List.of(nameField, codeField)) {
             field.setFont(Theme.font(Font.PLAIN, 17f));
             field.getDocument().addDocumentListener(new DocumentListener() {
                 @Override
@@ -113,7 +111,6 @@ final class OnlinePanel extends JPanel {
         left.setOpaque(false);
         GridBagConstraints c = new GridBagConstraints();
         c.gridy = -1;
-        StartPanel.addRow(left, c, "服務器位址", serverField);
         StartPanel.addRow(left, c, "名字（最多 " + MAX_NAME_LENGTH + " 字）", nameField);
         addSection(left, c, "用房號加入");
         StartPanel.addRow(left, c, "六碼房號", codeField);
@@ -152,8 +149,8 @@ final class OnlinePanel extends JPanel {
         card.add(right, layout);
         add(card);
 
-        createButton.addActionListener(e -> actions.create(server(), name(), settings()));
-        joinButton.addActionListener(e -> actions.join(server(), name(), code()));
+        createButton.addActionListener(e -> actions.create(name(), settings()));
+        joinButton.addActionListener(e -> actions.join(name(), code()));
         resumeButton.addActionListener(e -> actions.resume(profile));
         backButton.addActionListener(e -> actions.back());
         codeField.addActionListener(e -> joinButton.doClick());
@@ -186,9 +183,6 @@ final class OnlinePanel extends JPanel {
     /** 回到這個畫面時用存的資料帶入，上次打到一半的話可以接回。 */
     void setProfile(OnlineProfile saved) {
         profile = saved;
-        if (serverField.getText().isBlank()) {
-            serverField.setText(saved.server());
-        }
         if (nameField.getText().isBlank()) {
             nameField.setText(saved.name());
         }
@@ -205,7 +199,7 @@ final class OnlinePanel extends JPanel {
     }
 
     private void syncButtons() {
-        boolean ready = !busy && nameValid() && serverValid();
+        boolean ready = !busy && nameValid();
         createButton.setEnabled(ready);
         joinButton.setEnabled(ready && code().length() == ROOM_CODE_LENGTH);
         resumeButton.setEnabled(!busy);
@@ -215,19 +209,6 @@ final class OnlinePanel extends JPanel {
         String name = name();
         int length = name.codePointCount(0, name.length());
         return length > 0 && length <= MAX_NAME_LENGTH;
-    }
-
-    private boolean serverValid() {
-        try {
-            ServerAddress.parse(server());
-            return true;
-        } catch (IllegalArgumentException e) {
-            return false;
-        }
-    }
-
-    private String server() {
-        return serverField.getText().strip();
     }
 
     private String name() {

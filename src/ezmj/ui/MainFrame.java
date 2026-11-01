@@ -85,18 +85,18 @@ public final class MainFrame extends JFrame {
     private final StartPanel startPanel = new StartPanel(this::startGame, this::resumeGame, () -> showOnlineForm(null));
     private final OnlinePanel onlinePanel = new OnlinePanel(new OnlinePanel.Actions() {
         @Override
-        public void create(String server, String name, RoomSettings roomSettings) {
-            connecting(server).createRoom(server, name, roomSettings);
+        public void create(String name, RoomSettings roomSettings) {
+            connecting().createRoom(name, roomSettings);
         }
 
         @Override
-        public void join(String server, String name, String code) {
-            connecting(server).joinRoom(server, name, code);
+        public void join(String name, String code) {
+            connecting().joinRoom(name, code);
         }
 
         @Override
         public void resume(OnlineProfile profile) {
-            connecting(profile.server()).resume(profile);
+            connecting().resume(profile);
         }
 
         @Override
@@ -529,9 +529,9 @@ public final class MainFrame extends JFrame {
         }
     }
 
-    private OnlineController connecting(String server) {
+    private OnlineController connecting() {
         leaveOnline();
-        onlinePanel.setBusy("正在連線到 " + server + "…");
+        onlinePanel.setBusy("正在連線，服務器閒置後第一次可能要等一分鐘…");
         online = new OnlineController(onlineHost(), settings, ONLINE_FILE);
         return online;
     }

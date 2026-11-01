@@ -8,6 +8,15 @@ import java.util.Locale;
 public record ServerAddress(String host, int port, URI webSocket) {
 
     public static final int DEFAULT_PORT = 7788;
+    /** 部署在 Render 的服務器。玩家不能改，畫面上也沒有這個欄位。 */
+    public static final String RENDER = "wss://ezmj-server.onrender.com/ws";
+    /** 只給測試用：這個系統屬性有值就連到那裡，平常不要碰到線上的服務器。 */
+    public static final String TEST_OVERRIDE = "ezmj.server";
+
+    /** 這次要連的服務器。 */
+    public static ServerAddress current() {
+        return parse(System.getProperty(TEST_OVERRIDE, RENDER));
+    }
 
     public ServerAddress(String host, int port) {
         this(host, port, null);

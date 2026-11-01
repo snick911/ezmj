@@ -38,7 +38,7 @@ import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 
 import ezmj.model.GameSpeed;
-import ezmj.online.OnlineProfile;
+import ezmj.online.ServerAddress;
 
 /**
  * 實機試打：真的開一台服務器，開真的 Swing 視窗，用按按鈕和點牌的方式打連線牌局，再驗證斷線重連。
@@ -113,10 +113,6 @@ public final class OnlineTrial {
         } else {
             guest.destroyForcibly().waitFor();
             System.out.println("來賓的程式被殺掉了，重開接回");
-            // 假裝斷線的那一段是跟著來賓的程式走的，重開之後直接連服務器
-            Path file = dir.resolve("home-來賓").resolve(".ezmj").resolve("online.properties");
-            OnlineProfile saved = OnlineProfile.load(file);
-            saved.withLogin("127.0.0.1:" + port, saved.name()).save(file);
         }
         Process resumed = client(dir, "來賓", "resume", port, "--leaveAfter", "1");
         failures += expect("房主", host, 0);
@@ -149,8 +145,9 @@ public final class OnlineTrial {
         if (!Files.exists(settings)) {
             Files.writeString(settings, "sound=false\nvoice=false\nmusic=OFF\nmusicVolume=0\n");
         }
+        // 一定要換掉服務器，試打不能碰到線上的 Render；假裝斷線的來賓會再換成自己的 Proxy
         List<String> command = new ArrayList<>(List.of(java(), "-Dfile.encoding=UTF-8", "-Duser.home=" + home,
-                "-cp", System.getProperty("java.class.path"), OnlineTrial.class.getName(),
+                "-D" + ServerAddress.TEST_OVERRIDE + "=127.0.0.1:" + port, "-cp", System.getProperty("java.class.path"), OnlineTrial.class.getName(),
                 "--client", role, name, String.valueOf(port), dir.toString()));
         Collections.addAll(command, options);
         File log = dir.resolve(name + "-" + role + ".log").toFile();
@@ -365,11 +362,12 @@ public final class OnlineTrial {
                 return;
             }
             List<JTextField> fields = all(panel, JTextField.class);
-            String server = proxy == null ? "127.0.0.1:" + port : "127.0.0.1:" + proxy.port();
+            if (proxy != null) {
+                System.setProperty(ServerAddress.TEST_OVERRIDE, "127.0.0.1:" + proxy.port());
+            }
             switch (role) {
                 case "host":
-                    fields.get(0).setText(server);
-                    fields.get(1).setText(name);
+                    fields.get(0).setText(name);
                     setRoomOptions(panel);
                     filledForm = true;
                     log("開房間");
@@ -378,9 +376,8 @@ public final class OnlineTrial {
                 case "guest":
                     Path codeFile = dir.resolve("code.txt");
                     if (Files.exists(codeFile)) {
-                        fields.get(0).setText(server);
-                        fields.get(1).setText(name);
-                        fields.get(2).setText(read(codeFile).toLowerCase());
+                        fields.get(0).setText(name);
+                        fields.get(1).setText(read(codeFile).toLowerCase());
                         filledForm = true;
                         log("加入房間");
                         clickText(panel, "加入房間");

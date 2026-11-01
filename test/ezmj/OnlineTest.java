@@ -126,12 +126,12 @@ final class OnlineTest {
         test("連線資料：沒有檔案就用預設值", () -> {
             Path dir = Files.createTempDirectory("ezmj-online");
             OnlineProfile fresh = OnlineProfile.load(dir.resolve("none.properties"));
-            eq("127.0.0.1:7788", fresh.server(), "預設位址");
+            eq("", fresh.name(), "還沒有名字");
             check(!fresh.canResume(), "沒有可以接回的牌局");
         });
         test("連線資料：存了讀得回來，牌局結束就清掉 token", () -> {
             Path file = Files.createTempDirectory("ezmj-online").resolve("sub").resolve("online.properties");
-            OnlineProfile saved = OnlineProfile.load(file).withLogin("host:1", "小明").withGame("secret", "ABC234");
+            OnlineProfile saved = OnlineProfile.load(file).withName("小明").withGame("secret", "ABC234");
             saved.save(file);
             OnlineProfile loaded = OnlineProfile.load(file);
             eq(saved, loaded, "讀回來");
@@ -141,10 +141,31 @@ final class OnlineTest {
             eq("小明", cleared.name(), "名字留著");
             check(!cleared.canResume() && cleared.token() == null, "token 清掉了");
         });
-        test("連線資料：wss 網址存了讀得回來", () -> {
+        test("連線資料：舊版檔案裡的服務器不會被拿來用，也不再存檔", () -> {
             Path file = Files.createTempDirectory("ezmj-online").resolve("online.properties");
-            OnlineProfile.load(file).withLogin("wss://ezmj-server.onrender.com/ws", "小明").save(file);
-            eq("wss://ezmj-server.onrender.com/ws", OnlineProfile.load(file).server(), "網址");
+            Files.writeString(file, "server=127.0.0.1\\:7788\nname=ming\n", StandardCharsets.ISO_8859_1);
+            OnlineProfile old = OnlineProfile.load(file);
+            eq("ming", old.name(), "名字還在");
+            old.save(file);
+            check(!Files.readString(file, StandardCharsets.ISO_8859_1).contains("server"), "檔案裡沒有服務器");
+        });
+        test("服務器：固定連 Render，只有測試能換", () -> {
+            String before = System.getProperty(ServerAddress.TEST_OVERRIDE);
+            try {
+                System.clearProperty(ServerAddress.TEST_OVERRIDE);
+                ServerAddress fixed = ServerAddress.current();
+                eq("wss://ezmj-server.onrender.com/ws", fixed.toString(), "預設是 Render");
+                eq("wss", fixed.webSocket().getScheme(), "走加密的 WebSocket");
+                eq(443, fixed.port(), "port");
+                System.setProperty(ServerAddress.TEST_OVERRIDE, "127.0.0.1:7788");
+                eq("127.0.0.1:7788", ServerAddress.current().toString(), "測試可以換");
+            } finally {
+                if (before == null) {
+                    System.clearProperty(ServerAddress.TEST_OVERRIDE);
+                } else {
+                    System.setProperty(ServerAddress.TEST_OVERRIDE, before);
+                }
+            }
         });
     }
 

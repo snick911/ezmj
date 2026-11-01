@@ -50,7 +50,7 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
 
         void closeHistory();
 
-        /** 這次連線結束，回到輸入位址的畫面。message 不是 null 時告訴玩家發生什麼事。 */
+        /** 這次連線結束，回到輸入名字的畫面。message 不是 null 時告訴玩家發生什麼事。 */
         void backToForm(String message);
     }
 
@@ -90,25 +90,25 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
         this.profile = OnlineProfile.load(profileFile);
     }
 
-    void createRoom(String server, String name, RoomSettings roomSettings) {
-        login(server, name, () -> client.createRoom(roomSettings));
+    void createRoom(String name, RoomSettings roomSettings) {
+        login(name, () -> client.createRoom(roomSettings));
     }
 
-    void joinRoom(String server, String name, String code) {
-        login(server, name, () -> client.joinRoom(code));
+    void joinRoom(String name, String code) {
+        login(name, () -> client.joinRoom(code));
     }
 
-    private void login(String server, String name, Runnable next) {
-        profile = profile.withLogin(server, name);
+    private void login(String name, Runnable next) {
+        profile = profile.withName(name);
         afterLogin = next;
-        client = new OnlineClient(ServerAddress.parse(server), this, SwingUtilities::invokeLater);
+        client = new OnlineClient(ServerAddress.current(), this, SwingUtilities::invokeLater);
         client.loginWithName(name);
     }
 
     /** 接回程式關掉之前的牌局。 */
     void resume(OnlineProfile saved) {
         profile = saved;
-        client = new OnlineClient(ServerAddress.parse(saved.server()), this, SwingUtilities::invokeLater);
+        client = new OnlineClient(ServerAddress.current(), this, SwingUtilities::invokeLater);
         client.loginWithToken(saved.token());
     }
 
