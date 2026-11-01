@@ -13,6 +13,7 @@ import ezmj.model.Player;
 import ezmj.model.Tile;
 import ezmj.model.Wall;
 import ezmj.rules.HandAnalyzer;
+import ezmj.rules.ScoreResult;
 import ezmj.rules.Scorer;
 import ezmj.rules.WinContext;
 
@@ -26,13 +27,14 @@ public final class Round {
 
     private static final int SEATS = 4;
     private static final int STARTING_HAND = 16;
+    private static final int FLOWERS = 8;
 
     private final Player[] players;
     private final Wall wall;
     private final int dealer;
     private final int roundWind;
     private final int streak;
-    private final Consumer<String> log;
+    private Consumer<String> log;
     private final int[] turnsTaken = new int[SEATS];
     private final List<DiscardEvent> discardHistory = new ArrayList<>();
 
@@ -56,6 +58,38 @@ public final class Round {
         this.streak = streak;
         this.log = log;
         this.current = dealer;
+    }
+
+    /** 存檔要留下、讀檔要接回的流程狀態。牌牆與四家的牌另外存。 */
+    record State(Phase phase, int current, Tile drawn, Tile claimTile, int discarder, boolean robbing,
+                 boolean discardOnly, boolean afterKong, boolean anyClaim, int[] turnsTaken,
+                 List<DiscardEvent> history) {
+    }
+
+    State state() {
+        return new State(phase, current, drawn, claimTile, discarder, robbing, discardOnly, afterKong, anyClaim,
+                turnsTaken.clone(), List.copyOf(discardHistory));
+    }
+
+    /** 從存檔接回一局。players 的手牌、面子、花牌與棄牌要先放好。 */
+    static Round restored(Player[] players, Wall wall, int dealer, int roundWind, int streak, State state) {
+        Round round = new Round(players, wall, dealer, roundWind, streak, message -> { });
+        round.phase = state.phase();
+        round.current = state.current();
+        round.drawn = state.drawn();
+        round.claimTile = state.claimTile();
+        round.discarder = state.discarder();
+        round.robbing = state.robbing();
+        round.discardOnly = state.discardOnly();
+        round.afterKong = state.afterKong();
+        round.anyClaim = state.anyClaim();
+        System.arraycopy(state.turnsTaken(), 0, round.turnsTaken, 0, SEATS);
+        round.discardHistory.addAll(state.history());
+        return round;
+    }
+
+    public void setLog(Consumer<String> log) {
+        this.log = log;
     }
 
     /** 事件發生時，狀態已經更新。 */
@@ -85,14 +119,48 @@ public final class Round {
                 return;
             }
             player.removeFromHand(flower);
-            player.addFlower(flower);
-            log.accept(player.name() + " 補花 " + flower.label());
+            if (exposeFlower(player, flower)) {
+                return;
+            }
             if (wall.liveCount() <= 0) {
                 finishDrawnGame();
                 return;
             }
             player.addToHand(wall.drawBack());
         }
+    }
+
+    /** 亮出一張花牌。八張都亮出來時，集滿或一家七張另一家一張就立即胡，不必補牌；回傳這局是否因此結束。 */
+    private boolean exposeFlower(Player player, Tile flower) {
+        player.addFlower(flower);
+        log.accept(player.name() + " 補花 " + flower.label());
+        if (player.flowers().size() == FLOWERS) {
+            finishFlowerWin(player.seat(), -1, flower, Scorer.eightFlowers());
+            return true;
+        }
+        for (Player seven : players) {
+            for (Player one : players) {
+                if (seven.flowers().size() == FLOWERS - 1 && one.flowers().size() == 1) {
+                    Tile robbed = one.flowers().get(0);
+                    one.removeFlower(robbed);
+                    seven.addFlower(robbed);
+                    finishFlowerWin(seven.seat(), one.seat(), robbed, Scorer.sevenRobOne());
+                    return true;
+                }
+            }
+        }
+        listener.accept(new RoundEvent(RoundEvent.Type.FLOWER, player.seat(), flower, -1));
+        return false;
+    }
+
+    private void finishFlowerWin(int seat, int from, Tile flower, ScoreResult score) {
+        result = new RoundResult(seat, from, flower, score);
+        drawn = null;
+        claimTile = null;
+        robbing = false;
+        phase = Phase.FINISHED;
+        log.accept(players[seat].name() + " " + score.items().get(0).name());
+        listener.accept(new RoundEvent(from < 0 ? RoundEvent.Type.SELF_WIN : RoundEvent.Type.WIN, seat, flower, from));
     }
 
     private void draw(int seat, boolean replacement) {
@@ -105,8 +173,9 @@ public final class Round {
         }
         Tile tile = replacement ? wall.drawBack() : wall.drawFront();
         while (tile.isFlower()) {
-            player.addFlower(tile);
-            log.accept(player.name() + " 補花 " + tile.label());
+            if (exposeFlower(player, tile)) {
+                return;
+            }
             if (wall.liveCount() <= 0) {
                 finishDrawnGame();
                 return;
@@ -117,6 +186,7 @@ public final class Round {
         drawn = tile;
         afterKong = replacement;
         phase = Phase.TURN;
+        listener.accept(new RoundEvent(RoundEvent.Type.DRAW, seat, tile, -1));
     }
 
     public TurnOptions turnOptions(int seat) {
@@ -175,7 +245,7 @@ public final class Round {
         for (Tile tile : players[seat].concealed()) {
             if (!ready.containsKey(tile)) {
                 hand.remove(tile);
-                List<Tile> waits = HandAnalyzer.waits(hand);
+                List<Tile> waits = HandAnalyzer.waits(hand, players[seat].melds());
                 if (!waits.isEmpty()) {
                     ready.put(tile, waits);
                 }

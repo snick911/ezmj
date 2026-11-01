@@ -2,13 +2,12 @@ package ezmj.model;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Properties;
 
-/** 環境設定：字體大小、等待時間、解析度、背景音樂、音量、音效與動畫。存成文字檔，檔案不存在或內容不正確時用預設值。 */
+/** 環境設定：字體大小、等待時間、遊戲速度、解析度、背景音樂、音量、音效與動畫。存成文字檔，檔案不存在或內容不正確時用預設值。 */
 public final class AppSettings {
 
     public static final List<Integer> FONT_PERCENTS = List.of(85, 100, 125, 150);
@@ -34,6 +33,7 @@ public final class AppSettings {
     private static final String KEY_VOICE = "voice";
     private static final String KEY_VOICE_VOLUME = "voiceVolume";
     private static final String KEY_PLAYER_GENDER = "playerGender";
+    private static final String KEY_SPEED = "gameSpeed";
 
     private int fontPercent = DEFAULT_FONT_PERCENT;
     private int tilePercent = DEFAULT_TILE_PERCENT;
@@ -47,6 +47,7 @@ public final class AppSettings {
     private boolean voiceEnabled = true;
     private int voiceVolume = DEFAULT_VOICE_VOLUME;
     private Gender playerGender = Gender.FEMALE;
+    private GameSpeed gameSpeed = GameSpeed.NORMAL;
 
     public static AppSettings load(Path file) {
         AppSettings settings = new AppSettings();
@@ -68,6 +69,7 @@ public final class AppSettings {
         settings.setVoiceEnabled(!"false".equals(values.getProperty(KEY_VOICE, "").trim()));
         settings.setVoiceVolume(intValue(values, KEY_VOICE_VOLUME, DEFAULT_VOICE_VOLUME));
         settings.setPlayerGender(Gender.fromKey(values.getProperty(KEY_PLAYER_GENDER, "").trim()));
+        settings.setGameSpeed(GameSpeed.fromKey(values.getProperty(KEY_SPEED, "").trim()));
         return settings;
     }
 
@@ -93,10 +95,16 @@ public final class AppSettings {
         values.setProperty(KEY_VOICE, String.valueOf(voiceEnabled));
         values.setProperty(KEY_VOICE_VOLUME, String.valueOf(voiceVolume));
         values.setProperty(KEY_PLAYER_GENDER, playerGender.name());
-        Files.createDirectories(file.getParent());
-        try (OutputStream out = Files.newOutputStream(file)) {
-            values.store(out, "EZMJ");
-        }
+        values.setProperty(KEY_SPEED, gameSpeed.name());
+        PropertyFiles.store(values, file);
+    }
+
+    public GameSpeed gameSpeed() {
+        return gameSpeed;
+    }
+
+    public void setGameSpeed(GameSpeed speed) {
+        gameSpeed = speed;
     }
 
     public int fontPercent() {

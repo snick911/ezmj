@@ -43,6 +43,18 @@ public record Tile(Suit suit, int rank) implements Comparable<Tile> {
         return tiles;
     }
 
+    /** parseAll 看得懂的記法，例如 1w、5z。 */
+    public String code() {
+        switch (suit) {
+            case WAN:    return rank + "w";
+            case TONG:   return rank + "p";
+            case TIAO:   return rank + "s";
+            case WIND:   return rank + "z";
+            case DRAGON: return (rank + 4) + "z";
+            default:     return rank + "f";
+        }
+    }
+
     /** 完整的 144 張牌。 */
     public static List<Tile> fullSet() {
         List<Tile> tiles = new ArrayList<>(144);

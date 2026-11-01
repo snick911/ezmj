@@ -17,6 +17,16 @@ public final class Scorer {
     private Scorer() {
     }
 
+    /** 集滿八張花牌立即胡。不看手牌，只算這一項；莊家台在結算時另外加。 */
+    public static ScoreResult eightFlowers() {
+        return new ScoreResult(List.of(new ScoreItem("八仙過海", 8)));
+    }
+
+    /** 自己七張花、別家一張花時立即胡。不看手牌，只算這一項；莊家台在結算時另外加。 */
+    public static ScoreResult sevenRobOne() {
+        return new ScoreResult(List.of(new ScoreItem("七搶一", 8)));
+    }
+
     public static ScoreResult score(WinContext ctx) {
         ScoreResult best = null;
         for (Decomposition decomposition : HandAnalyzer.decompose(ctx.concealed())) {
@@ -61,7 +71,7 @@ public final class Scorer {
         }
 
         boolean exposed = ctx.melds().stream().anyMatch(meld -> !meld.isConcealed());
-        boolean singleWait = HandAnalyzer.waits(withoutWinTile(ctx)).size() == 1;
+        boolean singleWait = HandAnalyzer.waits(withoutWinTile(ctx), ctx.melds()).size() == 1;
         boolean allExposed = ctx.melds().size() == 5
                 && ctx.melds().stream().noneMatch(Meld::isConcealed);
 
@@ -192,14 +202,9 @@ public final class Scorer {
     }
 
     private static void addFlowerPatterns(List<ScoreItem> items, WinContext ctx) {
-        List<Tile> flowers = ctx.flowers();
-        if (flowers.size() == 8) {
-            items.add(new ScoreItem("八仙過海", 8));
-            return;
-        }
         int seasons = 0;
         int plants = 0;
-        for (Tile flower : flowers) {
+        for (Tile flower : ctx.flowers()) {
             if (flower.rank() <= 4) {
                 seasons++;
             } else {

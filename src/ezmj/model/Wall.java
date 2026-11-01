@@ -27,6 +27,11 @@ public final class Wall {
         this.tiles = new ArrayDeque<>(ordered);
     }
 
+    /** 從牌頭到牌尾的順序，存檔用。 */
+    public List<Tile> order() {
+        return new ArrayList<>(tiles);
+    }
+
     public Tile drawFront() {
         return tiles.removeFirst();
     }

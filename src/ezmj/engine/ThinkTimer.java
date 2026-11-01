@@ -40,6 +40,17 @@ public final class ThinkTimer {
         return count;
     }
 
+    public long totalNanos() {
+        return totalNanos;
+    }
+
+    /** 讀存檔時接回之前累計的時間。 */
+    public void restore(long savedNanos, int savedCount) {
+        running = false;
+        totalNanos = savedNanos;
+        count = savedCount;
+    }
+
     /** 還沒有紀錄時是 0。 */
     public double averageSeconds() {
         return count == 0 ? 0 : totalNanos / 1e9 / count;

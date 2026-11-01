@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Set;
 
 import ezmj.model.AppSettings;
+import ezmj.model.GameSpeed;
 import ezmj.model.Gender;
 import ezmj.model.MusicTrack;
 import ezmj.model.Resolution;
@@ -63,6 +64,7 @@ final class SettingsTest {
         check(settings.voiceEnabled(), "語音預設開啟");
         eq(100, settings.voiceVolume(), "語音音量");
         eq(Gender.FEMALE, settings.playerGender(), "我的語音");
+        eq(GameSpeed.NORMAL, settings.gameSpeed(), "遊戲速度");
     }
 
     static void run() {
@@ -227,6 +229,40 @@ final class SettingsTest {
                 check(energy / (pcm.length / 2) > 500, track + " 太安靜");
                 check(Math.abs(sample(pcm, 0) - sample(pcm, pcm.length - 2)) < 2_000, track + " 接縫跳太大");
             }
+        });
+
+        test("遊戲速度：存了讀得回來，不認得就用中速，越快等越短", () -> {
+            Path file = Files.createTempDirectory("ezmj-speed").resolve("settings.properties");
+            AppSettings settings = new AppSettings();
+            settings.setGameSpeed(GameSpeed.FAST);
+            settings.save(file);
+            eq(GameSpeed.FAST, AppSettings.load(file).gameSpeed(), "讀回來");
+            defaults(loadText("gameSpeed=WARP\n"));
+            check(GameSpeed.FAST.turnDelayMs() < GameSpeed.NORMAL.turnDelayMs(), "快比中短");
+            check(GameSpeed.NORMAL.turnDelayMs() < GameSpeed.SLOW.turnDelayMs(), "中比慢短");
+            eq(550, GameSpeed.NORMAL.turnDelayMs(), "中速和原本一樣");
+            eq(200, GameSpeed.NORMAL.claimDelayMs(), "中速和原本一樣");
+        });
+
+        test("存設定時先寫暫存檔：寫到一半失敗也不會弄壞原本的檔案", () -> {
+            Path dir = Files.createTempDirectory("ezmj-settings");
+            Path file = dir.resolve("settings.properties");
+            AppSettings settings = new AppSettings();
+            settings.setFontPercent(125);
+            settings.save(file);
+            check(!Files.exists(dir.resolve("settings.properties.tmp")), "暫存檔不會留著");
+
+            // 暫存檔的位置被資料夾占住，寫的時候一定失敗
+            Files.createDirectory(dir.resolve("settings.properties.tmp"));
+            settings.setFontPercent(150);
+            boolean failed = false;
+            try {
+                settings.save(file);
+            } catch (java.io.IOException e) {
+                failed = true;
+            }
+            check(failed, "應該存不了");
+            eq(125, AppSettings.load(file).fontPercent(), "原本的設定還在");
         });
 
         test("等待時間：0 以下視為不限時，過大的值取上限", () -> {

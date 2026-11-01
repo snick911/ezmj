@@ -1,0 +1,227 @@
+package ezmj.engine;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.EnumMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+
+import ezmj.model.BotLevel;
+import ezmj.model.PropertyFiles;
+
+/**
+ * 真人玩家的長期統計，每局累計。一份總計，再依同桌有哪些電腦等級各一份：
+ * 同桌有兩種等級時兩邊都會加，所以各等級的局數加起來會超過總計。存成文字檔，讀不懂的數字當作 0。
+ */
+public final class PlayerStats {
+
+    private static final int HUMAN_SEAT = 0;
+    private static final int SEATS = 4;
+    private static final String TOTAL_PREFIX = "total.";
+    private static final String LEVEL_PREFIX = "level.";
+
+    /** 一份累計。比率沒有局數時都是 0。 */
+    public static final class Totals {
+        private int rounds;
+        private int wins;
+        private int selfDraws;
+        private int dealIns;
+        private int drawnGames;
+        private long winTai;
+        private int bestTai;
+        private long winnings;
+        private int games;
+        private int firstPlaces;
+        private long placeSum;
+
+        public int rounds() {
+            return rounds;
+        }
+
+        public int wins() {
+            return wins;
+        }
+
+        public int selfDraws() {
+            return selfDraws;
+        }
+
+        public int dealIns() {
+            return dealIns;
+        }
+
+        public int drawnGames() {
+            return drawnGames;
+        }
+
+        public int bestTai() {
+            return bestTai;
+        }
+
+        public long winnings() {
+            return winnings;
+        }
+
+        public int games() {
+            return games;
+        }
+
+        public int firstPlaces() {
+            return firstPlaces;
+        }
+
+        public double winRate() {
+            return share(wins, rounds);
+        }
+
+        public double selfDrawRate() {
+            return share(selfDraws, rounds);
+        }
+
+        public double dealInRate() {
+            return share(dealIns, rounds);
+        }
+
+        /** 自己胡的時候平均幾台，不含莊家台。 */
+        public double averageTai() {
+            return share(winTai, wins);
+        }
+
+        public double averagePlace() {
+            return share(placeSum, games);
+        }
+
+        private static double share(double part, double whole) {
+            return whole == 0 ? 0 : part / whole;
+        }
+
+        private void addRound(RoundRecord record) {
+            RoundResult result = record.result();
+            rounds++;
+            winnings += record.deltas()[HUMAN_SEAT];
+            if (result.isDrawnGame()) {
+                drawnGames++;
+            } else if (result.winner() == HUMAN_SEAT) {
+                int tai = result.score().totalTai();
+                wins++;
+                winTai += tai;
+                bestTai = Math.max(bestTai, tai);
+                if (result.isSelfDraw()) {
+                    selfDraws++;
+                }
+            } else if (result.from() == HUMAN_SEAT) {
+                dealIns++;
+            }
+        }
+
+        private void addGame(int place) {
+            games++;
+            placeSum += place;
+            if (place == 1) {
+                firstPlaces++;
+            }
+        }
+
+        private void write(Properties values, String prefix) {
+            values.setProperty(prefix + "rounds", String.valueOf(rounds));
+            values.setProperty(prefix + "wins", String.valueOf(wins));
+            values.setProperty(prefix + "selfDraws", String.valueOf(selfDraws));
+            values.setProperty(prefix + "dealIns", String.valueOf(dealIns));
+            values.setProperty(prefix + "drawnGames", String.valueOf(drawnGames));
+            values.setProperty(prefix + "winTai", String.valueOf(winTai));
+            values.setProperty(prefix + "bestTai", String.valueOf(bestTai));
+            values.setProperty(prefix + "winnings", String.valueOf(winnings));
+            values.setProperty(prefix + "games", String.valueOf(games));
+            values.setProperty(prefix + "firstPlaces", String.valueOf(firstPlaces));
+            values.setProperty(prefix + "placeSum", String.valueOf(placeSum));
+        }
+
+        private void read(Properties values, String prefix) {
+            rounds = (int) number(values, prefix + "rounds");
+            wins = (int) number(values, prefix + "wins");
+            selfDraws = (int) number(values, prefix + "selfDraws");
+            dealIns = (int) number(values, prefix + "dealIns");
+            drawnGames = (int) number(values, prefix + "drawnGames");
+            winTai = number(values, prefix + "winTai");
+            bestTai = (int) number(values, prefix + "bestTai");
+            winnings = number(values, prefix + "winnings");
+            games = (int) number(values, prefix + "games");
+            firstPlaces = (int) number(values, prefix + "firstPlaces");
+            placeSum = number(values, prefix + "placeSum");
+        }
+
+        private static long number(Properties values, String key) {
+            try {
+                return Long.parseLong(values.getProperty(key, "").trim());
+            } catch (NumberFormatException e) {
+                return 0;
+            }
+        }
+    }
+
+    private final Totals total = new Totals();
+    private final Map<BotLevel, Totals> byLevel = new EnumMap<>(BotLevel.class);
+
+    public PlayerStats() {
+        for (BotLevel level : BotLevel.values()) {
+            byLevel.put(level, new Totals());
+        }
+    }
+
+    public Totals total() {
+        return total;
+    }
+
+    public Totals against(BotLevel level) {
+        return byLevel.get(level);
+    }
+
+    /** 一局結算完呼叫。 */
+    public void recordRound(GameSession session) {
+        List<RoundRecord> history = session.history();
+        RoundRecord last = history.get(history.size() - 1);
+        total.addRound(last);
+        session.config().botLevels().stream().distinct().forEach(level -> byLevel.get(level).addRound(last));
+    }
+
+    /** 整場打完呼叫。 */
+    public void recordGame(GameSession session) {
+        int place = place(session);
+        total.addGame(place);
+        session.config().botLevels().stream().distinct().forEach(level -> byLevel.get(level).addGame(place));
+    }
+
+    /** 籌碼相同就是同一名。 */
+    static int place(GameSession session) {
+        int place = 1;
+        for (int seat = 0; seat < SEATS; seat++) {
+            if (session.player(seat).chips() > session.player(HUMAN_SEAT).chips()) {
+                place++;
+            }
+        }
+        return place;
+    }
+
+    public static PlayerStats load(Path file) {
+        PlayerStats stats = new PlayerStats();
+        Properties values = new Properties();
+        try (InputStream in = Files.newInputStream(file)) {
+            values.load(in);
+        } catch (IOException | IllegalArgumentException e) {
+            return stats;
+        }
+        stats.total.read(values, TOTAL_PREFIX);
+        stats.byLevel.forEach((level, totals) -> totals.read(values, LEVEL_PREFIX + level.name() + "."));
+        return stats;
+    }
+
+    public void save(Path file) throws IOException {
+        Properties values = new Properties();
+        total.write(values, TOTAL_PREFIX);
+        byLevel.forEach((level, totals) -> totals.write(values, LEVEL_PREFIX + level.name() + "."));
+        PropertyFiles.store(values, file);
+    }
+}

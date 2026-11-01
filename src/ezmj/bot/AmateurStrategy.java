@@ -7,6 +7,7 @@ import java.util.List;
 import ezmj.bot.TableView.Opponent;
 import ezmj.engine.Claim;
 import ezmj.engine.TurnOptions;
+import ezmj.model.Personality;
 import ezmj.model.Suit;
 import ezmj.model.Tile;
 
@@ -15,6 +16,7 @@ import ezmj.model.Tile;
  * 快聽牌時會算進張，而且用全桌扣完後真正剩下的張數來算；看到別家亮出很多面子就提高警覺，
  * 進張差不多時挑現物、筋、見過的字牌，牌牆剩不多又差很遠時就保命。
  * 判斷靠固定規則，不會估對手到底聽什麼，也不會算這手值幾台。
+ * 個性影響多早提高警覺、多早保命：愛衝晚、保守早；愛做大牌會為了留一色少算一點進張。
  */
 final class AmateurStrategy implements Strategy {
 
@@ -22,6 +24,16 @@ final class AmateurStrategy implements Strategy {
     private static final int COUNTS_TILES_WITHIN = 1;
     private static final int MID_WALL = 48;
     private static final int LATE_WALL = 32;
+    private static final int ALARM_TURNS = 3;
+
+    private final Personality personality;
+    /** 把局面看得比實際緊張幾步：保守是 1，愛衝是 -1。 */
+    private final int alarm;
+
+    AmateurStrategy(Personality personality) {
+        this.personality = personality;
+        this.alarm = personality == Personality.CAUTIOUS ? 1 : personality == Personality.BOLD ? -1 : 0;
+    }
 
     @Override
     public Tile chooseDiscard(TableView view) {
@@ -33,6 +45,11 @@ final class AmateurStrategy implements Strategy {
 
         if (threats.isEmpty()) {
             Comparator<Efficiency.Choice> keepValue = Comparator.comparingInt(choice -> pairValue(view, counts, choice.tile()));
+            if (personality == Personality.GREEDY) {
+                Comparator<Efficiency.Choice> strayFirst = Comparator.comparing(choice -> !HandValue.isStray(counts, view.melds(), choice.tile()));
+                return closeEnough(choices, fastest).stream()
+                        .min(strayFirst.thenComparing(keepValue).thenComparing(Efficiency.FASTEST)).orElseThrow().tile();
+            }
             return choices.stream()
                     .filter(choice -> choice.shanten() == fastest.shanten() && choice.ukeire() == fastest.ukeire())
                     .min(keepValue.thenComparing(Efficiency.FASTEST)).orElseThrow().tile();
@@ -46,8 +63,9 @@ final class AmateurStrategy implements Strategy {
     }
 
     /** 牌牆剩得不多而手牌還差很遠，胡的機會已經不值得冒險。 */
-    private static boolean tooFarToPush(TableView view, int shanten) {
-        return (shanten >= 3 && view.liveTiles() < MID_WALL) || (shanten == 2 && view.liveTiles() < LATE_WALL);
+    private boolean tooFarToPush(TableView view, int shanten) {
+        int felt = shanten + alarm;
+        return (felt >= 3 && view.liveTiles() < MID_WALL) || (felt == 2 && view.liveTiles() < LATE_WALL);
     }
 
     /** 離聽牌還遠時不會去數張數，憑牌型判斷；快聽了才認真算。 */
@@ -73,11 +91,12 @@ final class AmateurStrategy implements Strategy {
     }
 
     /** 亮三組以上、亮兩組且打了八巡、或已經打了十二巡的人，就當作快聽了。 */
-    private static List<Opponent> threats(TableView view) {
+    private List<Opponent> threats(TableView view) {
         List<Opponent> threats = new ArrayList<>();
         for (Opponent opponent : view.opponents()) {
-            int turns = view.discardCount(opponent);
-            if (opponent.meldCount() >= 3 || (opponent.meldCount() == 2 && turns >= 8) || turns >= 12) {
+            int turns = view.discardCount(opponent) + alarm * ALARM_TURNS;
+            int melds = opponent.meldCount() + alarm;
+            if (melds >= 3 || (melds == 2 && turns >= 8) || turns >= 12) {
                 threats.add(opponent);
             }
         }
@@ -123,14 +142,14 @@ final class AmateurStrategy implements Strategy {
 
     @Override
     public Tile chooseKong(TableView view, TurnOptions options) {
-        return new NormalStrategy().chooseKong(view, options);
+        return new NormalStrategy(personality).chooseKong(view, options);
     }
 
     /** 宣告完還是差太遠時不動，留著手牌好防守。 */
     @Override
     public Claim chooseClaim(TableView view, List<Claim> options) {
         int[] unseen = view.unseen();
-        Claim best = NormalStrategy.fastestClaim(view, options, unseen);
+        Claim best = NormalStrategy.fastestClaim(view, options, unseen, personality);
         if (best == null || best.type() == Claim.Type.KONG || threats(view).isEmpty()) {
             return best;
         }

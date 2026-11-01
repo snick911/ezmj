@@ -139,8 +139,8 @@ final class AchievementFacts {
         return session.drawnGames();
     }
 
-    BotLevel botLevel() {
-        return session.config().botLevel();
+    boolean allBotsPro() {
+        return session.config().botLevels().stream().allMatch(level -> level == BotLevel.PRO);
     }
 
     double averageThinkSeconds() {

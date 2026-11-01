@@ -8,6 +8,7 @@ import ezmj.engine.Claim;
 import ezmj.engine.Round;
 import ezmj.engine.TurnOptions;
 import ezmj.model.BotLevel;
+import ezmj.model.Personality;
 import ezmj.model.Tile;
 
 /** 把策略接到引擎上。這是 bot 套件裡除了 TableView 之外唯一碰 Round 的地方，而且只用來執行決定。 */
@@ -16,7 +17,11 @@ public final class ComputerBot implements Bot {
     private final Strategy strategy;
 
     public ComputerBot(BotLevel level, int basePay, int taiPay, Random random) {
-        this.strategy = Strategy.of(level, basePay, taiPay, random);
+        this(level, Personality.BALANCED, basePay, taiPay, random);
+    }
+
+    public ComputerBot(BotLevel level, Personality personality, int basePay, int taiPay, Random random) {
+        this.strategy = Strategy.of(level, personality, basePay, taiPay, random);
     }
 
     @Override

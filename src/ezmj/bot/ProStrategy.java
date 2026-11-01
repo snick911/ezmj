@@ -12,6 +12,7 @@ import ezmj.bot.TableView.Opponent;
 import ezmj.engine.Claim;
 import ezmj.engine.TurnOptions;
 import ezmj.model.Meld;
+import ezmj.model.Personality;
 import ezmj.model.Tile;
 
 /**
@@ -19,6 +20,7 @@ import ezmj.model.Tile;
  * 每個選項的分數 = 這手胡得到的機率 × 胡了贏多少 − 放槍機率 × 放槍賠多少。
  * 這套規則底大台小、牌局又快，速度最值錢，所以平常只在進張差不多的打法之間挑；
  * 只有估計胡牌機會已經很低時，才把最安全的牌也列入考慮，也就是棄胡。
+ * 個性與籌碼局勢會調整兩邊的比重，見 Posture。
  */
 final class ProStrategy implements Strategy {
 
@@ -46,18 +48,17 @@ final class ProStrategy implements Strategy {
     private static final double UKEIRE_FLOOR = 0.4;
     private static final double MAX_WIN_CHANCE = 0.95;
 
-    /** 進張不少於最快打法的這個比例，才算「差不多快」。 */
-    private static final double NEARLY_AS_FAST = 0.9;
-    private static final double FOLD_BELOW_WIN_CHANCE = 0.1;
     private static final int FOLD_CANDIDATES = 3;
     /** 字牌與么九比較容易被別家打出來，聽這些牌時張數加權。 */
     private static final double EASY_WAIT_WEIGHT = 1.25;
     private static final double PRESSURE_WEIGHT = 0.4;
 
+    private final Personality personality;
     private final int basePay;
     private final int taiPay;
 
-    ProStrategy(int basePay, int taiPay) {
+    ProStrategy(Personality personality, int basePay, int taiPay) {
+        this.personality = personality;
         this.basePay = basePay;
         this.taiPay = taiPay;
     }
@@ -146,11 +147,13 @@ final class ProStrategy implements Strategy {
         private final int[] unseen;
         private final List<OpponentRead> reads = new ArrayList<>();
         private final double pressure;
+        private final Posture posture;
         private final double[] riskCache = new double[Tile.KINDS];
 
         Situation(TableView view) {
             this.view = view;
             this.unseen = view.unseen();
+            this.posture = Posture.of(personality, view, basePay, taiPay);
             double tenpaiSum = 0;
             for (Opponent opponent : view.opponents()) {
                 OpponentRead read = new OpponentRead(view, opponent, unseen);
@@ -163,7 +166,7 @@ final class ProStrategy implements Strategy {
             Arrays.fill(riskCache, -1);
         }
 
-        /** 打這張的期望賠款。 */
+        /** 打這張的期望賠款，依心態加權。 */
         double risk(Tile tile) {
             int index = tile.index();
             if (riskCache[index] < 0) {
@@ -171,7 +174,7 @@ final class ProStrategy implements Strategy {
                 for (OpponentRead read : reads) {
                     total += read.dealIn(tile) * read.payment(basePay, taiPay);
                 }
-                riskCache[index] = total;
+                riskCache[index] = total * posture.caution();
             }
             return riskCache[index];
         }
@@ -192,14 +195,14 @@ final class ProStrategy implements Strategy {
             Set<Choice> candidates = new LinkedHashSet<>();
             candidates.add(fastest);
             for (Choice choice : choices) {
-                if (choice.shanten() == fastest.shanten() && choice.ukeire() >= fastest.ukeire() * NEARLY_AS_FAST) {
+                if (choice.shanten() == fastest.shanten() && choice.ukeire() >= fastest.ukeire() * posture.nearlyAsFast()) {
                     candidates.add(choice);
                 }
             }
             counts[fastest.tile().index()]--;
             double fastestChance = winChance(counts, sets, fastest.shanten(), 0);
             counts[fastest.tile().index()]++;
-            if (fastestChance < FOLD_BELOW_WIN_CHANCE) {
+            if (fastestChance < posture.foldBelow()) {
                 choices.stream().sorted(Comparator.comparingDouble(choice -> risk(choice.tile())))
                         .limit(FOLD_CANDIDATES).forEach(candidates::add);
             }
@@ -230,10 +233,10 @@ final class ProStrategy implements Strategy {
             return offense(counts, melds, Shanten.of(counts, 5 - melds.size()), extraWall) - safest;
         }
 
-        /** 3n+1 張的攻擊分：胡得到的機率 × 胡了贏多少。 */
+        /** 3n+1 張的攻擊分：胡得到的機率 × 胡了贏多少，依心態加權。 */
         private double offense(int[] counts, List<Meld> melds, int shanten, int extraWall) {
-            return winChance(counts, 5 - melds.size(), shanten, extraWall)
-                    * winMoney(HandValue.estimate(view, counts, melds), melds);
+            return posture.attack() * winChance(counts, 5 - melds.size(), shanten, extraWall)
+                    * winMoney(HandValue.estimate(view, counts, melds, posture.ambition()), melds);
         }
 
         private double winChance(int[] counts, int sets, int shanten, int extraWall) {

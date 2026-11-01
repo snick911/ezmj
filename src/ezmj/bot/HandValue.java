@@ -9,23 +9,24 @@ import ezmj.model.Tile;
 /** 估計目前這手牌做完大概值幾台（不含自摸與莊家，那些在算錢時才加）。 */
 final class HandValue {
 
+    private static final int HONORS = 3;
+
     private HandValue() {
     }
 
-    static double estimate(TableView view, int[] counts, List<Meld> melds) {
+    /** ambition 放大門清與大牌的部分；1 就是照實估。 */
+    static double estimate(TableView view, int[] counts, List<Meld> melds, double ambition) {
         double tai = 0.8;
         boolean closed = melds.stream().allMatch(Meld::isConcealed);
         if (closed) {
-            tai += 1;
+            tai += ambition;
         }
         for (Tile flower : view.flowers()) {
             if (flower.rank() == view.seatWind() || flower.rank() == view.seatWind() + 4) {
                 tai += 1;
             }
         }
-        tai += honorValue(view, counts, melds);
-        tai += flushValue(counts, melds);
-        tai += tripletValue(counts, melds);
+        tai += ambition * (honorValue(view, counts, melds) + flushValue(counts, melds) + tripletValue(counts, melds));
         return tai;
     }
 
@@ -57,26 +58,10 @@ final class HandValue {
 
     /** 雜牌越少越可能做成一色：差兩三張時才值得為它調整打法。 */
     private static double flushValue(int[] counts, List<Meld> melds) {
-        int[] perSuit = new int[3];
-        int honors = 0;
-        for (int i = 0; i < Tile.KINDS; i++) {
-            if (i < 27) {
-                perSuit[i / 9] += counts[i];
-            } else {
-                honors += counts[i];
-            }
-        }
-        for (Meld meld : melds) {
-            Tile tile = meld.first();
-            if (tile.isNumber()) {
-                perSuit[tile.index() / 9] += meld.tiles().size();
-            } else {
-                honors += meld.tiles().size();
-            }
-        }
-        int main = Math.max(perSuit[0], Math.max(perSuit[1], perSuit[2]));
-        int stray = perSuit[0] + perSuit[1] + perSuit[2] - main;
-        double full = honors > 0 ? 4 : 8;
+        int[] tally = suitTally(counts, melds);
+        int main = Math.max(tally[0], Math.max(tally[1], tally[2]));
+        int stray = tally[0] + tally[1] + tally[2] - main;
+        double full = tally[HONORS] > 0 ? 4 : 8;
         if (stray == 0) {
             return full;
         }
@@ -87,6 +72,29 @@ final class HandValue {
             return full * 0.3;
         }
         return stray == 3 ? full * 0.1 : 0;
+    }
+
+    /** 萬、筒、條、字各有幾張，手牌與面子都算。 */
+    private static int[] suitTally(int[] counts, List<Meld> melds) {
+        int[] tally = new int[HONORS + 1];
+        for (int i = 0; i < Tile.KINDS; i++) {
+            tally[Math.min(i / 9, HONORS)] += counts[i];
+        }
+        for (Meld meld : melds) {
+            Tile tile = meld.first();
+            tally[tile.isNumber() ? tile.index() / 9 : HONORS] += meld.tiles().size();
+        }
+        return tally;
+    }
+
+    /** 想做一色時看這張是不是雜牌：不是最多的那種數牌就是，字牌不算。 */
+    static boolean isStray(int[] counts, List<Meld> melds, Tile tile) {
+        if (!tile.isNumber()) {
+            return false;
+        }
+        int[] tally = suitTally(counts, melds);
+        int main = Math.max(tally[0], Math.max(tally[1], tally[2]));
+        return tally[tile.index() / 9] < main;
     }
 
     /** 碰碰胡與暗刻：刻子與對子夠多才算有機會。 */

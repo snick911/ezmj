@@ -2,10 +2,8 @@ package ezmj.model;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
@@ -13,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.function.ToIntFunction;
+import java.util.stream.Collectors;
 
 /** 榮譽榜：每個類別各自留下數值最高的十筆。存成文字檔，讀不懂的那筆會略過，不影響其他紀錄。 */
 public final class HonorRoll {
@@ -118,12 +117,21 @@ public final class HonorRoll {
                     Integer.parseInt(values.getProperty(prefix + "selfDraws", "").trim()),
                     Integer.parseInt(values.getProperty(prefix + "winnings", "").trim()),
                     Integer.parseInt(values.getProperty(prefix + "dealIns", "").trim()),
-                    BotLevel.valueOf(values.getProperty(prefix + "botLevel", "").trim()),
+                    parseLevels(values.getProperty(prefix + "botLevel", "")),
                     Integer.parseInt(values.getProperty(prefix + "basePay", "").trim()),
                     Integer.parseInt(values.getProperty(prefix + "taiPay", "").trim()));
         } catch (IllegalArgumentException e) {
             return null;
         }
+    }
+
+    /** 逗號隔開的三家等級。舊版只存一個，那時三家都是同一個等級。 */
+    private static List<BotLevel> parseLevels(String text) {
+        List<BotLevel> levels = new ArrayList<>();
+        for (String name : text.split(",")) {
+            levels.add(BotLevel.valueOf(name.trim()));
+        }
+        return levels.size() == 1 ? Collections.nCopies(3, levels.get(0)) : levels;
     }
 
     /** 先寫到暫存檔再換過去，存到一半當機也不會弄壞原本的紀錄。 */
@@ -140,16 +148,12 @@ public final class HonorRoll {
                 values.setProperty(prefix + "selfDraws", String.valueOf(record.selfDraws()));
                 values.setProperty(prefix + "winnings", String.valueOf(record.winnings()));
                 values.setProperty(prefix + "dealIns", String.valueOf(record.dealIns()));
-                values.setProperty(prefix + "botLevel", record.botLevel().name());
+                values.setProperty(prefix + "botLevel", record.botLevels().stream()
+                        .map(BotLevel::name).collect(Collectors.joining(",")));
                 values.setProperty(prefix + "basePay", String.valueOf(record.basePay()));
                 values.setProperty(prefix + "taiPay", String.valueOf(record.taiPay()));
             }
         }
-        Files.createDirectories(file.getParent());
-        Path temp = file.resolveSibling(file.getFileName() + ".tmp");
-        try (OutputStream out = Files.newOutputStream(temp)) {
-            values.store(out, "EZMJ");
-        }
-        Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING);
+        PropertyFiles.store(values, file);
     }
 }

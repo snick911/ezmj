@@ -14,9 +14,12 @@ public final class AllTests {
         SessionTest.run();
         SessionTest.botNames();
         SessionTest.records();
+        SessionTest.flowerWins();
         SettingsTest.run();
         HonorRollTest.run();
         AchievementTest.run();
+        SaveTest.run();
+        RefereeTest.run();
         SimulationTest.run();
         BotTest.run();
         System.exit(T.report() == 0 ? 0 : 1);

@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Hashtable;
 import java.util.List;
+import java.util.Locale;
 import java.util.stream.Collectors;
 
 import javax.swing.BorderFactory;
@@ -28,6 +29,8 @@ import javax.swing.SwingUtilities;
 
 import ezmj.engine.Achievement;
 import ezmj.engine.AchievementBook;
+import ezmj.engine.PlayerStats;
+import ezmj.model.BotLevel;
 import ezmj.model.GameRecord;
 import ezmj.model.HonorRoll;
 import ezmj.model.Meld;
@@ -109,6 +112,55 @@ final class HelpDialog extends JDialog {
         showPage("成就" + (group == null ? "" : "：" + group.label()), achievementPage(book, group));
     }
 
+    void showStats(PlayerStats stats) {
+        currentPage = () -> showStats(stats);
+        showPage("我的統計", statsPage(stats));
+    }
+
+    private static String statsPage(PlayerStats stats) {
+        PlayerStats.Totals total = stats.total();
+        if (total.rounds() == 0) {
+            return "<h2>我的統計</h2><p>還沒有紀錄。打完一局，成績就會累計在這裡。</p>";
+        }
+        StringBuilder html = new StringBuilder("<h2>總計</h2><table width=\"100%\" cellspacing=\"0\" cellpadding=\"5\">");
+        statRow(html, "局數", total.rounds() + " 局，流局 " + total.drawnGames() + " 次");
+        statRow(html, "胡牌率", percent(total.winRate()) + "（" + total.wins() + " 次）");
+        statRow(html, "自摸率", percent(total.selfDrawRate()) + "（" + total.selfDraws() + " 次）");
+        statRow(html, "放槍率", percent(total.dealInRate()) + "（" + total.dealIns() + " 次）");
+        statRow(html, "胡牌平均台數", String.format(Locale.ROOT, "%.2f 台，最高 %d 台", total.averageTai(), total.bestTai()));
+        statRow(html, "累計輸贏", total.winnings() + "（每局 " + String.format(Locale.ROOT, "%+.0f", (double) total.winnings() / total.rounds()) + "）");
+        statRow(html, "打完的牌局", total.games() + " 場，第一名 " + total.firstPlaces() + " 場"
+                + (total.games() == 0 ? "" : String.format(Locale.ROOT, "，平均第 %.2f 名", total.averagePlace())));
+        html.append("</table><h2>依電腦等級</h2><table width=\"100%\" cellspacing=\"0\" cellpadding=\"5\"><tr class=\"head\">");
+        for (String title : new String[] {"同桌有", "局數", "胡牌率", "自摸率", "放槍率", "平均台數", "場數", "第一名"}) {
+            html.append("<td class=\"cell\">").append(title).append("</td>");
+        }
+        html.append("</tr>");
+        for (BotLevel level : BotLevel.values()) {
+            PlayerStats.Totals row = stats.against(level);
+            html.append("<tr>").append(honorCell(level.label(), false))
+                    .append(honorCell(String.valueOf(row.rounds()), false))
+                    .append(honorCell(percent(row.winRate()), false))
+                    .append(honorCell(percent(row.selfDrawRate()), false))
+                    .append(honorCell(percent(row.dealInRate()), false))
+                    .append(honorCell(String.format(Locale.ROOT, "%.2f", row.averageTai()), false))
+                    .append(honorCell(String.valueOf(row.games()), false))
+                    .append(honorCell(String.valueOf(row.firstPlaces()), false))
+                    .append("</tr>");
+        }
+        return html.append("</table><p class=\"note\">同桌有兩種等級時，兩邊都會算，所以局數加起來會超過總計。"
+                + "平均台數不含莊家台。開了電腦代打之後，這場剩下的局不列入。"
+                + "累計輸贏把不同底台的牌局直接加總。</p>").toString();
+    }
+
+    private static void statRow(StringBuilder html, String title, String value) {
+        html.append("<tr>").append(colorCell(title, Theme.MUTED)).append(honorCell(value, false)).append("</tr>");
+    }
+
+    private static String percent(double share) {
+        return String.format(Locale.ROOT, "%.1f%%", share * 100);
+    }
+
     private static String achievementPage(AchievementBook book, Achievement.Group only) {
         StringBuilder html = new StringBuilder("<p class=\"tai\"><b>已達成 ").append(book.unlockedCount()).append(" / ")
                 .append(Achievement.values().length).append(" 項</b></p>");
@@ -176,7 +228,7 @@ final class HelpDialog extends JDialog {
                     .append(honorCell(String.valueOf(record.selfDraws()), category == HonorRoll.Category.SELF_DRAWS))
                     .append(honorCell(String.valueOf(record.winnings()), category == HonorRoll.Category.WINNINGS))
                     .append(honorCell(String.valueOf(record.dealIns()), category == HonorRoll.Category.DEAL_INS))
-                    .append(honorCell(record.botLevel().label(), false))
+                    .append(honorCell(record.botLevelsLabel(), false))
                     .append(honorCell(record.basePay() + "／" + record.taiPay(), false))
                     .append(honorCell(escape(record.date()), false))
                     .append("</tr>");
@@ -227,6 +279,8 @@ final class HelpDialog extends JDialog {
                 + "<h2>開局</h2>"
                 + "<p>四人對局，第一局隨機決定莊家。每人發 16 張，莊家再摸第 17 張後先打。</p>"
                 + "<p>拿到花牌會自動亮出，並從牌尾補一張。</p>"
+                + "<p>八張花牌都亮出來時，一家集滿八張（八仙過海）或一家七張、別家一張（七搶一）就立即胡，不看手牌，開局補花時也一樣。"
+                + "八仙過海算自摸，三家付錢；七搶一拿走別家那張花，算那家放槍，只有他付錢。兩種都是 8 台，再依規則加莊家台。</p>"
                 + "<h2>胡牌</h2>"
                 + "<p>胡牌要湊成 <b>五組面子加一對眼睛</b>，共 17 張。面子是順子、刻子或槓。"
                 + "沒有其他特殊胡牌牌型，也沒有最低台數，0 台一樣能胡。</p>"
@@ -246,8 +300,9 @@ final class HelpDialog extends JDialog {
                 + "<p><b>加槓</b>：輪到自己時，用手上的牌加到已經碰出的刻子上。別家若能胡這張牌，可以搶槓。</p>"
                 + "<p>" + claim("7w7w7w", "7w") + "</p>"
                 + "<p>吃、碰之後要直接打一張牌。槓牌之後從牌尾補一張。</p>"
-                + "<p>按下吃、碰、槓後，能用的手牌維持原色，不能選的會蓋上遮罩，點手牌就決定。"
-                + "吃牌有多種組合時，點共用的牌後再選一張。按「取消」可以回去。胡沒有牌可選，按了就胡。</p>"
+                + "<p>只有一種選擇時，按下吃、碰、槓就直接宣告；胡與自摸也是按了就胡。"
+                + "吃有多種組合、或自己回合有多張牌能槓時才進入選牌：能用的手牌維持原色，不能選的會蓋上遮罩，點手牌就決定。"
+                + "吃牌時點共用的牌後再選一張。按「取消」可以回去。</p>"
                 + "<p>同一張牌有多人宣告時，胡優先於槓、碰，槓、碰優先於吃。"
                 + "多人同時要胡，只有放槍者的下家起算最近的一家能胡。</p>"
                 + "<h2>流局</h2>"
@@ -307,7 +362,7 @@ final class HelpDialog extends JDialog {
                 + "<p>下表的刻子都包含槓。暗槓算暗刻，也不影響門清。"
                 + "胡別家打出的牌時，如果這張牌只能湊成刻子，這組不算暗刻。</p>"
                 + "<p class=\"note\">每個牌型下面都有一手範例：紅框是胡的那張牌，"
-                + "右邊依序是亮出的面子與花牌。「這手共幾台」是實際計算的結果，可能包含其他一起成立的牌型。</p>";
+                + "最左邊是亮出的面子，最右邊是花牌。「這手共幾台」是實際計算的結果，可能包含其他一起成立的牌型。</p>";
     }
 
     private String scoreTables() {
@@ -321,9 +376,14 @@ final class HelpDialog extends JDialog {
                         .append(Theme.scaled(110)).append("\">").append(entry.name())
                         .append("</td><td class=\"tai\" width=\"").append(Theme.scaled(56)).append("\">").append(entry.tai())
                         .append(" 台</td><td>").append(entry.condition()).append("</td></tr></table>");
-                html.append("<table width=\"100%\" cellspacing=\"0\" cellpadding=\"5\"><tr><td class=\"example\">")
-                        .append(handImage(entry.example()))
-                        .append("<div class=\"note\">").append(caption(entry.example())).append("</div></td></tr></table>");
+                html.append("<table width=\"100%\" cellspacing=\"0\" cellpadding=\"5\"><tr><td class=\"example\">");
+                if (entry.example() == null) {
+                    html.append(image(List.of(new TileGroup(Tile.parseAll("1f2f3f4f5f6f7f8f"), false)), EXAMPLE_TILE_W));
+                } else {
+                    html.append(handImage(entry.example()))
+                            .append("<div class=\"note\">").append(caption(entry.example())).append("</div>");
+                }
+                html.append("</td></tr></table>");
             }
         }
         return html.toString();
@@ -334,13 +394,13 @@ final class HelpDialog extends JDialog {
         concealed.remove(hand.winTile());
         concealed.sort(null);
         List<TileGroup> groups = new ArrayList<>();
+        for (Meld meld : hand.melds()) {
+            groups.add(new TileGroup(meld.tiles(), false));
+        }
         if (!concealed.isEmpty()) {
             groups.add(new TileGroup(concealed, false));
         }
         groups.add(new TileGroup(List.of(hand.winTile()), true));
-        for (Meld meld : hand.melds()) {
-            groups.add(new TileGroup(meld.tiles(), false));
-        }
         if (!hand.flowers().isEmpty()) {
             groups.add(new TileGroup(hand.flowers(), false));
         }

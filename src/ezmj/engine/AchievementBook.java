@@ -2,15 +2,15 @@ package ezmj.engine;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+
+import ezmj.model.PropertyFiles;
 
 /** 玩家達成的成就與累計次數。存成文字檔，讀不懂的項目會略過，不影響其他紀錄。 */
 public final class AchievementBook {
@@ -103,16 +103,10 @@ public final class AchievementBook {
         return book;
     }
 
-    /** 先寫到暫存檔再換過去，存到一半當機也不會弄壞原本的紀錄。 */
     public void save(Path file) throws IOException {
         Properties values = new Properties();
         unlocked.forEach((achievement, date) -> values.setProperty(UNLOCKED_PREFIX + achievement.name(), date));
         counts.forEach((counter, count) -> values.setProperty(COUNT_PREFIX + counter.name(), String.valueOf(count)));
-        Files.createDirectories(file.getParent());
-        Path temp = file.resolveSibling(file.getFileName() + ".tmp");
-        try (OutputStream out = Files.newOutputStream(temp)) {
-            values.store(out, "EZMJ");
-        }
-        Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING);
+        PropertyFiles.store(values, file);
     }
 }

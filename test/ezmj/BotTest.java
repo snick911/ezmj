@@ -11,12 +11,16 @@ import java.lang.reflect.RecordComponent;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Random;
+import java.util.Set;
 
 import ezmj.bot.ComputerBot;
 import ezmj.bot.Shanten;
+import ezmj.bot.SeatedBots;
 import ezmj.bot.Strategy;
 import ezmj.bot.TableView;
 import ezmj.bot.TableView.Opponent;
@@ -28,12 +32,15 @@ import ezmj.engine.TurnOptions;
 import ezmj.model.BotLevel;
 import ezmj.model.GameConfig;
 import ezmj.model.Meld;
+import ezmj.model.Personality;
 import ezmj.model.Player;
 import ezmj.model.Tile;
 import ezmj.rules.HandAnalyzer;
 
 /** 向聽計算、不作弊的保證，以及每個等級該有的思考方式。 */
 final class BotTest {
+
+    private static final int PLENTY_OF_CHIPS = 100_000;
 
     private BotTest() {
     }
@@ -73,13 +80,13 @@ final class BotTest {
         for (int i = 0; i < melds; i++) {
             open.add(chow((i + 1) + "s" + (i + 2) + "s" + (i + 3) + "s"));
         }
-        return new Opponent(seat, open, 0, List.of(), hand(river));
+        return new Opponent(seat, open, 0, List.of(), hand(river), PLENTY_OF_CHIPS);
     }
 
     private static TableView table(String tiles, List<Meld> melds, List<Opponent> opponents,
                                    List<DiscardEvent> history, int live) {
         return new TableView(0, 0, 0, 1, 1, live, hand(tiles), melds, List.of(), List.of(),
-                opponents, history, null, -1, false);
+                opponents, history, null, -1, false, PLENTY_OF_CHIPS);
     }
 
     private static List<DiscardEvent> historyOf(List<Opponent> opponents) {
@@ -102,6 +109,138 @@ final class BotTest {
         pro();
         allLevels();
         ladder();
+        personalities();
+    }
+
+    /** 一手要吃碰的選擇。 */
+    private record ClaimChoice(TableView view, List<Claim> options) {
+    }
+
+    private static void collectDecisions(List<TableView> turns, List<ClaimChoice> claims) {
+        ComputerBot[] bots = new ComputerBot[4];
+        for (int seat = 0; seat < 4; seat++) {
+            bots[seat] = new ComputerBot(BotLevel.AMATEUR, 100, 20, new Random(seat));
+        }
+        Random random = new Random(11);
+        for (int r = 0; r < 60; r++) {
+            GameSession session = new GameSession(new GameConfig("測試", 100_000, 100, 20, BotLevel.AMATEUR), random);
+            Round round = session.newRound(message -> { });
+            round.start();
+            while (round.phase() != Round.Phase.FINISHED) {
+                if (round.phase() == Round.Phase.TURN) {
+                    int seat = round.current();
+                    TurnOptions options = round.turnOptions(seat);
+                    if (!options.canSelfWin()) {
+                        turns.add(TableView.of(round, seat));
+                    }
+                    bots[seat].playTurn(round, seat, options);
+                } else {
+                    Map<Integer, Claim> decisions = new HashMap<>();
+                    for (int seat = 0; seat < 4; seat++) {
+                        List<Claim> options = round.claimOptions(seat);
+                        if (!options.isEmpty()) {
+                            if (options.stream().noneMatch(claim -> claim.type() == Claim.Type.WIN)) {
+                                claims.add(new ClaimChoice(TableView.of(round, seat), options));
+                            }
+                            Claim claim = bots[seat].chooseClaim(round, seat, options);
+                            if (claim != null) {
+                                decisions.put(seat, claim);
+                            }
+                        }
+                    }
+                    round.resolveClaims(decisions);
+                }
+            }
+        }
+    }
+
+    /** 同樣的局面，兩個策略有幾次決定不一樣。 */
+    private static int differences(Strategy a, Strategy b, List<TableView> turns, List<ClaimChoice> claims) {
+        int count = 0;
+        for (TableView view : turns) {
+            count += a.chooseDiscard(view).equals(b.chooseDiscard(view)) ? 0 : 1;
+        }
+        for (ClaimChoice choice : claims) {
+            count += Objects.equals(a.chooseClaim(choice.view(), choice.options()),
+                    b.chooseClaim(choice.view(), choice.options())) ? 0 : 1;
+        }
+        return count;
+    }
+
+    /** 只換籌碼與圈風，其他都一樣。opponents 三家同樣的籌碼。 */
+    private static TableView withStanding(TableView view, int roundWind, int chips, int opponentChips) {
+        List<Opponent> opponents = new ArrayList<>();
+        for (Opponent each : view.opponents()) {
+            opponents.add(new Opponent(each.seat(), each.openMelds(), each.concealedKongs(), each.flowers(), each.discards(),
+                    opponentChips));
+        }
+        return new TableView(view.seat(), view.dealer(), view.streak(), roundWind, view.seatWind(), view.liveTiles(),
+                view.hand(), view.melds(), view.flowers(), view.discards(), opponents, view.history(),
+                view.claimTile(), view.discarder(), view.robbing(), chips);
+    }
+
+    private static void personalities() {
+        List<TableView> turns = new ArrayList<>();
+        List<ClaimChoice> claims = new ArrayList<>();
+        collectDecisions(turns, claims);
+
+        test("個性：一般以上的等級，每種個性都會改變一些決定", () -> {
+            for (BotLevel level : List.of(BotLevel.NORMAL, BotLevel.AMATEUR, BotLevel.PRO)) {
+                Strategy balanced = Strategy.of(level, Personality.BALANCED, 100, 20, new Random(1));
+                for (Personality personality : List.of(Personality.BOLD, Personality.CAUTIOUS, Personality.GREEDY)) {
+                    Strategy other = Strategy.of(level, personality, 100, 20, new Random(1));
+                    check(differences(balanced, other, turns, claims) > 0, level + personality.label() + " 和穩健完全一樣");
+                }
+            }
+        });
+
+        test("個性：預設是穩健，初學者沒有個性之分", () -> {
+            eq(0, differences(strategy(BotLevel.PRO), Strategy.of(BotLevel.PRO, Personality.BALANCED, 100, 20, new Random(1)),
+                    turns, claims), "職業預設穩健");
+            eq(0, differences(strategy(BotLevel.BEGINNER), Strategy.of(BotLevel.BEGINNER, Personality.BOLD, 100, 20, new Random(1)),
+                    turns, claims), "初學者");
+        });
+
+        test("籌碼局勢：職業最後一圈領先、落後、籌碼快沒了，打法都會變", () -> {
+            Strategy pro = strategy(BotLevel.PRO);
+            int differs = 0;
+            int differsLeading = 0;
+            int differsTrailing = 0;
+            for (TableView view : turns) {
+                Tile base = pro.chooseDiscard(withStanding(view, 4, 20_000, 20_000));
+                differsLeading += base.equals(pro.chooseDiscard(withStanding(view, 4, 30_000, 20_000))) ? 0 : 1;
+                differsTrailing += base.equals(pro.chooseDiscard(withStanding(view, 4, 10_000, 20_000))) ? 0 : 1;
+                differs += pro.chooseDiscard(withStanding(view, 1, 20_000, 20_000))
+                        .equals(pro.chooseDiscard(withStanding(view, 1, 500, 20_000))) ? 0 : 1;
+            }
+            check(differsLeading > 0, "領先要變保守");
+            check(differsTrailing > 0, "落後要變積極");
+            check(differs > 0, "籌碼快沒了要保命");
+        });
+
+        test("籌碼局勢：差距不大或還沒到最後一圈，職業照原本打", () -> {
+            Strategy pro = strategy(BotLevel.PRO);
+            for (TableView view : turns) {
+                eq(pro.chooseDiscard(withStanding(view, 2, 20_000, 20_000)),
+                        pro.chooseDiscard(withStanding(view, 2, 30_000, 20_000)), "第二圈領先");
+                eq(pro.chooseDiscard(withStanding(view, 4, 20_000, 20_000)),
+                        pro.chooseDiscard(withStanding(view, 4, 20_100, 20_000)), "最後一圈小贏");
+            }
+        });
+
+        test("每家電腦都有個性，真人的位置固定是穩健，同一個種子結果一樣", () -> {
+            Set<Personality> seen = new HashSet<>();
+            for (long seed = 0; seed < 40; seed++) {
+                GameSession session = new GameSession(new GameConfig("測試", 100_000, 100, 20, BotLevel.PRO), new Random(seed));
+                GameSession again = new GameSession(new GameConfig("測試", 100_000, 100, 20, BotLevel.PRO), new Random(seed));
+                eq(Personality.BALANCED, session.personality(0), "真人");
+                for (int seat = 1; seat < 4; seat++) {
+                    seen.add(session.personality(seat));
+                    eq(session.personality(seat), again.personality(seat), "同一個種子");
+                }
+            }
+            eq(Personality.values().length, seen.size(), "四種個性都會出現");
+        });
     }
 
     private static void shantenValues() {
@@ -301,6 +440,24 @@ final class BotTest {
     }
 
     private static void normal() {
+        test("三家各用自己的等級：同一手牌，初學者會碰、一般不碰，換座位也一樣", () -> {
+            for (int seat = 1; seat <= 3; seat++) {
+                List<BotLevel> beginnerHere = new ArrayList<>(List.of(BotLevel.NORMAL, BotLevel.NORMAL, BotLevel.NORMAL));
+                beginnerHere.set(seat - 1, BotLevel.BEGINNER);
+                List<BotLevel> normalHere = new ArrayList<>(List.of(BotLevel.BEGINNER, BotLevel.BEGINNER, BotLevel.BEGINNER));
+                normalHere.set(seat - 1, BotLevel.NORMAL);
+
+                Round round = Table.dealer(0).hand(0, "9p").hand(seat, "1w2w3w4w5w6w7p8p9p2s3s4s5s6s9p9p").draws("1z").start();
+                round.discard(0, tile("9p"));
+                List<Claim> pong = new ArrayList<>(round.claimOptions(seat));
+                pong.removeIf(claim -> claim.type() != Claim.Type.PONG);
+                check(new SeatedBots(beginnerHere, 100, 20, new Random(1)).chooseClaim(round, seat, pong) != null,
+                        "座位 " + seat + " 是初學者");
+                check(new SeatedBots(normalHere, 100, 20, new Random(1)).chooseClaim(round, seat, pong) == null,
+                        "座位 " + seat + " 是一般");
+            }
+        });
+
         test("一般不會拆掉已經聽牌的手牌去碰", () -> {
             Claim pong = new Claim(Claim.Type.PONG, tile("9p"), hand("9p9p"));
             TableView view = quiet("1w2w3w 4w5w6w 7p8p9p 2s3s4s 5s6s 9p9p", List.of());
@@ -369,7 +526,7 @@ final class BotTest {
         });
         test("職業會看對手的花色：亮的都是條子、牌河沒有條子時，條子比較危險", () -> {
             Opponent flush = new Opponent(1, List.of(chow("1s2s3s"), chow("4s5s6s"), chow("7s8s9s")), 0, List.of(),
-                    hand("1w2w3w4w5w6p7p8p"));
+                    hand("1w2w3w4w5w6p7p8p"), PLENTY_OF_CHIPS);
             List<Opponent> opponents = List.of(flush, opponent(2, 0, ""), opponent(3, 0, ""));
             TableView view = table("2s 4p 6w 1z2z", List.of(chow("1p2p3p"), chow("7w8w9w"), chow("4w5w6w"), chow("7p8p9p")),
                     opponents, historyOf(opponents), 6);

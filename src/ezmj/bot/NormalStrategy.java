@@ -4,14 +4,24 @@ import java.util.List;
 
 import ezmj.engine.Claim;
 import ezmj.engine.TurnOptions;
+import ezmj.model.Personality;
 import ezmj.model.Tile;
 
 /**
  * 一般：會想自己還差幾步聽牌，但不去數張數。
  * 看得出哪張牌打了不會退步，吃碰也會想有沒有變快；同樣快時憑牌型留中張，
  * 不會算還有幾張能進，也不看牌河、不防守。
+ * 個性只影響吃碰的意願與同樣快時留什麼：愛衝連不會變快的碰也碰，保守與愛做大牌不輕易吃，愛做大牌先丟雜牌。
  */
 final class NormalStrategy implements Strategy {
+
+    private static final int STRAY_FIRST = 10;
+
+    private final Personality personality;
+
+    NormalStrategy(Personality personality) {
+        this.personality = personality;
+    }
 
     @Override
     public Tile chooseDiscard(TableView view) {
@@ -28,12 +38,18 @@ final class NormalStrategy implements Strategy {
             int shanten = Shanten.of(counts, sets);
             counts[i]++;
             if (shanten < bestShanten || (shanten == bestShanten
-                    && Efficiency.usefulness(tile) < Efficiency.usefulness(best))) {
+                    && keepOrder(view, counts, tile) < keepOrder(view, counts, best))) {
                 bestShanten = shanten;
                 best = tile;
             }
         }
         return best;
+    }
+
+    /** 越小越先打。 */
+    private int keepOrder(TableView view, int[] counts, Tile tile) {
+        boolean stray = personality == Personality.GREEDY && HandValue.isStray(counts, view.melds(), tile);
+        return Efficiency.usefulness(tile) - (stray ? STRAY_FIRST : 0);
     }
 
     /** 槓完向聽沒有變差就槓，等於多摸一張。 */
@@ -64,10 +80,10 @@ final class NormalStrategy implements Strategy {
     /** 宣告完向聽有變少才要；有好幾種時挑最快的。 */
     @Override
     public Claim chooseClaim(TableView view, List<Claim> options) {
-        return fastestClaim(view, options, view.notInOwnTiles());
+        return fastestClaim(view, options, view.notInOwnTiles(), personality);
     }
 
-    static Claim fastestClaim(TableView view, List<Claim> options, int[] available) {
+    static Claim fastestClaim(TableView view, List<Claim> options, int[] available, Personality personality) {
         int[] counts = Efficiency.counts(view.hand());
         int now = Shanten.of(counts, view.setsNeeded());
         int sets = view.setsNeeded() - 1;
@@ -85,7 +101,7 @@ final class NormalStrategy implements Strategy {
                         : null;
             } else {
                 Efficiency.Choice fastest = Efficiency.fastest(Efficiency.discards(counts, sets, available));
-                choice = fastest.shanten() < now ? fastest : null;
+                choice = wants(claim, fastest.shanten(), now, personality) ? fastest : null;
             }
             for (Tile tile : claim.fromHand()) {
                 counts[tile.index()]++;
@@ -96,5 +112,16 @@ final class NormalStrategy implements Strategy {
             }
         }
         return best;
+    }
+
+    /** after 是宣告並打一張之後的向聽。 */
+    private static boolean wants(Claim claim, int after, int now, Personality personality) {
+        boolean chow = claim.type() == Claim.Type.CHOW;
+        switch (personality) {
+            case BOLD:     return after < now || (!chow && after == now);
+            case CAUTIOUS: return after < now && (!chow || after <= 1);
+            case GREEDY:   return after < now && (!chow || after == 0);
+            default:       return after < now;
+        }
     }
 }

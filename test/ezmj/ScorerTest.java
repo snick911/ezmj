@@ -209,6 +209,13 @@ final class ScorerTest {
             hasNot(ron("1w2w3w 4w5w6w 7p8p9p 2s3s4s 4s5s6s 9p9p", "4s").score(), "獨聽");
         });
 
+        test("獨聽：另一頭四張都在自己的槓裡只剩一種可胡，碰的話還有一張不算", () -> {
+            has(ron("4s5s6s 9p9p", "4s").melds(openKong("7s7s7s7s"), chow("1w2w3w"), chow("4w5w6w"), chow("7p8p9p"))
+                    .score(), "獨聽");
+            hasNot(ron("4s5s6s 9p9p", "4s").melds(pong("7s7s7s"), chow("1w2w3w"), chow("4w5w6w"), chow("7p8p9p"))
+                    .score(), "獨聽");
+        });
+
         test("碰碰胡", () -> {
             ScoreResult result = ron("2w2w2w 3p3p3p 7s7s", "7s")
                     .melds(pong("1w1w1w"), pong("5p5p5p"), pong("9s9s9s")).score();
@@ -379,7 +386,18 @@ final class ScorerTest {
             }
         });
 
-        test("花槓與八仙過海", () -> {
+        test("八仙過海與七搶一只算這一項", () -> {
+            ScoreResult eight = Scorer.eightFlowers();
+            has(eight, "八仙過海");
+            total(8, eight);
+            ScoreResult rob = Scorer.sevenRobOne();
+            has(rob, "七搶一");
+            total(8, rob);
+            SCORED_ITEMS.addAll(eight.items());
+            SCORED_ITEMS.addAll(rob.items());
+        });
+
+        test("花槓", () -> {
             ScoreResult seasons = ron(PLAIN, "6w").flowers("1f2f3f4f").score();
             has(seasons, "花槓 春夏秋冬", "正花 夏");
             hasNot(seasons, "花槓 梅蘭竹菊", "平胡");
@@ -391,11 +409,6 @@ final class ScorerTest {
 
             ScoreResult notSet = ron(PLAIN, "6w").flowers("1f2f3f5f").score();
             hasNot(notSet, "花槓 春夏秋冬", "花槓 梅蘭竹菊");
-
-            ScoreResult eight = ron(PLAIN, "6w").flowers("1f2f3f4f5f6f7f8f").score();
-            has(eight, "八仙過海", "門清");
-            hasNot(eight, "花槓 春夏秋冬", "正花 夏");
-            total(9, eight);
         });
 
         test("多種拆法取最高台", () -> {
@@ -428,6 +441,9 @@ final class ScorerTest {
             for (ScoreGuide.Group group : ScoreGuide.GROUPS) {
                 for (ScoreGuide.Entry entry : group.entries()) {
                     WinContext example = entry.example();
+                    if (example == null) {
+                        continue;
+                    }
                     List<Tile> all = new ArrayList<>(example.concealed());
                     example.melds().forEach(meld -> all.addAll(meld.tiles()));
                     for (Tile tile : all) {

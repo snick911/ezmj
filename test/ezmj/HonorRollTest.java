@@ -90,6 +90,60 @@ final class HonorRollTest {
             }
         });
 
+        test("重開遊戲：舊紀錄還在，新成績接著排，再重開也都在", () -> {
+            Path dir = Files.createTempDirectory("ezmj-honor");
+            Path file = dir.resolve("honor.properties");
+            try {
+                HonorRoll first = HonorRoll.load(file);
+                first.add(record("第一次", 5, 1, 300, 2));
+                first.save(file);
+
+                HonorRoll second = HonorRoll.load(file);
+                eq("第一次", second.top(Category.WINS).get(0).name(), "重開後還在");
+                eq(Map.of(Category.WINS, 1, Category.SELF_DRAWS, 1, Category.WINNINGS, 1, Category.DEAL_INS, 1),
+                        second.add(record("第二次", 8, 2, 900, 3)), "新成績拿到名次");
+                second.save(file);
+
+                List<GameRecord> wins = HonorRoll.load(file).top(Category.WINS);
+                eq(2, wins.size(), "兩筆都在");
+                eq("第二次", wins.get(0).name(), "第一名");
+                eq("第一次", wins.get(1).name(), "第二名");
+            } finally {
+                Files.deleteIfExists(file);
+                Files.delete(dir);
+            }
+        });
+
+        test("三家等級不同：存檔讀回來順序不變；舊檔只有一個等級就是三家都一樣", () -> {
+            Path dir = Files.createTempDirectory("ezmj-honor");
+            Path file = dir.resolve("honor.properties");
+            try {
+                List<BotLevel> mixed = List.of(BotLevel.PRO, BotLevel.BEGINNER, BotLevel.AMATEUR);
+                GameRecord record = new GameRecord("甲", "2026-11-01", 3, 1, 100, 1, mixed, 100, 20);
+                eq("職業／初學者／業餘", record.botLevelsLabel(), "不同時依座位列出");
+                eq("職業", record("乙", 1, 0, 0, 0).botLevelsLabel(), "相同時顯示一個");
+
+                HonorRoll roll = new HonorRoll();
+                roll.add(record);
+                roll.save(file);
+                eq(mixed, HonorRoll.load(file).top(Category.WINS).get(0).botLevels(), "讀回來");
+
+                Files.writeString(file, String.join("\n", List.of(
+                        "WINS.0.name=old", "WINS.0.date=2026-10-31", "WINS.0.wins=3", "WINS.0.selfDraws=1",
+                        "WINS.0.winnings=10", "WINS.0.dealIns=0", "WINS.0.botLevel=AMATEUR", "WINS.0.basePay=100",
+                        "WINS.0.taiPay=20",
+                        "WINS.1.name=twoLevels", "WINS.1.date=2026-10-31", "WINS.1.wins=2", "WINS.1.selfDraws=1",
+                        "WINS.1.winnings=10", "WINS.1.dealIns=0", "WINS.1.botLevel=PRO,PRO", "WINS.1.basePay=100",
+                        "WINS.1.taiPay=20")));
+                List<GameRecord> wins = HonorRoll.load(file).top(Category.WINS);
+                eq(1, wins.size(), "不是三家的略過");
+                eq(List.of(BotLevel.AMATEUR, BotLevel.AMATEUR, BotLevel.AMATEUR), wins.get(0).botLevels(), "舊檔");
+            } finally {
+                Files.deleteIfExists(file);
+                Files.delete(dir);
+            }
+        });
+
         test("檔案不存在或內容壞掉時，只略過讀不懂的紀錄", () -> {
             Path dir = Files.createTempDirectory("ezmj-honor");
             Path file = dir.resolve("honor.properties");

@@ -11,6 +11,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Random;
 
+import ezmj.model.Meld;
 import ezmj.model.Tile;
 import ezmj.rules.HandAnalyzer;
 import ezmj.rules.HandAnalyzer.Decomposition;
@@ -136,6 +137,13 @@ final class HandAnalyzerTest {
                 eq(expected, HandAnalyzer.waits(tiles), "聽牌 " + tiles);
                 check(!expected.isEmpty(), "拿掉一張的胡牌必定有聽");
             }
+        });
+
+        test("聽牌：四張都在自己手上或面子裡的牌不算", () -> {
+            List<Tile> tiles = hand("5s6s 9p9p");
+            eq(hand("4s"), HandAnalyzer.waits(tiles, List.of(new Meld(Meld.Type.OPEN_KONG, hand("7s7s7s7s")))), "七條全在槓裡");
+            eq(hand("4s7s"), HandAnalyzer.waits(tiles, List.of(new Meld(Meld.Type.PONG, hand("7s7s7s")))), "碰了三張還有一張");
+            eq(hand("4s7s"), HandAnalyzer.waits(tiles, List.of()), "沒有面子");
         });
     }
 

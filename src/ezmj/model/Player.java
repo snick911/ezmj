@@ -67,6 +67,10 @@ public final class Player {
         flowers.add(tile);
     }
 
+    public void removeFlower(Tile tile) {
+        flowers.remove(tile);
+    }
+
     public void addDiscard(Tile tile) {
         discards.add(tile);
     }

@@ -186,6 +186,11 @@ final class HistoryDialog extends JDialog {
             return "流局";
         }
         String winner = session.player(result.winner()).name();
+        if (result.isFlowerWin()) {
+            return result.isSelfDraw()
+                    ? winner + " 八仙過海"
+                    : winner + " 七搶一 " + session.player(result.from()).name() + " 的 " + result.winTile().label();
+        }
         return result.isSelfDraw()
                 ? winner + " 自摸 " + result.winTile().label()
                 : winner + " 胡 " + session.player(result.from()).name() + " 的 " + result.winTile().label();

@@ -10,6 +10,7 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.awt.RenderingHints;
+import java.awt.Toolkit;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -22,6 +23,7 @@ import javax.swing.JComponent;
 import javax.swing.JDialog;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JScrollPane;
 import javax.swing.SwingConstants;
 import javax.swing.Timer;
 import javax.swing.border.Border;
@@ -37,8 +39,11 @@ import ezmj.model.Tile;
 import ezmj.rules.ScoreItem;
 import ezmj.rules.ScoreResult;
 
-/** 一局結束的結果視窗：胡牌牌型、台數明細與各家輸贏。 */
+/** 一局結束的結果視窗：胡牌牌型、台數明細、各家輸贏與四家手牌。 */
 final class ResultDialog extends JDialog {
+
+    private static final int SCREEN_MARGIN = 80;
+    private static final int SCROLLBAR_ROOM = 24;
 
     /** 時間到自動關閉，電腦代打才能一直打下去。 */
     ResultDialog(Frame owner, GameSession session, Round round, Settlement settlement, List<Achievement> earned,
@@ -58,7 +63,7 @@ final class ResultDialog extends JDialog {
         if (result.isDrawnGame()) {
             content.add(drawnTable(session));
         } else {
-            HandStrip strip = new HandStrip(round.player(result.winner()), result.winTile());
+            HandStrip strip = HandStrip.large(round.player(result.winner()), result.winTile());
             strip.setAlignmentX(LEFT_ALIGNMENT);
             content.add(strip);
             content.add(Box.createVerticalStrut(12));
@@ -68,6 +73,8 @@ final class ResultDialog extends JDialog {
                     + (countsDealer(round, settlement) ? "，莊家台只算與莊家相關的付款" : ""),
                     Font.PLAIN, 14f, Theme.MUTED));
         }
+        content.add(Box.createVerticalStrut(12));
+        content.add(otherHands(round));
         addEarned(content, earned);
         content.add(Box.createVerticalStrut(16));
 
@@ -78,10 +85,27 @@ final class ResultDialog extends JDialog {
         getRootPane().setDefaultButton(next);
         startAutoClose(next, buttonText, autoCloseSeconds);
 
-        setContentPane(content);
+        setContentPane(scrollable(content));
         pack();
+        fitOnScreen();
         setResizable(false);
         setLocationRelativeTo(owner);
+    }
+
+    private static JScrollPane scrollable(JPanel content) {
+        JScrollPane scroll = new JScrollPane(content);
+        scroll.setBorder(null);
+        scroll.getVerticalScrollBar().setUnitIncrement(24);
+        return scroll;
+    }
+
+    /** 牌放大時內容可能比螢幕高，超過就縮到螢幕內，用捲的看。 */
+    private void fitOnScreen() {
+        Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();
+        int maxHeight = screen.height - SCREEN_MARGIN;
+        if (getHeight() > maxHeight) {
+            setSize(Math.min(getWidth() + SCROLLBAR_ROOM, screen.width), maxHeight);
+        }
     }
 
     private void startAutoClose(JButton next, String buttonText, int seconds) {
@@ -104,9 +128,39 @@ final class ResultDialog extends JDialog {
             return "流局";
         }
         String winner = round.player(result.winner()).name();
+        if (result.isFlowerWin()) {
+            return result.isSelfDraw()
+                    ? winner + " 集滿八張花牌，八仙過海"
+                    : winner + " 七搶一，搶走 " + round.player(result.from()).name() + " 的 " + result.winTile().label();
+        }
         return result.isSelfDraw()
                 ? winner + " 自摸 " + result.winTile().label()
                 : winner + " 胡牌，" + round.player(result.from()).name() + " 放槍 " + result.winTile().label();
+    }
+
+    /** 其他家的手牌，打完才看得到別人在做什麼。胡牌者上面已經有了；靠花牌胡的上面只有花牌，這裡也列手牌。 */
+    private static JPanel otherHands(Round round) {
+        RoundResult result = round.result();
+        JPanel hands = new JPanel(new GridBagLayout());
+        hands.setBackground(Theme.PANEL);
+        hands.setAlignmentX(LEFT_ALIGNMENT);
+        GridBagConstraints constraints = new GridBagConstraints();
+        constraints.anchor = GridBagConstraints.WEST;
+        constraints.insets = new Insets(2, 0, 2, 12);
+        constraints.gridy = 0;
+        for (int seat = 0; seat < 4; seat++) {
+            if (seat == result.winner() && !result.isFlowerWin()) {
+                continue;
+            }
+            Player player = round.player(seat);
+            String mark = !result.isDrawnGame() && !result.isSelfDraw() && seat == result.from() ? "（放槍）" : "";
+            constraints.gridx = 0;
+            hands.add(line(player.name() + mark, seat == 0 ? Font.BOLD : Font.PLAIN, 15f, Theme.TEXT), constraints);
+            constraints.gridx = 1;
+            hands.add(HandStrip.small(player), constraints);
+            constraints.gridy++;
+        }
+        return hands;
     }
 
     /** 列出這次新達成的成就。 */
@@ -217,20 +271,32 @@ final class ResultDialog extends JDialog {
         return delta > 0 ? Theme.GOLD : Theme.TEXT;
     }
 
-    /** 欄位對齊的表格。前 leftColumns 欄是文字靠左，其餘是數字靠右。 */
+    /** 欄位對齊的表格。前 leftColumns 欄是文字靠左，其餘是數字靠右。多出來的寬度給 stretchColumn。 */
     static final class GridTable extends JPanel {
         private static final Border HEADER_BORDER = BorderFactory.createEmptyBorder(5, 10, 5, 10);
         private static final Border CELL_BORDER = BorderFactory.createCompoundBorder(
                 BorderFactory.createMatteBorder(0, 0, 1, 0, Theme.PANEL_LIGHT), HEADER_BORDER);
 
         private final int leftColumns;
+        private final int stretchColumn;
         private int rows;
 
         GridTable(int leftColumns) {
+            this(leftColumns, 0);
+        }
+
+        GridTable(int leftColumns, int stretchColumn) {
             super(new GridBagLayout());
             this.leftColumns = leftColumns;
+            this.stretchColumn = stretchColumn;
             setBackground(Theme.PANEL);
             setAlignmentX(LEFT_ALIGNMENT);
+        }
+
+        /** 放在 BoxLayout 裡時不要被拉高。 */
+        @Override
+        public Dimension getMaximumSize() {
+            return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
         }
 
         void header(String... texts) {
@@ -254,7 +320,7 @@ final class ResultDialog extends JDialog {
                 cell.setHorizontalAlignment(column < leftColumns ? SwingConstants.LEFT : SwingConstants.RIGHT);
                 cell.setBorder(border);
                 constraints.gridx = column;
-                constraints.weightx = column == 0 ? 1 : 0;
+                constraints.weightx = column == stretchColumn ? 1 : 0;
                 add(cell, constraints);
                 cells[column] = cell;
             }
@@ -262,24 +328,37 @@ final class ResultDialog extends JDialog {
         }
     }
 
-    /** 胡牌者的完整牌面。 */
+    /** 一家的完整牌面。winTile 是 null 表示這家沒有胡，全部排在一起。 */
     private static final class HandStrip extends JComponent {
-        private final double TILE_W = 36 * Theme.tileScale();
-        private final double TILE_H = 50 * Theme.tileScale();
-        private final double GAP = 9 * Theme.tileScale();
-
+        private final double tileW;
+        private final double tileH;
+        private final double gap;
         private final Player player;
         private final Tile winTile;
 
-        HandStrip(Player player, Tile winTile) {
+        static HandStrip large(Player player, Tile winTile) {
+            return new HandStrip(player, winTile, 36, 50, 9);
+        }
+
+        static HandStrip small(Player player) {
+            return new HandStrip(player, null, 24, 33, 6);
+        }
+
+        private HandStrip(Player player, Tile winTile, double w, double h, double spacing) {
             this.player = player;
             this.winTile = winTile;
+            this.tileW = w * Theme.tileScale();
+            this.tileH = h * Theme.tileScale();
+            this.gap = spacing * Theme.tileScale();
             int tiles = player.concealed().size();
             for (Meld meld : player.melds()) {
                 tiles += meld.tiles().size();
             }
+            if (winTile != null && winTile.isFlower()) {
+                tiles = player.flowers().size();
+            }
             Dimension size = new Dimension(
-                    (int) (tiles * TILE_W + (player.melds().size() + 1) * GAP) + 4, (int) TILE_H + 6);
+                    (int) (tiles * tileW + (player.melds().size() + 1) * gap) + 4, (int) tileH + 6);
             setPreferredSize(size);
             setMaximumSize(size);
         }
@@ -290,22 +369,35 @@ final class ResultDialog extends JDialog {
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
             double x = 1;
+            // 靠花牌胡的不看手牌，只列花牌
+            if (winTile != null && winTile.isFlower()) {
+                for (Tile flower : player.flowers()) {
+                    TilePainter.paintFace(g, flower, x, 2, tileW - 1, tileH);
+                    if (flower.equals(winTile)) {
+                        TilePainter.paintHighlight(g, x, 2, tileW - 1, tileH, Theme.RED);
+                    }
+                    x += tileW;
+                }
+                g.dispose();
+                return;
+            }
+            for (Meld meld : player.melds()) {
+                for (Tile tile : meld.tiles()) {
+                    TilePainter.paintFace(g, tile, x, 2, tileW - 1, tileH);
+                    x += tileW;
+                }
+                x += gap;
+            }
             List<Tile> hand = new ArrayList<>(player.concealed());
             hand.remove(winTile);
             for (Tile tile : hand) {
-                TilePainter.paintFace(g, tile, x, 2, TILE_W - 1, TILE_H);
-                x += TILE_W;
+                TilePainter.paintFace(g, tile, x, 2, tileW - 1, tileH);
+                x += tileW;
             }
-            x += GAP;
-            TilePainter.paintFace(g, winTile, x, 2, TILE_W - 1, TILE_H);
-            TilePainter.paintHighlight(g, x, 2, TILE_W - 1, TILE_H, Theme.RED);
-            x += TILE_W;
-            for (Meld meld : player.melds()) {
-                x += GAP;
-                for (Tile tile : meld.tiles()) {
-                    TilePainter.paintFace(g, tile, x, 2, TILE_W - 1, TILE_H);
-                    x += TILE_W;
-                }
+            if (winTile != null) {
+                x += gap;
+                TilePainter.paintFace(g, winTile, x, 2, tileW - 1, tileH);
+                TilePainter.paintHighlight(g, x, 2, tileW - 1, tileH, Theme.RED);
             }
             g.dispose();
         }

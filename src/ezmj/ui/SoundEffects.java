@@ -20,7 +20,7 @@ public final class SoundEffects {
 
     /** variants 是同一種音效的版本數，避免連續打牌時每一聲都一模一樣。 */
     public enum Cue {
-        DISCARD(3), CHOW(1), PONG(1), KONG(1), WIN(1), DRAWN_GAME(1), DEAL(1);
+        DISCARD(3), CHOW(1), PONG(1), KONG(1), WIN(1), DRAWN_GAME(1), DEAL(1), DRAW(1), FLOWER(1);
 
         private final int variants;
 
@@ -167,6 +167,18 @@ public final class SoundEffects {
                 click(mix, 0, 1.15, .8, noise);
                 click(mix, .035, 1.05, 1, noise);
                 level = .35;
+                break;
+            case DRAW:
+                mix = new double[seconds(.1)];
+                click(mix, 0, 1.2, 1, noise);
+                level = .35;
+                break;
+            case FLOWER:
+                mix = new double[seconds(.5)];
+                click(mix, 0, 1.1, .7, noise);
+                bell(mix, .03, 880, .5, .12);
+                bell(mix, .11, 1318.51, .45, .16);
+                level = .4;
                 break;
             default:
                 mix = new double[seconds(.75)];

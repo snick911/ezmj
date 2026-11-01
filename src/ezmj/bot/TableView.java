@@ -17,11 +17,11 @@ import ezmj.model.Tile;
 public record TableView(int seat, int dealer, int streak, int roundWind, int seatWind, int liveTiles,
                         List<Tile> hand, List<Meld> melds, List<Tile> flowers, List<Tile> discards,
                         List<Opponent> opponents, List<DiscardEvent> history,
-                        Tile claimTile, int discarder, boolean robbing) {
+                        Tile claimTile, int discarder, boolean robbing, int chips) {
 
-    /** 別家攤在桌上的部分。暗槓只知道有幾組，不知道是什麼牌。 */
+    /** 別家攤在桌上的部分。暗槓只知道有幾組，不知道是什麼牌。籌碼大家都看得到。 */
     public record Opponent(int seat, List<Meld> openMelds, int concealedKongs,
-                           List<Tile> flowers, List<Tile> discards) {
+                           List<Tile> flowers, List<Tile> discards, int chips) {
 
         public int meldCount() {
             return openMelds.size() + concealedKongs;
@@ -43,14 +43,14 @@ public record TableView(int seat, int dealer, int streak, int roundWind, int sea
                 }
             }
             opponents.add(new Opponent(other.seat(), List.copyOf(open), concealedKongs,
-                    List.copyOf(other.flowers()), List.copyOf(other.discards())));
+                    List.copyOf(other.flowers()), List.copyOf(other.discards()), other.chips()));
         }
         boolean claiming = round.phase() == Round.Phase.CLAIMS;
         return new TableView(seat, round.dealer(), round.streak(), round.roundWind(), round.seatWind(seat),
                 round.wall().liveCount(), List.copyOf(me.concealed()), List.copyOf(me.melds()),
                 List.copyOf(me.flowers()), List.copyOf(me.discards()), List.copyOf(opponents),
                 List.copyOf(round.discardHistory()), claiming ? round.claimTile() : null,
-                claiming ? round.discarder() : -1, claiming && round.isRobbing());
+                claiming ? round.discarder() : -1, claiming && round.isRobbing(), me.chips());
     }
 
     /** 還要湊幾組面子才能胡。 */

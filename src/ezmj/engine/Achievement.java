@@ -2,8 +2,6 @@ package ezmj.engine;
 
 import java.util.function.Predicate;
 
-import ezmj.model.BotLevel;
-
 /** 全部的成就。都是看真人（座位 0）的表現；新增成就只要在這裡加一項，宣告順序就是顯示順序。 */
 public enum Achievement {
 
@@ -61,11 +59,11 @@ public enum Achievement {
     GAMES_50(Group.TOTAL, "以此為家", Counter.GAMES, 50),
 
     GAME_TOP(Group.GAME, "一場之冠", "打完一場，籌碼最多（並列也算）", AchievementFacts::humanOnTop),
-    BEAT_PROS(Group.GAME, "勝過職業", "對上職業等級的電腦，打完一場籌碼最多",
-            facts -> facts.humanOnTop() && facts.botLevel() == BotLevel.PRO),
+    BEAT_PROS(Group.GAME, "勝過職業", "三家電腦都是職業等級，打完一場籌碼最多",
+            facts -> facts.humanOnTop() && facts.allBotsPro()),
     NO_DEAL_IN(Group.GAME, "滴水不漏", "四圈打完，整場沒有放槍", facts -> facts.fullGame() && facts.dealIns() == 0),
     TEN_WINS_IN_GAME(Group.GAME, "大殺四方", "一場胡牌 10 次以上", facts -> facts.gameEnded() && facts.wins() >= 10),
-    DOUBLED(Group.GAME, "翻倍奉還", "打完一場，贏的錢超過本金", facts -> facts.gameEnded() && facts.winnings() >= facts.startingChips()),
+    DOUBLED(Group.GAME, "翻倍奉還", "打完一場，贏的錢達到本金以上", facts -> facts.gameEnded() && facts.winnings() >= facts.startingChips()),
     BROKE_SOMEONE(Group.GAME, "趕盡殺絕", "胡牌讓別家輸光籌碼", AchievementFacts::humanBrokeSomeone),
     WENT_BROKE(Group.GAME, "傾家蕩產", "自己輸光籌碼", facts -> facts.gameEnded() && facts.humanChips() <= 0),
     NO_WINS(Group.GAME, "全程陪打", "四圈打完，整場沒有胡牌", facts -> facts.fullGame() && facts.wins() == 0),

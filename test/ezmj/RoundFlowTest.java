@@ -99,6 +99,12 @@ final class RoundFlowTest {
             round.resolveClaims(Map.of(0, option(round, 0, Claim.Type.PONG)));
             eq(T.hand("1s4s7s"), round.readyDiscards(0).get(tile("2z")), "打掉多的那張");
         });
+
+        test("聽牌選項：自己槓掉的牌不會列在聽牌裡", () -> {
+            Round round = Table.dealer(0).hand(0, "7s7s7s7s 1w2w3w 4w5w6w 7p8p9p 5s6s 9p").draws("9p").backs("2z").start();
+            round.declareConcealedKong(0, tile("7s"));
+            eq(T.hand("4s"), round.readyDiscards(0).get(tile("2z")), "七條都在暗槓裡，只聽四條");
+        });
     }
 
     private static void events() {
@@ -128,6 +134,25 @@ final class RoundFlowTest {
             self.setListener(selfEvents::add);
             self.declareSelfWin(0);
             eq(new RoundEvent(RoundEvent.Type.SELF_WIN, 0, tile("3w"), -1), selfEvents.get(0), "自摸");
+        });
+
+        test("事件：摸牌與補花都有，花牌補上來的那張才算摸到", () -> {
+            Round round = Table.dealer(0).draws("1w 1f 2w").backs("3w").start();
+            List<RoundEvent> events = new ArrayList<>();
+            round.setListener(event -> {
+                events.add(event);
+                if (event.type() == RoundEvent.Type.FLOWER) {
+                    check(round.player(event.seat()).flowers().contains(event.tile()), "事件發生時花牌已經亮出來");
+                }
+                if (event.type() == RoundEvent.Type.DRAW) {
+                    eq(event.tile(), round.drawn(), "事件發生時已經摸到");
+                    eq(Round.Phase.TURN, round.phase(), "事件發生時輪到他");
+                }
+            });
+            Table.discardDrawnAndPass(round);
+            eq(List.of(new RoundEvent(RoundEvent.Type.DISCARD, 0, tile("1w"), 0),
+                    new RoundEvent(RoundEvent.Type.FLOWER, 1, tile("1f"), -1),
+                    new RoundEvent(RoundEvent.Type.DRAW, 1, tile("3w"), -1)), events, "打牌、補花、摸牌");
         });
 
         test("事件：流局", () -> {
@@ -221,6 +246,71 @@ final class RoundFlowTest {
             eq(tile("7w"), round.drawn(), "剛摸的牌");
             eq(17, round.player(0).concealed().size(), "張數");
         });
+
+        String seven = "1f2f3f4f5f6f7f";
+        String replacements = "1w2w3w4w5w6w7w";
+
+        test("八仙過海：開局補花集滿就胡，第八張不補牌，只算 8 台", () -> {
+            Round round = Table.dealer(0).hand(0, seven + "8f").backs(replacements).start();
+            eq(Round.Phase.FINISHED, round.phase(), "立即結束");
+            RoundResult result = round.result();
+            eq(0, result.winner(), "胡牌者");
+            check(result.isSelfDraw() && result.isFlowerWin(), "算自摸，而且是花牌胡");
+            eq(tile("8f"), result.winTile(), "最後亮出的花");
+            check(result.score().has("八仙過海"), "八仙過海 " + result.score());
+            eq(8, result.score().totalTai(), "只算這一項");
+            eq(15, round.player(0).concealed().size(), "第八張沒有補牌");
+            conserved(round);
+        });
+
+        test("八仙過海：摸到第八張也立即胡，可以是別人還沒打牌時", () -> {
+            Round round = Table.dealer(0).hand(0, seven).backs(replacements).draws("8f").start();
+            eq(Round.Phase.FINISHED, round.phase(), "立即結束");
+            check(round.result().isSelfDraw(), "算自摸");
+            check(round.result().score().has("八仙過海"), "八仙過海");
+            eq(8, round.player(0).flowers().size(), "八張花");
+        });
+
+        test("七搶一：開局自己先七張，別家亮出一張就搶走，算他放槍", () -> {
+            Round round = Table.dealer(0).hand(0, seven).hand(1, "8f").backs(replacements).start();
+            RoundResult result = round.result();
+            eq(0, result.winner(), "七張的人胡");
+            eq(1, result.from(), "一張的人放槍");
+            eq(tile("8f"), result.winTile(), "被搶的花");
+            check(result.isFlowerWin() && result.score().has("七搶一"), "七搶一 " + result.score());
+            eq(8, result.score().totalTai(), "只算這一項");
+            eq(8, round.player(0).flowers().size(), "花移給胡牌的人");
+            eq(List.of(), round.player(1).flowers(), "被搶走");
+            conserved(round);
+        });
+
+        test("七搶一：別家先亮出一張，自己後來湊到七張也成立", () -> {
+            Round round = Table.dealer(1).hand(1, "8f").hand(0, seven).backs("8w" + replacements).start();
+            eq(0, round.result().winner(), "七張的人胡");
+            eq(1, round.result().from(), "一張的人放槍");
+        });
+
+        test("七搶一：行牌中別家摸到第八張，事件帶對的座位與來源", () -> {
+            Round round = Table.dealer(0).hand(0, seven).backs(replacements).draws("9w 8f").start();
+            eq(Round.Phase.TURN, round.phase(), "第八張還沒出現不會胡");
+            List<RoundEvent> events = new ArrayList<>();
+            round.setListener(events::add);
+            Table.discardDrawnAndPass(round);
+            eq(Round.Phase.FINISHED, round.phase(), "立即結束");
+            eq(0, round.result().winner(), "七張的人胡");
+            eq(1, round.result().from(), "摸到的人放槍");
+            RoundEvent last = events.get(events.size() - 1);
+            eq(new RoundEvent(RoundEvent.Type.WIN, 0, tile("8f"), 1), last, "事件");
+            conserved(round);
+        });
+
+        test("花牌沒有七加一或八：六張加兩張、七張而第八張還在牌牆，都不會胡", () -> {
+            Round split = Table.dealer(0).hand(0, "1f2f3f4f5f6f").hand(1, "7f8f").backs("1w2w3w4w5w6w7w8w").start();
+            eq(Round.Phase.TURN, split.phase(), "六張加兩張");
+            Round waiting = Table.dealer(0).hand(0, seven).backs(replacements).start();
+            eq(Round.Phase.TURN, waiting.phase(), "七張");
+            eq(7, waiting.player(0).flowers().size(), "七張花");
+        });
     }
 
     private static void turnOrder() {
@@ -272,6 +362,14 @@ final class RoundFlowTest {
             eq(2, shared.size(), "二萬用在兩種組合");
             eq(new HashSet<>(T.hand("1w2w4w")), Claim.handTiles(shared), "接著只能選這些");
             eq(T.hand("2w4w"), Claim.using(shared, tile("4w")).get(0).fromHand(), "再點四萬");
+        });
+
+        test("吃：同樣的組合手上有幾張都只算一種，按了就吃不用選牌", () -> {
+            Round round = Table.dealer(0).hand(0, "3w").hand(1, "1w1w2w2w").draws("9w").start();
+            round.discard(0, tile("3w"));
+            List<Claim> options = round.claimOptions(1);
+            eq(1, options.size(), "一種組合 " + options);
+            eq(T.hand("1w2w"), options.get(0).fromHand(), "前吃");
         });
 
         test("吃：邊界牌與不同花色不能湊順", () -> {
@@ -330,6 +428,14 @@ final class RoundFlowTest {
             Round triple = Table.dealer(0).hand(0, "5w").hand(2, "5w5w5w").draws("9w").start();
             triple.discard(0, tile("5w"));
             eq(List.of(Claim.Type.KONG, Claim.Type.PONG), types(triple, 2), "三張");
+        });
+
+        test("胡、碰、槓各只有一種組合，按了就宣告不用選牌", () -> {
+            Round round = Table.dealer(0).hand(0, "5w").hand(2, "5w5w5w6w7w9s9s1p2p3p4p5p6p7p8p9p").draws("9w").start();
+            round.discard(0, tile("5w"));
+            List<Claim> options = round.claimOptions(2);
+            eq(List.of(Claim.Type.WIN, Claim.Type.KONG, Claim.Type.PONG),
+                    options.stream().map(Claim::type).collect(Collectors.toList()), "每種一個 " + options);
         });
 
         test("下家同時可碰可吃都會列出", () -> {

@@ -6,6 +6,7 @@ import java.util.Random;
 import ezmj.engine.Claim;
 import ezmj.engine.TurnOptions;
 import ezmj.model.BotLevel;
+import ezmj.model.Personality;
 import ezmj.model.Tile;
 
 /** 一個等級的思考方式。只讀 TableView、只回傳決定；能胡就胡由 ComputerBot 處理，不用問策略。 */
@@ -21,11 +22,16 @@ public interface Strategy {
     Claim chooseClaim(TableView view, List<Claim> options);
 
     static Strategy of(BotLevel level, int basePay, int taiPay, Random random) {
+        return of(level, Personality.BALANCED, basePay, taiPay, random);
+    }
+
+    /** 初學者憑感覺打，沒有個性之分。 */
+    static Strategy of(BotLevel level, Personality personality, int basePay, int taiPay, Random random) {
         switch (level) {
             case BEGINNER: return new BeginnerStrategy(random);
-            case NORMAL:   return new NormalStrategy();
-            case AMATEUR:  return new AmateurStrategy();
-            default:       return new ProStrategy(basePay, taiPay);
+            case NORMAL:   return new NormalStrategy(personality);
+            case AMATEUR:  return new AmateurStrategy(personality);
+            default:       return new ProStrategy(personality, basePay, taiPay);
         }
     }
 }

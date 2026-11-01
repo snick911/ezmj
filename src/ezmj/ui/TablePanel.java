@@ -23,6 +23,7 @@ import javax.swing.SwingConstants;
 import ezmj.engine.GameSession;
 import ezmj.engine.Round;
 import ezmj.engine.RoundEvent;
+import ezmj.model.BotLevel;
 import ezmj.model.Player;
 import ezmj.model.Tile;
 
@@ -39,7 +40,8 @@ public final class TablePanel extends JPanel {
     private final JLabel roundInfo = new JLabel(" ");
     private final JLabel stakesInfo = new JLabel(" ");
     private final JLabel thinkInfo = new JLabel(" ");
-    private final JLabel[] scoreLabels = new JLabel[4];
+    /** 每家一列，欄位依序是門風、玩家、籌碼。 */
+    private final JLabel[][] scoreCells = new JLabel[4][];
     private final JTextArea logArea = new JTextArea();
     private final JPanel actionBar = new JPanel();
     private final JPanel sidebar = new JPanel();
@@ -104,13 +106,8 @@ public final class TablePanel extends JPanel {
         side.add(leftAligned(stakesInfo));
         side.add(Box.createVerticalStrut(12));
 
-        for (int seat = 0; seat < 4; seat++) {
-            scoreLabels[seat] = new JLabel(" ");
-            scoreLabels[seat].setFont(Theme.font(Font.PLAIN, 15f));
-            scoreLabels[seat].setForeground(Theme.TEXT);
-            side.add(leftAligned(scoreLabels[seat]));
-            side.add(Box.createVerticalStrut(5));
-        }
+        side.add(buildScoreTable());
+        side.add(Box.createVerticalStrut(10));
         thinkInfo.setFont(Theme.font(Font.PLAIN, 14f));
         thinkInfo.setForeground(Theme.MUTED);
         thinkInfo.setToolTipText("從摸牌或可以吃碰槓胡開始，到打出牌或決定過為止的平均時間");
@@ -147,6 +144,20 @@ public final class TablePanel extends JPanel {
         return side;
     }
 
+    private ResultDialog.GridTable buildScoreTable() {
+        ResultDialog.GridTable table = new ResultDialog.GridTable(2, 1);
+        table.header("門風", "玩家", "籌碼");
+        for (int seat = 0; seat < 4; seat++) {
+            scoreCells[seat] = table.row(seat == 0 ? Font.BOLD : Font.PLAIN, " ", " ", " ");
+            for (JLabel cell : scoreCells[seat]) {
+                cell.setForeground(seat == 0 ? Theme.GOLD : Theme.TEXT);
+            }
+            // 名字太長時只縮玩家這欄，後面用刪節號，籌碼才不會被擠掉
+            scoreCells[seat][1].setMinimumSize(new Dimension(0, 0));
+        }
+        return table;
+    }
+
     private static JPanel leftAligned(JLabel label) {
         JPanel row = new JPanel(new BorderLayout()) {
             @Override
@@ -180,16 +191,24 @@ public final class TablePanel extends JPanel {
 
     /** 由目前狀態更新計分板與牌桌。 */
     void refresh(GameSession session, Round round) {
-        String streak = session.streak() > 0 ? " 連" + session.streak() : "";
+        // 結算後 session 已經換到下一局，畫面上還是這一局，要看 round
+        String streak = round.streak() > 0 ? " 連" + round.streak() : "";
         roundInfo.setText(Tile.windName(round.roundWind()) + "風圈" + streak);
         stakesInfo.setText("底 " + session.config().basePay() + " / 每台 " + session.config().taiPay());
         for (int seat = 0; seat < 4; seat++) {
             Player player = session.player(seat);
-            String mark = round.dealer() == seat ? "【莊】" : "";
-            scoreLabels[seat].setText(player.name() + mark + "：" + player.chips());
-            scoreLabels[seat].setForeground(seat == 0 ? Theme.GOLD : Theme.TEXT);
+            scoreCells[seat][0].setText(Tile.windName(round.seatWind(seat)) + (round.dealer() == seat ? " 莊" : ""));
+            scoreCells[seat][1].setText(player.name());
+            scoreCells[seat][1].setToolTipText(seat == 0 ? player.name() : player.name() + "（" + botTraits(session, seat) + "）");
+            scoreCells[seat][2].setText(String.valueOf(player.chips()));
         }
         canvas.repaint();
+    }
+
+    /** 等級與個性。初學者憑感覺打，沒有個性之分。 */
+    private static String botTraits(GameSession session, int seat) {
+        BotLevel level = session.config().botLevels().get(seat - 1);
+        return level == BotLevel.BEGINNER ? level.label() : level.label() + "・" + session.personality(seat).label();
     }
 
     /** 只更新提示文字，按鈕不動。 */

@@ -7,9 +7,12 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
+import java.awt.GridLayout;
 import java.awt.Insets;
 import java.awt.RenderingHints;
+import java.util.List;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
@@ -28,7 +31,7 @@ import ezmj.model.GameConfig;
 import ezmj.model.Suit;
 import ezmj.model.Tile;
 
-/** 開始畫面：輸入姓名、選擇籌碼本金、底與台、電腦等級，按下按鈕即開始。 */
+/** 開始畫面：輸入姓名、選擇籌碼本金、底與台、電腦等級，按下按鈕即開始；有存檔時也能繼續上次的牌局。 */
 public final class StartPanel extends JPanel {
 
     private static final int MAX_NAME_LENGTH = 8;
@@ -40,10 +43,14 @@ public final class StartPanel extends JPanel {
     private final JComboBox<Integer> chipBox = combo(CHIP_OPTIONS, 20_000);
     private final JComboBox<Integer> baseBox = combo(BASE_OPTIONS, 100);
     private final JComboBox<Integer> taiBox = combo(TAI_OPTIONS, 20);
-    private final JComboBox<BotLevel> levelBox = combo(BotLevel.values(), BotLevel.NORMAL);
+    /** 依序是座位 1、2、3，也就是右家、對家、左家。 */
+    private final List<JComboBox<BotLevel>> levelBoxes = List.of(combo(BotLevel.values(), BotLevel.NORMAL),
+            combo(BotLevel.values(), BotLevel.NORMAL), combo(BotLevel.values(), BotLevel.NORMAL));
     private final JButton startButton = Theme.button("開始遊戲", Theme.RED);
+    private final JButton resumeButton = Theme.button("繼續上次的牌局", Theme.BUTTON);
+    private final JLabel resumeInfo = new JLabel(" ", SwingConstants.CENTER);
 
-    public StartPanel(Consumer<GameConfig> onStart) {
+    public StartPanel(Consumer<GameConfig> onStart, Runnable onResume) {
         super(new GridBagLayout());
 
         JPanel card = new JPanel(new GridBagLayout());
@@ -71,7 +78,7 @@ public final class StartPanel extends JPanel {
         addRow(card, c, "籌碼本金", chipBox);
         addRow(card, c, "底", baseBox);
         addRow(card, c, "每台", taiBox);
-        addRow(card, c, "電腦等級", levelBox);
+        addRow(card, c, "電腦等級", buildLevelRow());
 
         startButton.setFont(Theme.font(Font.BOLD, 20f));
         syncSizes();
@@ -83,6 +90,18 @@ public final class StartPanel extends JPanel {
         c.anchor = GridBagConstraints.CENTER;
         c.insets = new Insets(22, 0, 0, 0);
         card.add(startButton, c);
+
+        resumeButton.setFont(Theme.font(Font.BOLD, 17f));
+        resumeButton.addActionListener(e -> onResume.run());
+        c.gridy++;
+        c.insets = new Insets(10, 0, 0, 0);
+        card.add(resumeButton, c);
+        resumeInfo.setFont(Theme.font(Font.PLAIN, 14f));
+        resumeInfo.setForeground(Theme.MUTED);
+        c.gridy++;
+        c.insets = new Insets(4, 0, 0, 0);
+        card.add(resumeInfo, c);
+        setResume(null);
 
         JLabel version = new JLabel("版本 " + AppVersion.get(), SwingConstants.CENTER);
         version.setFont(Theme.font(Font.PLAIN, 13f));
@@ -98,16 +117,38 @@ public final class StartPanel extends JPanel {
             if (startButton.isEnabled()) {
                 onStart.accept(new GameConfig(name, (Integer) chipBox.getSelectedItem(),
                         (Integer) baseBox.getSelectedItem(), (Integer) taiBox.getSelectedItem(),
-                        (BotLevel) levelBox.getSelectedItem()));
+                        levelBoxes.stream().map(box -> (BotLevel) box.getSelectedItem()).collect(Collectors.toList())));
             }
         };
         startButton.addActionListener(e -> submit.run());
         nameField.addActionListener(e -> submit.run());
     }
 
+    /** 三家排成一列，開始畫面才不會變高，字體調大時還放得下。 */
+    private JPanel buildLevelRow() {
+        JPanel row = new JPanel(new GridLayout(2, 3, 6, 2));
+        row.setOpaque(false);
+        for (String seat : List.of("右家", "對家", "左家")) {
+            JLabel label = new JLabel(seat, SwingConstants.CENTER);
+            label.setFont(Theme.font(Font.PLAIN, 14f));
+            label.setForeground(Theme.MUTED);
+            row.add(label);
+        }
+        levelBoxes.forEach(row::add);
+        return row;
+    }
+
+    /** 有存檔時顯示繼續的按鈕與牌局摘要；summary 是 null 表示沒有存檔。 */
+    void setResume(String summary) {
+        resumeButton.setVisible(summary != null);
+        resumeInfo.setVisible(summary != null);
+        resumeInfo.setText(summary == null ? " " : summary);
+    }
+
     /** 字體大小改變後，讓開始按鈕跟著調整。 */
     void syncSizes() {
         startButton.setPreferredSize(new Dimension(Theme.scaled(300), Theme.scaled(50)));
+        resumeButton.setPreferredSize(new Dimension(Theme.scaled(300), Theme.scaled(40)));
     }
 
     private void styleName() {

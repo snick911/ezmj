@@ -221,6 +221,17 @@ final class AchievementTest {
             check(!earned.contains(Achievement.FAST_THINKER), "5 秒不算快 " + earned);
         });
 
+        test("三家不全是職業就沒有勝過職業", () -> {
+            AchievementBook book = new AchievementBook();
+            GameSession session = new GameSession(new GameConfig("測試", CHIPS, 100, 20,
+                    List.of(BotLevel.PRO, BotLevel.PRO, BotLevel.BEGINNER)), new Random(5));
+            play(book, session, tsumo(0, new ScoreItem("清一色", 40)));
+            endFourWinds(session);
+            List<Achievement> earned = book.recordGame(session, 5, 30, DATE);
+            check(earned.contains(Achievement.GAME_TOP), "籌碼最多 " + earned);
+            check(!earned.contains(Achievement.BEAT_PROS), "有一家不是職業 " + earned);
+        });
+
         test("不是職業等級就沒有勝過職業；有放槍就不算滴水不漏", () -> {
             AchievementBook book = new AchievementBook();
             GameSession session = session(BotLevel.NORMAL);
@@ -306,6 +317,30 @@ final class AchievementTest {
             } finally {
                 Files.deleteIfExists(file);
                 Files.deleteIfExists(nested);
+                Files.delete(dir);
+            }
+        });
+
+        test("重開遊戲：達成的成就與次數都在，次數接著累計，不會重複達成", () -> {
+            Path dir = Files.createTempDirectory("ezmj-achievement");
+            Path file = dir.resolve("achievements.properties");
+            try {
+                AchievementBook first = AchievementBook.load(file);
+                check(!play(first, session(BotLevel.NORMAL), tsumo(0, new ScoreItem("清一色", 8))).isEmpty(), "第一次達成");
+                first.save(file);
+
+                AchievementBook second = AchievementBook.load(file);
+                check(second.isUnlocked(Achievement.PURE_SUIT), "重開後還在");
+                eq(DATE, second.unlockedDate(Achievement.PURE_SUIT), "日期還在");
+                eq(1, second.count(Achievement.Counter.WINS), "次數還在");
+                check(!play(second, session(BotLevel.NORMAL), tsumo(0, new ScoreItem("清一色", 8)))
+                        .contains(Achievement.PURE_SUIT), "不重複達成");
+                eq(2, second.count(Achievement.Counter.WINS), "接著累計");
+                second.save(file);
+
+                eq(2, AchievementBook.load(file).count(Achievement.Counter.WINS), "再重開也在");
+            } finally {
+                Files.deleteIfExists(file);
                 Files.delete(dir);
             }
         });

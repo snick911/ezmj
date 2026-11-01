@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 
+import ezmj.model.Meld;
 import ezmj.model.Tile;
 
 /** 拆解暗牌：判斷胡牌、列出所有拆法與聽牌。 */
@@ -65,6 +66,19 @@ public final class HandAnalyzer {
             }
             trial.remove(trial.size() - 1);
         }
+        return waits;
+    }
+
+    /** 再摸到哪些牌可以胡。四張都在自己手上或面子裡的牌不可能再摸到，不算。 */
+    public static List<Tile> waits(List<Tile> concealed, List<Meld> melds) {
+        int[] own = toCounts(concealed);
+        for (Meld meld : melds) {
+            for (Tile tile : meld.tiles()) {
+                own[tile.index()]++;
+            }
+        }
+        List<Tile> waits = waits(concealed);
+        waits.removeIf(tile -> own[tile.index()] >= 4);
         return waits;
     }
 

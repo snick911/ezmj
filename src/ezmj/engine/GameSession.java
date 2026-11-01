@@ -8,6 +8,7 @@ import java.util.function.Consumer;
 import ezmj.model.GameConfig;
 import ezmj.model.GameRecord;
 import ezmj.model.Gender;
+import ezmj.model.Personality;
 import ezmj.model.Player;
 import ezmj.model.Wall;
 
@@ -20,6 +21,8 @@ public final class GameSession {
     private final Random random;
     private final Player[] players = new Player[SEATS];
     private final int firstDealer;
+    /** 真人的位置用不到，固定是穩健。 */
+    private final Personality[] personalities = new Personality[SEATS];
     private final int[] wins = new int[SEATS];
     private final int[] selfDraws = new int[SEATS];
     private final int[] dealIns = new int[SEATS];
@@ -43,6 +46,36 @@ public final class GameSession {
         }
         this.firstDealer = random.nextInt(SEATS);
         this.dealer = firstDealer;
+        personalities[0] = Personality.BALANCED;
+        for (int seat = 1; seat < SEATS; seat++) {
+            personalities[seat] = Personality.values()[random.nextInt(Personality.values().length)];
+        }
+    }
+
+    /** 從存檔接回一場牌局。 */
+    private GameSession(GameConfig config, Random random, Player[] players, Personality[] personalities, int firstDealer) {
+        this.config = config;
+        this.random = random;
+        this.firstDealer = firstDealer;
+        System.arraycopy(players, 0, this.players, 0, SEATS);
+        System.arraycopy(personalities, 0, this.personalities, 0, SEATS);
+    }
+
+    /** wins、selfDraws、dealIns 依座位排列。 */
+    static GameSession restored(GameConfig config, Random random, Player[] players, Personality[] personalities,
+                                int firstDealer, int dealer, int roundWind, int streak, int drawnGames,
+                                int[] wins, int[] selfDraws, int[] dealIns, List<RoundRecord> history) {
+        GameSession session = new GameSession(config, random, players, personalities, firstDealer);
+        session.dealer = dealer;
+        session.roundWind = roundWind;
+        session.streak = streak;
+        session.roundsPlayed = history.size();
+        session.drawnGames = drawnGames;
+        System.arraycopy(wins, 0, session.wins, 0, SEATS);
+        System.arraycopy(selfDraws, 0, session.selfDraws, 0, SEATS);
+        System.arraycopy(dealIns, 0, session.dealIns, 0, SEATS);
+        session.history.addAll(history);
+        return session;
     }
 
     public Round newRound(Consumer<String> log) {
@@ -120,7 +153,7 @@ public final class GameSession {
     public GameRecord record(int seat, String date) {
         return new GameRecord(players[seat].name(), date, wins[seat], selfDraws[seat],
                 players[seat].chips() - config.startingChips(), dealIns[seat],
-                config.botLevel(), config.basePay(), config.taiPay());
+                config.botLevels(), config.basePay(), config.taiPay());
     }
 
     /** 已經結算的局數，包含流局。 */
@@ -135,6 +168,15 @@ public final class GameSession {
     /** 這場打完的每一局，先打的在前面。 */
     public List<RoundRecord> history() {
         return List.copyOf(history);
+    }
+
+    /** 電腦的個性。 */
+    public Personality personality(int seat) {
+        return personalities[seat];
+    }
+
+    int firstDealer() {
+        return firstDealer;
     }
 
     public GameConfig config() {

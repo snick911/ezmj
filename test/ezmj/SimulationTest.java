@@ -233,9 +233,13 @@ final class SimulationTest {
             return;
         }
         Player winner = round.player(result.winner());
-        eq(17, winner.concealed().size() + winner.melds().size() * 3, "胡牌者有效張數");
-        check(HandAnalyzer.canWin(winner.concealed()), "胡牌者手牌必須成牌");
-        check(winner.concealed().contains(result.winTile()), "胡的牌必須在手上");
+        if (result.isFlowerWin()) {
+            eq(8, winner.flowers().size(), "靠花牌胡的要有八張花");
+        } else {
+            eq(17, winner.concealed().size() + winner.melds().size() * 3, "胡牌者有效張數");
+            check(HandAnalyzer.canWin(winner.concealed()), "胡牌者手牌必須成牌");
+            check(winner.concealed().contains(result.winTile()), "胡的牌必須在手上");
+        }
         check(result.score().totalTai() >= 0, "台數不可為負");
         if (!result.isSelfDraw()) {
             check(result.from() != result.winner(), "不能胡自己的牌");

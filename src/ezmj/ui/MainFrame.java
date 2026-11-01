@@ -5,7 +5,10 @@ import java.awt.Dialog;
 import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.Toolkit;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.text.ParseException;
 import java.time.LocalDate;
@@ -32,19 +35,24 @@ import javax.swing.SwingUtilities;
 import ezmj.AppVersion;
 import ezmj.bot.Bot;
 import ezmj.bot.ComputerBot;
+import ezmj.bot.SeatedBots;
 import ezmj.engine.Achievement;
 import ezmj.engine.AchievementBook;
+import ezmj.engine.GameSave;
 import ezmj.engine.GameSession;
+import ezmj.engine.PlayerStats;
 import ezmj.engine.Round;
 import ezmj.engine.Settlement;
 import ezmj.model.AppSettings;
 import ezmj.model.BotLevel;
 import ezmj.model.GameConfig;
 import ezmj.model.GameRecord;
+import ezmj.model.GameSpeed;
 import ezmj.model.Gender;
 import ezmj.model.HonorRoll;
 import ezmj.model.MusicTrack;
 import ezmj.model.Resolution;
+import ezmj.model.Tile;
 
 /** 主視窗：以 CardLayout 切換開始畫面與牌桌。 */
 public final class MainFrame extends JFrame {
@@ -56,29 +64,46 @@ public final class MainFrame extends JFrame {
     private static final Path SETTINGS_FILE = Path.of(System.getProperty("user.home"), ".ezmj", "settings.properties");
     private static final Path HONOR_FILE = Path.of(System.getProperty("user.home"), ".ezmj", "honor.properties");
     private static final Path ACHIEVEMENT_FILE = Path.of(System.getProperty("user.home"), ".ezmj", "achievements.properties");
+    private static final Path STATS_FILE = Path.of(System.getProperty("user.home"), ".ezmj", "stats.properties");
+    private static final Path SAVE_FILE = Path.of(System.getProperty("user.home"), ".ezmj", "save.properties");
     private static final Path VOICE_DIR =Path.of(System.getProperty("user.home"), ".ezmj", "voice");
 
     // 要在建立任何畫面之前讀取，字型才會一開始就是設定的大小
     private final AppSettings settings = loadSettings();
     private final HonorRoll honorRoll = HonorRoll.load(HONOR_FILE);
     private final AchievementBook achievements = AchievementBook.load(ACHIEVEMENT_FILE);
+    private final PlayerStats stats = PlayerStats.load(STATS_FILE);
     private final CardLayout cards = new CardLayout();
     private final JPanel root = new JPanel(cards);
-    private final StartPanel startPanel = new StartPanel(this::startGame);
+    private final StartPanel startPanel = new StartPanel(this::startGame, this::resumeGame);
     private final HelpDialog helpDialog = new HelpDialog(this);
     private final JCheckBoxMenuItem voiceItem = checkItem("語音", settings.voiceEnabled(), this::changeVoice);
     private TablePanel tablePanel;
     private GameController controller;
     private HistoryDialog historyDialog;
     private boolean achievementSaveWarned;
+    private boolean statsSaveWarned;
+    private boolean gameSaveWarned;
+    private boolean hasSavedGame;
+    /** 這場牌局的亂數種子，出錯時用來重現。 */
+    private long gameSeed;
 
     public MainFrame() {
         super("台灣十六張麻將 v" + AppVersion.get());
-        setDefaultCloseOperation(EXIT_ON_CLOSE);
+        setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                confirmExit();
+            }
+        });
+        ErrorReporter.setContext(this::describeGame);
+        ErrorReporter.setUiHandler(this::recoverFromError);
         setIconImages(List.of(TilePainter.appIcon(32), TilePainter.appIcon(64)));
         root.add(startPanel, CARD_START);
         setContentPane(root);
         setJMenuBar(buildMenuBar());
+        refreshResume();
 
         setMinimumSize(new Dimension(1100, 720));
         applyResolution(settings.resolution());
@@ -125,6 +150,7 @@ public final class MainFrame extends JFrame {
         preferences.add(buildFontMenu());
         preferences.add(buildTileMenu());
         preferences.add(menuItem("等待時間…", this::editWaitSeconds));
+        preferences.add(buildSpeedMenu());
         preferences.add(buildResolutionMenu());
         preferences.add(buildMusicMenu());
         preferences.add(menuItem("音量…", this::editVolumes));
@@ -144,6 +170,9 @@ public final class MainFrame extends JFrame {
             achievementMenu.add(menuItem(group.label(), () -> helpDialog.showAchievements(achievements, group)));
         }
 
+        JMenu statsMenu = topMenu("統計");
+        statsMenu.add(menuItem("我的統計", () -> helpDialog.showStats(stats)));
+
         JMenu help = topMenu("說明");
         help.add(menuItem("基本規則", helpDialog::showRules));
         help.add(menuItem("台數計算", helpDialog::showScoring));
@@ -154,6 +183,7 @@ public final class MainFrame extends JFrame {
         bar.add(preferences);
         bar.add(honor);
         bar.add(achievementMenu);
+        bar.add(statsMenu);
         bar.add(help);
         return bar;
     }
@@ -214,6 +244,27 @@ public final class MainFrame extends JFrame {
             menu.add(item);
         }
         return menu;
+    }
+
+    private JMenu buildSpeedMenu() {
+        JMenu menu = new JMenu("遊戲速度");
+        menu.setFont(Theme.font(Font.PLAIN, 15f));
+        ButtonGroup group = new ButtonGroup();
+        for (GameSpeed speed : GameSpeed.values()) {
+            String suffix = speed == GameSpeed.NORMAL ? "（預設）" : "";
+            JRadioButtonMenuItem item = new JRadioButtonMenuItem(speed.label() + suffix, speed == settings.gameSpeed());
+            item.setFont(Theme.font(Font.PLAIN, 15f));
+            item.addActionListener(e -> changeGameSpeed(speed));
+            group.add(item);
+            menu.add(item);
+        }
+        return menu;
+    }
+
+    /** 下一個動作就會用新的速度。 */
+    private void changeGameSpeed(GameSpeed speed) {
+        settings.setGameSpeed(speed);
+        saveSettings();
     }
 
     /** 放不進螢幕的解析度不能選。 */
@@ -393,12 +444,35 @@ public final class MainFrame extends JFrame {
         }
     }
 
-    /** 開始一場新牌局。 */
+    /** 開始一場新牌局。存檔只有一份，開新局會蓋掉，先問一聲。 */
     public void startGame(GameConfig config) {
-        GameSession session = new GameSession(config, new Random());
-        Bot bot = new ComputerBot(config.botLevel(), config.basePay(), config.taiPay(), new Random());
-        Bot proxy = new ComputerBot(BotLevel.PRO, config.basePay(), config.taiPay(), new Random());
-        controller = new GameController(session, bot, proxy, this::handleRoundEnd, settings);
+        if (hasSavedGame && JOptionPane.showConfirmDialog(this, "開新的牌局會蓋掉上次的存檔，確定嗎？", "開始遊戲",
+                JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) {
+            return;
+        }
+        long seed = new Random().nextLong();
+        openTable(new GameSession(config, new Random(seed)), seed).startRound();
+    }
+
+    private void resumeGame() {
+        try {
+            GameSave.Loaded saved = GameSave.load(SAVE_FILE);
+            openTable(saved.session(), saved.seed()).resume(saved);
+        } catch (IOException e) {
+            ErrorReporter.note("讀取牌局存檔", e);
+            JOptionPane.showMessageDialog(this, "上次的牌局讀不出來，只能開新的牌局。", "繼續牌局", JOptionPane.WARNING_MESSAGE);
+            refreshResume();
+        }
+    }
+
+    /** 擺好牌桌，還沒開始打。電腦的亂數也由種子決定，這樣整場才重現得出來。 */
+    private GameController openTable(GameSession session, long seed) {
+        GameConfig config = session.config();
+        gameSeed = seed;
+        Bot bot = new SeatedBots(config.botLevels(), List.of(session.personality(1), session.personality(2), session.personality(3)),
+                config.basePay(), config.taiPay(), new Random(seed + 1));
+        Bot proxy = new ComputerBot(BotLevel.PRO, config.basePay(), config.taiPay(), new Random(seed + 2));
+        controller = new GameController(session, bot, proxy, this::handleRoundEnd, settings, this::saveGame);
         if (tablePanel != null) {
             root.remove(tablePanel);
         }
@@ -409,7 +483,64 @@ public final class MainFrame extends JFrame {
         controller.attach(tablePanel);
         root.add(tablePanel, CARD_TABLE);
         cards.show(root, CARD_TABLE);
-        controller.startRound();
+        return current;
+    }
+
+    /** 開始畫面的繼續按鈕跟著存檔走；讀不懂的存檔就當作沒有，開新局時會蓋掉。 */
+    private void refreshResume() {
+        hasSavedGame = false;
+        String summary = null;
+        if (Files.exists(SAVE_FILE)) {
+            try {
+                GameSession saved = GameSave.load(SAVE_FILE).session();
+                summary = saved.config().playerName() + "：" + Tile.windName(saved.roundWind()) + "風圈，第 "
+                        + (saved.roundsPlayed() + 1) + " 局，籌碼 " + saved.player(0).chips();
+                hasSavedGame = true;
+            } catch (IOException e) {
+                ErrorReporter.note("讀取牌局存檔", e);
+            }
+        }
+        startPanel.setResume(summary);
+    }
+
+    /** 每次輪到真人決定時都會存，存不了只提醒一次。 */
+    private void saveGame() {
+        if (controller == null) {
+            return;
+        }
+        try {
+            controller.save(SAVE_FILE, gameSeed);
+        } catch (IOException e) {
+            ErrorReporter.note("儲存牌局", e);
+            if (!gameSaveWarned) {
+                gameSaveWarned = true;
+                JOptionPane.showMessageDialog(this, "牌局無法存檔，關掉遊戲之後就接不回來。\n" + e.getMessage(),
+                        "牌局存檔", JOptionPane.WARNING_MESSAGE);
+            }
+        }
+    }
+
+    private void deleteSavedGame() {
+        try {
+            Files.deleteIfExists(SAVE_FILE);
+        } catch (IOException e) {
+            ErrorReporter.note("刪除牌局存檔", e);
+        }
+    }
+
+    private String describeGame() {
+        return controller == null ? "不在牌局中" : "種子 " + gameSeed + "，" + controller.describe();
+    }
+
+    /** 畫面執行緒出錯時牌局的流程已經斷了。回到開始畫面，存檔還是上一次輪到真人時的狀態，可以接著打。 */
+    private void recoverFromError() {
+        boolean inGame = controller != null;
+        if (inGame) {
+            returnToStart();
+        }
+        JOptionPane.showMessageDialog(this, "遊戲發生錯誤，內容記在：\n" + ErrorReporter.logFile()
+                        + (inGame && hasSavedGame ? "\n\n牌局存到上一次輪到你的時候，可以按「繼續上次的牌局」接著打。" : ""),
+                "錯誤", JOptionPane.ERROR_MESSAGE);
     }
 
     public GameController controller() {
@@ -432,7 +563,8 @@ public final class MainFrame extends JFrame {
         }
     }
 
-    private void handleRoundEnd(GameSession session, Round round, Settlement settlement, Runnable next) {
+    /** 結算完先把該存的都存好，這時程式被關掉也不會少記。回傳的動作才跳出結果。 */
+    private Runnable handleRoundEnd(GameSession session, Round round, Settlement settlement, Runnable next) {
         if (historyDialog != null && historyDialog.isDisplayable()) {
             historyDialog.refresh();
         }
@@ -441,29 +573,58 @@ public final class MainFrame extends JFrame {
         if (!controller.usedAutoPlay()) {
             earned = achievements.recordRound(session, LocalDate.now().toString());
             saveAchievements();
+            stats.recordRound(session);
+            if (over) {
+                stats.recordGame(session);
+            }
+            saveStats();
         }
+        String note = over ? recordGame(session) : "";
+        List<Achievement> gameEarned = over ? recordGameAchievements(session) : List.of();
+        if (over) {
+            deleteSavedGame();
+        } else {
+            saveGame();
+        }
+        List<Achievement> roundEarned = earned;
+        return () -> showRoundEnd(session, round, settlement, roundEarned, over, note, gameEarned, next);
+    }
+
+    private void showRoundEnd(GameSession session, Round round, Settlement settlement, List<Achievement> earned, boolean over,
+                              String note, List<Achievement> gameEarned, Runnable next) {
         new ResultDialog(this, session, round, settlement, earned, over ? "查看最終排名" : "下一局",
                 round.result().isDrawnGame() ? DRAWN_RESULT_SECONDS : RESULT_SECONDS).setVisible(true);
         if (controller == null) {
             return;
         }
         if (over) {
-            showFinalRanking(session);
+            new FinalDialog(this, session, note, gameEarned).setVisible(true);
             returnToStart();
         } else {
             next.run();
         }
     }
 
-    private void showFinalRanking(GameSession session) {
-        String note = recordGame(session);
-        List<Achievement> earned = List.of();
-        if (!controller.usedAutoPlay()) {
-            earned = achievements.recordGame(session, controller.averageThinkSeconds(), controller.thinkCount(),
-                    LocalDate.now().toString());
-            saveAchievements();
+    private void saveStats() {
+        try {
+            stats.save(STATS_FILE);
+        } catch (IOException e) {
+            if (!statsSaveWarned) {
+                statsSaveWarned = true;
+                JOptionPane.showMessageDialog(this, "統計無法儲存，下次開啟時會不見。\n" + e.getMessage(),
+                        "統計", JOptionPane.WARNING_MESSAGE);
+            }
         }
-        new FinalDialog(this, session, note, earned).setVisible(true);
+    }
+
+    private List<Achievement> recordGameAchievements(GameSession session) {
+        if (controller.usedAutoPlay()) {
+            return List.of();
+        }
+        List<Achievement> earned = achievements.recordGame(session, controller.averageThinkSeconds(),
+                controller.thinkCount(), LocalDate.now().toString());
+        saveAchievements();
+        return earned;
     }
 
     /** 每局都會存，存不了只提醒一次，不要每局跳一個視窗。 */
@@ -503,11 +664,30 @@ public final class MainFrame extends JFrame {
     }
 
     private void confirmLeave() {
-        int answer = JOptionPane.showConfirmDialog(this, "確定要離開這場牌局嗎？", "離開牌局",
-                JOptionPane.YES_NO_OPTION);
-        if (answer == JOptionPane.YES_OPTION) {
+        if (controller.isOver() || askToSave("離開牌局", "要存檔之後再離開嗎？之後可以從開始畫面繼續。", "存檔並離開", "不存檔離開")) {
             returnToStart();
         }
+    }
+
+    private void confirmExit() {
+        if (controller == null || controller.isOver()
+                || askToSave("關閉遊戲", "要存檔之後再關閉嗎？下次可以從開始畫面繼續。", "存檔並關閉", "不存檔關閉")) {
+            dispose();
+            System.exit(0);
+        }
+    }
+
+    /** 問要不要存，照選的存好或刪掉；回傳是否真的要離開，按取消就是 false。 */
+    private boolean askToSave(String title, String message, String saveLabel, String discardLabel) {
+        String[] options = {saveLabel, discardLabel, "取消"};
+        int answer = JOptionPane.showOptionDialog(this, message, title, JOptionPane.DEFAULT_OPTION,
+                JOptionPane.QUESTION_MESSAGE, null, options, options[0]);
+        if (answer == 0) {
+            saveGame();
+        } else if (answer == 1) {
+            deleteSavedGame();
+        }
+        return answer == 0 || answer == 1;
     }
 
     private void returnToStart() {
@@ -516,6 +696,7 @@ public final class MainFrame extends JFrame {
             controller.stop();
             controller = null;
         }
+        refreshResume();
         cards.show(root, CARD_START);
         startPanel.focusName();
     }

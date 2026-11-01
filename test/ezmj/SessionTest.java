@@ -25,6 +25,7 @@ import ezmj.model.GameRecord;
 import ezmj.model.Gender;
 import ezmj.rules.ScoreItem;
 import ezmj.rules.ScoreResult;
+import ezmj.rules.Scorer;
 
 /** 金額結算、莊家輪替、連莊、圈風與牌局結束。 */
 final class SessionTest {
@@ -56,7 +57,7 @@ final class SessionTest {
             eq(session.player(0).chips() - CHIPS, me.winnings(), "贏錢金額");
             eq("測試", me.name(), "姓名");
             eq("2026-10-31", me.date(), "日期");
-            eq(BotLevel.NORMAL, me.botLevel(), "電腦等級");
+            eq(List.of(BotLevel.NORMAL, BotLevel.NORMAL, BotLevel.NORMAL), me.botLevels(), "電腦等級");
             eq(BASE, me.basePay(), "底");
             eq(PER_TAI, me.taiPay(), "每台");
 
@@ -66,6 +67,28 @@ final class SessionTest {
 
             eq(4, session.roundsPlayed(), "局數包含流局");
             eq(1, session.drawnGames(), "流局數");
+        });
+    }
+
+    static void flowerWins() {
+        test("八仙過海三家付，七搶一只有被搶的人付，莊家台照算", () -> {
+            GameSession eight = session();
+            int winner = (eight.dealer() + 1) % 4;
+            int plain = BASE + 8 * PER_TAI;
+            int[] deltas = eight.settle(new RoundResult(winner, -1, tile("8f"), Scorer.eightFlowers())).deltas();
+            eq(plain + PER_TAI, -deltas[(winner + 3) % 4], "莊家多付莊家台");
+            eq(plain, -deltas[(winner + 1) % 4], "閒家");
+            eq(plain, -deltas[(winner + 2) % 4], "閒家");
+            eq(plain * 3 + PER_TAI, deltas[winner], "胡牌者");
+            eq(1, eight.record(winner, "").selfDraws(), "算自摸");
+
+            GameSession rob = session();
+            int robber = (rob.dealer() + 1) % 4;
+            int victim = (robber + 1) % 4;
+            int[] robbed = rob.settle(new RoundResult(robber, victim, tile("8f"), Scorer.sevenRobOne())).deltas();
+            eq(plain, robbed[robber], "胡牌者");
+            eq(-plain, robbed[victim], "只有被搶的人付");
+            eq(1, rob.record(victim, "").dealIns(), "算放槍");
         });
     }
 

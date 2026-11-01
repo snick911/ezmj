@@ -8,7 +8,7 @@ import ezmj.model.Tile;
 /** 說明畫面的台數表與範例牌型。內容要與 Scorer 一致，ScorerTest 會比對台數，也會實際計算每個範例。 */
 public final class ScoreGuide {
 
-    /** 一種牌型。name 對應 ScoreItem 名稱空白前的部分，例如「圈風 東」對應「圈風」。 */
+    /** 一種牌型。name 對應 ScoreItem 名稱空白前的部分，例如「圈風 東」對應「圈風」。不看手牌的牌型 example 是 null。 */
     public record Entry(String name, int tai, String condition, WinContext example) {
     }
 
@@ -89,8 +89,10 @@ public final class ScoreGuide {
                             ron(ALL_SEQUENCES, "6w").flowers("2f").build()),
                     new Entry("花槓", 2, "集滿春夏秋冬，或集滿梅蘭竹菊，每組 2 台",
                             ron(ALL_SEQUENCES, "6w").flowers("1f2f3f4f").build()),
-                    new Entry("八仙過海", 8, "八張花牌全到，不另計正花、花槓",
-                            ron(ALL_SEQUENCES, "6w").flowers("1f2f3f4f5f6f7f8f").build()))));
+                    new Entry("八仙過海", 8, "八張花牌集滿就立即胡，算自摸，三家付錢。不看手牌，只算這一項",
+                            null),
+                    new Entry("七搶一", 8, "自己有七張花、別家有一張花就立即胡，拿走那張花，只有那家付錢，算他放槍。不看手牌，只算這一項",
+                            null))));
 
     private ScoreGuide() {
     }
