@@ -24,6 +24,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
@@ -44,6 +45,7 @@ import ezmj.online.OnlineClient;
 import ezmj.online.OnlineGame;
 import ezmj.online.OnlineProfile;
 import ezmj.online.RoomInfo;
+import ezmj.online.RoomListing;
 import ezmj.online.RoomSettings;
 import ezmj.online.ServerAddress;
 
@@ -229,7 +231,7 @@ final class OnlineTest {
             try (FakeServer server = new FakeServer(webSocket); Probe probe = new Probe(server)) {
                 FakeConnection connection = probe.loggedIn();
                 probe.client.createRoom(new RoomSettings(500, 10, 2,
-                        List.of(BotLevel.PRO, BotLevel.BEGINNER, BotLevel.AMATEUR), 15, GameSpeed.FAST));
+                        List.of(BotLevel.PRO, BotLevel.BEGINNER, BotLevel.AMATEUR), 15, GameSpeed.FAST, "", false));
                 Map<String, Object> create = connection.next("createRoom");
                 eq(500L, create.get("chips"), "籌碼");
                 eq(10L, create.get("basePay"), "底");
@@ -237,8 +239,65 @@ final class OnlineTest {
                 eq(List.of("PRO", "BEGINNER", "AMATEUR"), create.get("botLevels"), "電腦等級");
                 eq(15L, create.get("waitSeconds"), "等待秒數");
                 eq("FAST", create.get("speed"), "速度");
+                eq("", create.get("name"), "沒填名稱也送，由服務器取");
+                eq(false, create.get("private"), "預設公開");
+                probe.client.createRoom(new RoomSettings(500, 10, 2,
+                        List.of(BotLevel.PRO, BotLevel.BEGINNER, BotLevel.AMATEUR), 15, GameSpeed.FAST, "週五牌搭子", true));
+                Map<String, Object> named = connection.next("createRoom");
+                eq("週五牌搭子", named.get("name"), "房間名稱");
+                eq(true, named.get("private"), "私人房間");
                 probe.client.joinRoom("ABC234");
                 eq("ABC234", connection.next("joinRoom").get("code"), "房號");
+            }
+        });
+        test(name + "只看大廳：不登入，第一則就是 listRooms，之後再要一次", () -> {
+            try (FakeServer server = new FakeServer(webSocket); Probe probe = new Probe(server)) {
+                probe.client.browse();
+                FakeConnection connection = server.accept();
+                eq("{\"type\":\"listRooms\"}", connection.nextLine(), "沒有 hello");
+                connection.send(rooms(LISTING, LISTING.replace("ABC234", "XYZ789")
+                        .replace("\"name\":\"週五牌搭子\",\"host\":\"小明\"", "\"name\":\"<html><b>x\",\"host\":\"<HTML>y\"")));
+                eq("rooms:2", probe.next(), "收到列表");
+                eq("XYZ789", probe.lastRooms.get(1).code(), "照服務器的順序");
+                plainOnScreen(probe.lastRooms.get(1).name(), "<html><b>x");
+                plainOnScreen(probe.lastRooms.get(1).host(), "<HTML>y");
+                check(probe.client.token() == null, "沒有登入");
+                probe.client.listRooms();
+                connection.listRooms();
+                eq("rooms:1", probe.next(), "再要一次");
+            }
+        });
+        test(name + "只看大廳：舊服務器不認得 listRooms，錯誤往上傳，不當成登入失敗", () -> {
+            try (FakeServer server = new FakeServer(webSocket); Probe probe = new Probe(server)) {
+                probe.client.browse();
+                FakeConnection connection = server.accept();
+                connection.next("listRooms");
+                connection.send("{\"type\":\"error\",\"code\":\"notLoggedIn\",\"message\":\"要先送 hello\"}");
+                eq("message:error", probe.next(), "收到錯誤");
+                eq("notLoggedIn", probe.lastMessage.get("code"), "錯誤的代碼");
+                probe.client.listRooms();
+                connection.listRooms();
+                eq("rooms:1", probe.next(), "連線還在");
+            }
+        });
+        test(name + "只看大廳：斷線就通知，不重連", () -> {
+            try (FakeServer server = new FakeServer(webSocket); Probe probe = new Probe(server)) {
+                probe.client.browse();
+                server.accept().close();
+                check(probe.next().startsWith("closed:"), "通知斷線");
+                check(!server.acceptsAnother(300), "沒有 token 不重連");
+            }
+        });
+        test(name + "登入之後也能要列表，看不懂的列表就略過", () -> {
+            try (FakeServer server = new FakeServer(webSocket); Probe probe = new Probe(server)) {
+                FakeConnection connection = probe.loggedIn();
+                probe.client.listRooms();
+                connection.next("listRooms");
+                connection.send(rooms(LISTING.replace("\"humans\":2,", "")));
+                eq("bad", probe.next(), "少了人數");
+                connection.send(rooms());
+                eq("rooms:0", probe.next(), "沒有房間");
+                check(probe.client.isConnected(), "連線還在");
             }
         });
         test(name + "閒置時定期送 ping，pong 不往上傳", () -> {
@@ -427,6 +486,51 @@ final class OnlineTest {
             eq(List.of(BotLevel.NORMAL, BotLevel.PRO, BotLevel.BEGINNER), info.settings().botLevels(), "等級");
             eq(GameSpeed.FAST, info.settings().speed(), "速度");
         });
+        test("房間：舊服務器沒有名稱與私人，當成空的與公開", () -> {
+            RoomSettings settings = RoomInfo.parse(parse(ROOM_PLAYING)).settings();
+            eq("", settings.name(), "沒有名稱");
+            check(!settings.privateRoom(), "公開");
+        });
+        test("房間：讀出名稱與私人", () -> {
+            RoomSettings settings = RoomInfo.parse(parse(ROOM_PLAYING.replace("\"speed\":\"FAST\"",
+                    "\"speed\":\"FAST\",\"name\":\"小明的房間\",\"private\":true"))).settings();
+            eq("小明的房間", settings.name(), "名稱");
+            check(settings.privateRoom(), "私人");
+        });
+        test("大廳：讀出房間列表", () -> {
+            List<RoomListing> listed = RoomListing.parse(parse(rooms(LISTING, LISTING.replace("ABC234", "XYZ789")
+                    .replace("\"humans\":2", "\"humans\":3").replace("\"chips\":5000", "\"chips\":20000"))));
+            eq(2, listed.size(), "兩間");
+            RoomListing first = listed.get(0);
+            eq("ABC234", first.code(), "房號");
+            eq("週五牌搭子", first.name(), "名稱");
+            eq("小明", first.host(), "房主");
+            eq(2, first.humans(), "真人數");
+            eq(new RoomSettings(5000, 100, 20, List.of(BotLevel.NORMAL, BotLevel.PRO, BotLevel.BEGINNER), 30,
+                    GameSpeed.FAST, "週五牌搭子", false), first.settings(), "設定");
+            eq("XYZ789", listed.get(1).code(), "照服務器的順序");
+            eq(3, listed.get(1).humans(), "第二間的人數");
+            eq(20000, listed.get(1).settings().chips(), "第二間的籌碼");
+            eq(0, RoomListing.parse(parse(rooms())).size(), "沒有房間");
+        });
+        test("大廳：缺欄位要拒絕", () -> {
+            for (String key : List.of("code", "name", "host", "humans", "options")) {
+                Map<String, Object> listing = new LinkedHashMap<>(parse(LISTING));
+                listing.remove(key);
+                fails(IllegalArgumentException.class,
+                        () -> RoomListing.parse(Map.of("type", "rooms", "rooms", List.of(listing))), key);
+            }
+            fails(IllegalArgumentException.class, () -> RoomListing.parse(parse("{\"type\":\"rooms\"}")), "沒有 rooms");
+        });
+    }
+
+    private static final String LISTING = "{\"code\":\"ABC234\",\"name\":\"週五牌搭子\",\"host\":\"小明\",\"humans\":2,"
+            + "\"options\":{\"chips\":5000,\"basePay\":100,\"taiPay\":20,\"botLevels\":[\"NORMAL\",\"PRO\",\"BEGINNER\"],"
+            + "\"waitSeconds\":30,\"speed\":\"FAST\",\"name\":\"週五牌搭子\",\"private\":false}}";
+
+    /** 服務器的 rooms 訊息，listings 是一間一間的 JSON。 */
+    private static String rooms(String... listings) {
+        return "{\"type\":\"rooms\",\"rooms\":[" + String.join(",", listings) + "]}";
     }
 
     private static void game() {
@@ -639,6 +743,7 @@ final class OnlineTest {
         final BlockingQueue<String> events = new LinkedBlockingQueue<>();
         final OnlineClient client;
         volatile Map<String, Object> lastMessage;
+        volatile List<RoomListing> lastRooms;
         volatile String lastRejection;
         private final FakeServer server;
 
@@ -683,6 +788,12 @@ final class OnlineTest {
         public void message(Map<String, Object> message) {
             lastMessage = message;
             events.add("message:" + message.get("type"));
+        }
+
+        @Override
+        public void rooms(List<RoomListing> rooms) {
+            lastRooms = rooms;
+            events.add("rooms:" + rooms.size());
         }
 
         @Override
@@ -800,6 +911,12 @@ final class OnlineTest {
         void send(String line) throws IOException {
             out.write((line + "\n").getBytes(StandardCharsets.UTF_8));
             out.flush();
+        }
+
+        /** 等到客戶端要列表，回一間 LISTING。服務器不主動推送，一定是一問一答。 */
+        void listRooms() throws IOException {
+            next("listRooms");
+            send(rooms(LISTING));
         }
 
         void close() throws IOException {

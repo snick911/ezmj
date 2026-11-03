@@ -1,6 +1,7 @@
 package ezmj.ui;
 
 import java.awt.BorderLayout;
+import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
@@ -21,12 +22,17 @@ import javax.swing.JPanel;
 import ezmj.online.RoomInfo;
 import ezmj.online.RoomSettings;
 
-/** 等人開局的房間：房號、房間設定、玩家與連線狀態。房主可以開局，不到四人由電腦補滿。 */
+/** 等人開局的房間：房間名稱、房號、房間設定、玩家與連線狀態。房主可以開局，不到四人由電腦補滿。 */
 final class RoomPanel extends JPanel {
 
     private static final int SEATS = 4;
+    private static final int LONG_NAME = 14;
 
     private final JLabel title = ResultDialog.line(" ", Font.BOLD, 30f, Theme.GOLD);
+    private final JLabel privateBadge = ResultDialog.line("私人", Font.BOLD, 15f, Color.WHITE);
+    private final JPanel codeRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+    private final JLabel codeLine = ResultDialog.line(" ", Font.BOLD, 18f, Theme.TEXT);
+    private final JLabel listedLine = ResultDialog.line(" ", Font.PLAIN, 15f, Theme.MUTED);
     private final JLabel settingsLine = ResultDialog.line(" ", Font.PLAIN, 15f, Theme.MUTED);
     private final JPanel players = new JPanel(new BorderLayout());
     private final JLabel notice = ResultDialog.line(" ", Font.PLAIN, 15f, Theme.GOLD);
@@ -45,13 +51,29 @@ final class RoomPanel extends JPanel {
         JButton copy = Theme.button("複製房號", Theme.BUTTON);
         copy.addActionListener(e -> Toolkit.getDefaultToolkit().getSystemClipboard()
                 .setContents(new StringSelection(code), null));
+        privateBadge.setOpaque(true);
+        privateBadge.setBackground(Theme.RED);
+        privateBadge.setBorder(BorderFactory.createEmptyBorder(2, 8, 2, 8));
+        privateBadge.setToolTipText("不列在大廳，朋友要用房號加入");
+        JPanel name = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        name.setOpaque(false);
+        name.add(title);
+        name.add(Box.createHorizontalStrut(12));
+        name.add(privateBadge);
         JPanel heading = new JPanel(new BorderLayout(24, 0));
         heading.setOpaque(false);
         heading.setAlignmentX(LEFT_ALIGNMENT);
-        heading.add(title, BorderLayout.WEST);
+        heading.add(name, BorderLayout.WEST);
         heading.add(copy, BorderLayout.EAST);
         card.add(heading);
         card.add(Box.createVerticalStrut(6));
+        codeRow.setOpaque(false);
+        codeRow.setAlignmentX(LEFT_ALIGNMENT);
+        codeRow.add(codeLine);
+        codeRow.add(Box.createHorizontalStrut(14));
+        codeRow.add(listedLine);
+        card.add(codeRow);
+        card.add(Box.createVerticalStrut(4));
         card.add(settingsLine);
         card.add(Box.createVerticalStrut(14));
         players.setOpaque(false);
@@ -76,8 +98,17 @@ final class RoomPanel extends JPanel {
 
     void setRoom(RoomInfo room) {
         code = room.code();
-        title.setText("房號 " + code);
         RoomSettings settings = room.settings();
+        // 舊服務器沒有房間名稱，就和以前一樣用房號當標題。不能 strip：<html> 前面墊的空白會被拿掉
+        String name = settings.name();
+        boolean named = !name.isBlank();
+        title.setText(named ? name : "房號 " + code);
+        // 名稱最長 30 字，用原本的大小會把房間撐得比視窗還寬
+        title.setFont(Theme.font(Font.BOLD, name.codePointCount(0, name.length()) > LONG_NAME ? 22f : 30f));
+        privateBadge.setVisible(settings.privateRoom());
+        codeRow.setVisible(named);
+        codeLine.setText("房號 " + code);
+        listedLine.setText(settings.privateRoom() ? "不列在大廳，把房號告訴朋友就能加入。" : "列在大廳，也可以把房號告訴朋友。");
         settingsLine.setText("籌碼 " + settings.chips() + "　底 " + settings.basePay() + "　每台 " + settings.taiPay()
                 + "　每次等待 " + settings.waitSeconds() + " 秒　電腦速度" + settings.speed().label());
 

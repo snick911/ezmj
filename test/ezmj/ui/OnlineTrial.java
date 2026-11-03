@@ -2,6 +2,7 @@ package ezmj.ui;
 
 import java.awt.Component;
 import java.awt.Container;
+import java.awt.Rectangle;
 import java.awt.Window;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
@@ -27,6 +28,7 @@ import java.util.concurrent.TimeUnit;
 
 import javax.imageio.ImageIO;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JDialog;
@@ -34,10 +36,12 @@ import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JSpinner;
+import javax.swing.JTable;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 
 import ezmj.model.GameSpeed;
+import ezmj.online.RoomListing;
 import ezmj.online.ServerAddress;
 
 /**
@@ -55,6 +59,9 @@ public final class OnlineTrial {
     private static final int TICK_MS = 120;
     private static final int DROP_AFTER_DECISIONS = 3;
     private static final int KILL_AFTER_DECISIONS = 14;
+    /** 大廳每 5 秒更新，看到房號之後多等一點，列表一定更新過。 */
+    private static final int HIDDEN_CHECK_MS = 6_500;
+    private static final String ROOM_NAME = "甲乙的牌局";
     private static final List<String> LOCAL_ONLY_FILES =
             List.of("save.properties", "stats.properties", "achievements.properties", "honor.properties");
 
@@ -96,11 +103,16 @@ public final class OnlineTrial {
         return expect("單機", client, 0);
     }
 
-    /** 兩人開房打牌：來賓先網路中斷再接回，之後程式被殺掉，重開再從 token 接回。 */
+    /**
+     * 兩人開私人房間打牌：大廳不該列出這間，來賓用房號加入。來賓先網路中斷再接回，之後程式被殺掉，重開再從 token 接回。
+     * 房間名稱沒填，服務器用房主的名字取。
+     */
     private static int reconnect(Path dir, int port) throws Exception {
         Files.createDirectories(dir);
-        Process host = client(dir, "房主", "host", port, "--leaveAfter", "3", "--chips", "20000", "--expectDisconnectMark");
-        Process guest = client(dir, "來賓", "guest", port, "--proxy", "--drop", "--killAfter", String.valueOf(KILL_AFTER_DECISIONS));
+        Process host = client(dir, "房主", "host", port, "--leaveAfter", "3", "--chips", "20000", "--expectDisconnectMark",
+                "--private");
+        Process guest = client(dir, "來賓", "guest", port, "--proxy", "--drop", "--killAfter", String.valueOf(KILL_AFTER_DECISIONS),
+                "--private", "--hostName", "房主");
         Path killFile = dir.resolve("kill-guest");
         long deadline = System.currentTimeMillis() + 300_000;
         while (!Files.exists(killFile) && guest.isAlive() && System.currentTimeMillis() < deadline) {
@@ -120,11 +132,11 @@ public final class OnlineTrial {
         return failures;
     }
 
-    /** 打完整場：看最後成績、回到房間、再開一場。籌碼給很少，有人胡就有人輸光。 */
+    /** 開有名稱的公開房間，來賓從大廳的列表連點兩下加入。打完整場：看最後成績、回到房間、再開一場。籌碼給很少，有人胡就有人輸光。 */
     private static int gameOver(Path dir, int port) throws Exception {
         Files.createDirectories(dir);
-        Process host = client(dir, "甲", "host", port, "--chips", "100", "--secondGame");
-        Process guest = client(dir, "乙", "guest", port, "--secondGame");
+        Process host = client(dir, "甲", "host", port, "--chips", "100", "--secondGame", "--roomName", ROOM_NAME);
+        Process guest = client(dir, "乙", "guest", port, "--secondGame", "--roomName", ROOM_NAME, "--fromLobby");
         return expect("甲", host, 0) + expect("乙", guest, 0);
     }
 
@@ -197,6 +209,8 @@ public final class OnlineTrial {
         private TablePanel currentTable;
         private String lastHint = "";
         private int decisionsAtDrop;
+        private long codeSeenAt;
+        private boolean lobbyWaitLogged;
 
         Client(String[] args) throws IOException {
             role = args[1];
@@ -371,9 +385,15 @@ public final class OnlineTrial {
                     break;
                 case "guest":
                     Path codeFile = dir.resolve("code.txt");
-                    if (Files.exists(codeFile)) {
+                    if (!Files.exists(codeFile)) {
+                        break;
+                    }
+                    String code = read(codeFile);
+                    if (options.containsKey("--fromLobby")) {
+                        joinFromLobby(panel, code);
+                    } else if (!options.containsKey("--private") || hiddenFromLobby(panel, code)) {
                         fields.get(0).setText(name);
-                        fields.get(1).setText(read(codeFile).toLowerCase());
+                        fields.get(1).setText(code.toLowerCase());
                         filledForm = true;
                         log("加入房間");
                         clickText(panel, "加入房間");
@@ -405,7 +425,84 @@ public final class OnlineTrial {
             chips.setSelectedItem(amount);
             boxes.get(boxes.size() - 1).setSelectedItem(GameSpeed.FAST);
             all(panel, JSpinner.class).get(0).setValue(15);
+            if (options.containsKey("--roomName")) {
+                ((JTextField) field(panel, "roomNameField")).setText(options.get("--roomName"));
+            }
+            ((JCheckBox) field(panel, "privateBox")).setSelected(options.containsKey("--private"));
             shot("form-filled");
+        }
+
+        /** 等房間出現在大廳的列表，選它再連點兩下，就像玩家一樣。 */
+        private void joinFromLobby(OnlinePanel panel, String code) {
+            List<RoomListing> listed = listed(panel);
+            int row = -1;
+            for (int i = 0; i < listed.size(); i++) {
+                if (listed.get(i).code().equals(code)) {
+                    row = i;
+                }
+            }
+            if (row < 0) {
+                if (!lobbyWaitLogged) {
+                    lobbyWaitLogged = true;
+                    log("等房間 " + code + " 出現在大廳");
+                }
+                return;
+            }
+            RoomListing room = listed.get(row);
+            if (!room.name().equals(options.get("--roomName")) || room.humans() != 1) {
+                fail("大廳列的房間不對：" + room);
+            }
+            JTable table = (JTable) field(panel, "roomTable");
+            all(panel, JTextField.class).get(0).setText(name);
+            table.setRowSelectionInterval(row, row);
+            filledForm = true;
+            shot("lobby");
+            log("從大廳加入「" + room.name() + "」，房主 " + room.host());
+            Rectangle cell = table.getCellRect(row, 0, true);
+            SwingUtilities.invokeLater(() -> table.dispatchEvent(new MouseEvent(table, MouseEvent.MOUSE_CLICKED,
+                    System.currentTimeMillis(), 0, cell.x + 5, cell.y + cell.height / 2, 2, false, MouseEvent.BUTTON1)));
+        }
+
+        /** 私人房間不該列在大廳：看到房號之後等列表更新過，裡面還是沒有才用房號加入。 */
+        private boolean hiddenFromLobby(OnlinePanel panel, String code) {
+            if (codeSeenAt == 0) {
+                codeSeenAt = System.currentTimeMillis();
+                log("等大廳更新，看私人房間有沒有被列出來");
+            }
+            if (System.currentTimeMillis() - codeSeenAt < HIDDEN_CHECK_MS) {
+                return false;
+            }
+            String status = ((JLabel) field(panel, "listStatus")).getText();
+            if (!status.startsWith("目前沒有") && !status.contains("間等人中")) {
+                fail("大廳的列表沒有讀到：" + status);
+            }
+            if (listed(panel).stream().anyMatch(room -> room.code().equals(code))) {
+                fail("私人房間不該列在大廳");
+            }
+            shot("lobby-private-hidden");
+            log("大廳沒有列出私人房間：" + status);
+            return true;
+        }
+
+        @SuppressWarnings("unchecked")
+        private static List<RoomListing> listed(OnlinePanel panel) {
+            return (List<RoomListing>) field(field(panel, "rooms"), "rooms");
+        }
+
+        /**
+         * 房間畫面要看得到房間名稱，私人房間要標出來。房主的 --roomName 與 --private 是開房的設定，
+         * 來賓的是預期看到的；沒有名稱時服務器用房主的名字取。
+         */
+        private void checkRoomLabels(RoomPanel panel) {
+            String title = ((JLabel) field(panel, "title")).getText();
+            String expected = options.getOrDefault("--roomName", options.getOrDefault("--hostName", name) + "的房間");
+            if (!title.equals(expected)) {
+                fail("房間名稱應該是「" + expected + "」，畫面上是「" + title + "」");
+            }
+            if (((JLabel) field(panel, "privateBadge")).isVisible() != options.containsKey("--private")) {
+                fail("私人房間的標記不對");
+            }
+            log("房間名稱「" + title + "」" + (options.containsKey("--private") ? "，標著私人" : ""));
         }
 
         private void onRoom(RoomPanel panel) {
@@ -413,10 +510,10 @@ public final class OnlineTrial {
             if (leaving) {
                 return;
             }
-            JLabel title = (JLabel) field(panel, "title");
+            String code = (String) field(panel, "code");
             if (role.equals("host")) {
-                String code = title.getText().replace("房號 ", "");
                 if (code.length() == 6 && !Files.exists(dir.resolve("code.txt"))) {
+                    checkRoomLabels(panel);
                     write(dir.resolve("code.txt"), code);
                     log("房號 " + code);
                 }
@@ -434,7 +531,8 @@ public final class OnlineTrial {
                 if (start == null || start.isEnabled()) {
                     fail("來賓不應該能開局");
                 }
-                log("進房間 " + title.getText());
+                checkRoomLabels(panel);
+                log("進房間 " + code);
                 write(dir.resolve("joined.txt"), name);
             }
         }

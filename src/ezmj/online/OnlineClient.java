@@ -16,6 +16,7 @@ import java.net.http.WebSocketHandshakeException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletionStage;
@@ -60,8 +61,11 @@ public final class OnlineClient {
         /** 登入成功。resumed 表示是用 token 接回來的，接著會收到服務器補送的局面。 */
         void loggedIn(Map<String, Object> welcome, boolean resumed);
 
-        /** 服務器送來的訊息，pong 不算。 */
+        /** 服務器送來的訊息，pong 與 rooms 不算。只看大廳時服務器的錯誤也從這裡來，例如舊服務器不認得 listRooms。 */
         void message(Map<String, Object> message);
+
+        /** 大廳的房間列表，回應 listRooms。 */
+        void rooms(List<RoomListing> rooms);
 
         /** 連線斷了，正在重新連線。接回來之前送出的訊息都會丟掉，服務器會補送還在等的詢問。 */
         void connectionLost();
@@ -88,6 +92,8 @@ public final class OnlineClient {
     private boolean reconnecting;
     private boolean lostReported;
     private long retryDeadlineNanos;
+    /** 用 browse 連的，不會登入，訊息直接往上傳。 */
+    private volatile boolean browsing;
     /** 自己呼叫過 close，不要再通知。 */
     private volatile boolean silenced;
 
@@ -113,23 +119,37 @@ public final class OnlineClient {
 
     /** 用名字登入，第一次進服務器時用。 */
     public void loginWithName(String name) {
-        firstLogin(Fields.object("type", "hello", "protocol", PROTOCOL, "name", name));
+        connect(Fields.object("type", "hello", "protocol", PROTOCOL, "name", name));
     }
 
     /** 用之前的 token 接回來。 */
     public void loginWithToken(String savedToken) {
         token = savedToken;
-        firstLogin(Fields.object("type", "hello", "protocol", PROTOCOL, "token", savedToken));
+        connect(Fields.object("type", "hello", "protocol", PROTOCOL, "token", savedToken));
     }
 
-    private void firstLogin(Map<String, Object> hello) {
+    /**
+     * 不登入，只看大廳：連上就送 listRooms，之後要更新列表再呼叫 listRooms。
+     * 沒有 token，所以斷線不重連，直接通知 closed。要開房或加入時另外開一個登入的連線。
+     */
+    public void browse() {
+        browsing = true;
+        connect(Fields.object("type", "listRooms"));
+    }
+
+    private void connect(Map<String, Object> first) {
         background("ezmj-connect", () -> {
             try {
-                install(open()).send(hello);
+                install(open()).send(first);
             } catch (IOException e) {
                 finish(() -> listener.closed("連不上服務器 " + address + "：" + e.getMessage()));
             }
         });
+    }
+
+    /** 要大廳的房間列表，不用登入，回應從 Listener.rooms 通知。 */
+    public void listRooms() {
+        send(Fields.object("type", "listRooms"));
     }
 
     public void createRoom(RoomSettings settings) {
@@ -341,7 +361,10 @@ public final class OnlineClient {
         if (type.equals("pong")) {
             return;
         }
-        if (from.loggedIn) {
+        if (type.equals("rooms")) {
+            List<RoomListing> rooms = RoomListing.parse(message);
+            notifyListener(() -> listener.rooms(rooms));
+        } else if (from.loggedIn || browsing) {
             notifyListener(() -> listener.message(message));
         } else if (type.equals("welcome")) {
             welcomed(from, message);

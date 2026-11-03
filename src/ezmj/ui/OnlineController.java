@@ -22,6 +22,7 @@ import ezmj.online.OnlineClient;
 import ezmj.online.OnlineGame;
 import ezmj.online.OnlineProfile;
 import ezmj.online.RoomInfo;
+import ezmj.online.RoomListing;
 import ezmj.online.RoomSettings;
 import ezmj.online.ServerAddress;
 
@@ -218,6 +219,11 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
     @Override
     public void badMessage(String line, RuntimeException error) {
         ErrorReporter.note("看不懂服務器的訊息", error);
+    }
+
+    /** 房間列表由大廳的 LobbyBrowser 另外要，這條連線不會送 listRooms。 */
+    @Override
+    public void rooms(List<RoomListing> rooms) {
     }
 
     /** 看不懂的訊息就略過：服務器每走一步都送完整的局面，下一份就補回來了。 */
