@@ -179,7 +179,7 @@ public final class GameSave {
                 integer(values, "session.roundWind"), integer(values, "session.streak"),
                 integer(values, "session.drawnGames"), wins, selfDraws, dealIns, history);
 
-        Round round = values.containsKey("round.phase") ? readRound(values, players) : null;
+        Round round = values.containsKey("round.phase") ? readRound(values, players, session.firstDealer()) : null;
         List<Tile> waits = values.containsKey("round.listening") ? Tile.parseAll(text(values, "round.listening")) : null;
         return new Loaded(seed, session, round, Boolean.parseBoolean(text(values, "usedAutoPlay")), waits,
                 Long.parseLong(text(values, "think.nanos")), integer(values, "think.count"));
@@ -213,7 +213,8 @@ public final class GameSave {
         return new ScoreResult(items);
     }
 
-    private static Round readRound(Properties values, Player[] players) throws IOException {
+    /** 局風不在存檔裡，用起莊與這局的莊家算，舊的存檔也讀得出來。 */
+    private static Round readRound(Properties values, Player[] players, int firstDealer) throws IOException {
         for (int seat = 0; seat < SEATS; seat++) {
             String prefix = "round.player." + seat + ".";
             for (Tile tile : Tile.parseAll(text(values, prefix + "concealed"))) {
@@ -245,8 +246,10 @@ public final class GameSave {
                 integer(values, "round.discarder"), bool(values, "round.robbing"), bool(values, "round.discardOnly"),
                 bool(values, "round.afterKong"), bool(values, "round.anyClaim"), ints(text(values, "round.turnsTaken")),
                 discards);
-        Round round = Round.restored(players, new Wall(Tile.parseAll(text(values, "round.wall"))),
-                integer(values, "round.dealer"), integer(values, "round.roundWind"), integer(values, "round.streak"), state);
+        int dealer = integer(values, "round.dealer");
+        Round round = Round.restored(players, new Wall(Tile.parseAll(text(values, "round.wall"))), dealer,
+                integer(values, "round.roundWind"), GameSession.handWind(firstDealer, dealer), integer(values, "round.streak"),
+                state);
         requireFullSet(round);
         return round;
     }

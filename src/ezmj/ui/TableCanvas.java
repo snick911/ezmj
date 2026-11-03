@@ -969,10 +969,23 @@ final class TableCanvas extends JComponent {
         g.fill(new RoundRectangle2D.Double(-half, -half, half * 2, half * 2, 12 * unit, 12 * unit));
         g.setColor(Theme.GOLD);
         g.setFont(Theme.font(Font.BOLD, (float) (22 * unit)));
-        drawCenteredLine(g, Tile.windName(round.roundWind()) + "風圈", -14 * unit);
+        String label = roundLabel(round);
+        // 字體調大時四個字會超出方框，縮回框內
+        int labelWidth = g.getFontMetrics().stringWidth(label);
+        double maxWidth = half * 2 - 12 * unit;
+        if (labelWidth > maxWidth) {
+            g.setFont(g.getFont().deriveFont((float) (g.getFont().getSize2D() * maxWidth / labelWidth)));
+        }
+        drawCenteredLine(g, label, -14 * unit);
         g.setColor(Theme.TEXT);
         g.setFont(Theme.font(Font.PLAIN, (float) (16 * unit)));
         drawCenteredLine(g, "剩餘 " + (round.liveTiles() + undealtTiles()) + " 張", 22 * unit);
+    }
+
+    /** 圈風加局風，例如「東風東局」「南風西局」。舊服務器沒有送局風時是原本的「東風圈」。牌桌中間與右側都用這個。 */
+    static String roundLabel(RoundView round) {
+        int hand = round.handWind();
+        return Tile.windName(round.roundWind()) + "風" + (hand >= 1 && hand <= 4 ? Tile.windName(hand) + "局" : "圈");
     }
 
     private static void drawCenteredLine(Graphics2D g, String text, double y) {

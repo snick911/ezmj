@@ -1,10 +1,17 @@
 package ezmj.ui;
 
+import java.awt.BasicStroke;
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
+import java.awt.FontMetrics;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.geom.Ellipse2D;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -13,6 +20,7 @@ import java.util.function.Consumer;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
+import javax.swing.Icon;
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
@@ -162,8 +170,52 @@ public final class TablePanel extends JPanel {
             }
             // 名字太長時只縮玩家這欄，後面用刪節號，籌碼才不會被擠掉
             scoreCells[seat][1].setMinimumSize(new Dimension(0, 0));
+            // 莊家的圓圈接在門風後面
+            scoreCells[seat][0].setHorizontalTextPosition(SwingConstants.LEADING);
+            scoreCells[seat][0].setIconTextGap(Theme.scaled(5));
         }
         return table;
+    }
+
+    /**
+     * 計分表裡莊家的標記：紅色圓圈框住紅字「莊」。直徑跟著字體大小設定，是 22 的 Theme.scaled；
+     * 圈線寬是直徑的 0.09（至少 1.5），字是粗體、直徑的 0.64。牌桌上名字旁邊的「莊」不用這個。
+     */
+    static final class DealerBadge implements Icon {
+        static final DealerBadge INSTANCE = new DealerBadge();
+        static final Color RED = new Color(0xE5, 0x48, 0x3D);
+        private static final int DIAMETER = 22;
+
+        private DealerBadge() {
+        }
+
+        @Override
+        public int getIconWidth() {
+            return Theme.scaled(DIAMETER);
+        }
+
+        @Override
+        public int getIconHeight() {
+            return Theme.scaled(DIAMETER);
+        }
+
+        @Override
+        public void paintIcon(Component c, Graphics graphics, int x, int y) {
+            Graphics2D g = (Graphics2D) graphics.create();
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            double size = getIconWidth();
+            double stroke = Math.max(1.5, size * .09);
+            g.setColor(RED);
+            g.setStroke(new BasicStroke((float) stroke));
+            g.draw(new Ellipse2D.Double(x + stroke / 2, y + stroke / 2, size - stroke, size - stroke));
+            g.setFont(Theme.fixedFont(Font.BOLD, (float) (size * .64)));
+            FontMetrics metrics = g.getFontMetrics();
+            String text = "莊";
+            g.drawString(text, (float) (x + (size - metrics.stringWidth(text)) / 2),
+                    (float) (y + (size - metrics.getHeight()) / 2 + metrics.getAscent()));
+            g.dispose();
+        }
     }
 
     private static JPanel leftAligned(JLabel label) {
@@ -201,11 +253,13 @@ public final class TablePanel extends JPanel {
     void refresh(GameView game, RoundView round) {
         // 結算後 session 已經換到下一局，畫面上還是這一局，要看 round
         String streak = round.streak() > 0 ? " 連" + round.streak() : "";
-        roundInfo.setText(Tile.windName(round.roundWind()) + "風圈" + streak);
+        roundInfo.setText(TableCanvas.roundLabel(round) + streak);
         stakesInfo.setText("底 " + game.basePay() + " / 每台 " + game.taiPay());
         for (int seat = 0; seat < 4; seat++) {
             Player player = game.player(seat);
-            scoreCells[seat][0].setText(Tile.windName(round.seatWind(seat)) + (round.dealer() == seat ? " 莊" : ""));
+            scoreCells[seat][0].setText(Tile.windName(round.seatWind(seat)));
+            scoreCells[seat][0].setIcon(round.dealer() == seat ? DealerBadge.INSTANCE : null);
+            scoreCells[seat][0].setToolTipText(round.dealer() == seat ? "莊家" : null);
             scoreCells[seat][1].setText(player.name());
             String traits = game.traits(seat);
             scoreCells[seat][1].setToolTipText(traits == null ? player.name() : player.name() + "（" + traits + "）");

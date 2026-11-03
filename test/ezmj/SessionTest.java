@@ -8,6 +8,7 @@ import static ezmj.T.tile;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.HashSet;
@@ -366,6 +367,23 @@ final class SessionTest {
             eq(pay, settlement.deltas()[dealer], "莊家連二胡牌");
             eq(3, session.streak(), "胡牌再連");
             eq(dealer, session.dealer(), "莊家連莊");
+        });
+
+        test("局風：起莊是東局，下莊往下一局，連莊不變，換圈回到東局", () -> {
+            GameSession session = session();
+            int firstDealer = session.dealer();
+            eq(1, session.handWind(), "起莊是東局");
+            eq(1, session.newRound(message -> { }).handWind(), "這局也知道");
+            session.settle(RoundResult.drawnGame());
+            eq(1, session.handWind(), "流局連莊不變");
+            List<Integer> winds = new ArrayList<>();
+            while (session.roundWind() == 1) {
+                session.settle(ron(rel(session, 1), rel(session, 2), 0));
+                winds.add(session.handWind());
+            }
+            eq(List.of(2, 3, 4, 1), winds, "南、西、北局，換圈回到東局");
+            eq(firstDealer, session.dealer(), "又輪回起莊");
+            eq(2, session.roundWind(), "南風圈");
         });
 
         test("連莊中閒家互胡不計莊家台", () -> {

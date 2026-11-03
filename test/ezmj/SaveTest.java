@@ -33,6 +33,7 @@ import ezmj.model.Meld;
 import ezmj.model.Personality;
 import ezmj.model.Player;
 import ezmj.model.Tile;
+import ezmj.rules.ScoreItem;
 import ezmj.rules.ScoreResult;
 
 /** 牌局存檔、長期統計與錯誤記錄。 */
@@ -170,6 +171,27 @@ final class SaveTest {
             eq(round.discardHistory(), restored.discardHistory(), "打牌順序");
         });
 
+        test("局風不在存檔裡，讀檔時用起莊算回來，舊的存檔也一樣", () -> {
+            Path file = tempFile();
+            GameSession session = newSession(4);
+            int firstDealer = session.dealer();
+            // 下莊兩次，這局是西局
+            for (int i = 1; i <= 2; i++) {
+                int dealer = session.dealer();
+                session.settle(new RoundResult((dealer + 1) % 4, (dealer + 2) % 4, tile("1w"),
+                        new ScoreResult(List.of(new ScoreItem("測試", 1)))));
+            }
+            eq((firstDealer + 2) % 4, session.dealer(), "下莊兩次");
+            Round round = session.newRound(message -> { });
+            round.start();
+            eq(3, round.handWind(), "西局");
+            GameSave.save(file, 4, session, round, false, null, new ThinkTimer());
+            check(!Files.readString(file, StandardCharsets.ISO_8859_1).contains("handWind"), "存檔沒有多一個欄位");
+            GameSave.Loaded loaded = GameSave.load(file);
+            eq(3, loaded.round().handWind(), "讀回來的這局");
+            eq(3, loaded.session().handWind(), "讀回來的整場");
+        });
+
         test("局與局之間存檔：沒有 round，整場的資料都留著，再來的局也正常", () -> {
             Path file = tempFile();
             GameSession session = newSession(3);
@@ -188,6 +210,7 @@ final class SaveTest {
             eq(session.dealer(), restored.dealer(), "莊家");
             eq(session.streak(), restored.streak(), "連莊");
             eq(session.roundWind(), restored.roundWind(), "圈風");
+            eq(session.handWind(), restored.handWind(), "局風");
             eq(session.roundsPlayed(), restored.roundsPlayed(), "局數");
             eq(session.drawnGames(), restored.drawnGames(), "流局");
             for (int seat = 0; seat < 4; seat++) {

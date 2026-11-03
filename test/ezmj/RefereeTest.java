@@ -936,7 +936,7 @@ final class RefereeTest {
         for (int seat = 0; seat < 4; seat++) {
             players[seat] = new Player("P" + seat, seat, seat == 0, Gender.FEMALE, 100_000);
         }
-        Round round = new Round(players, new Wall(order), dealer, roundWind, 0, message -> { });
+        Round round = new Round(players, new Wall(order), dealer, roundWind, 1, 0, message -> { });
         Model model = new Model(order, dealer);
         round.start();
         model.compare(round);

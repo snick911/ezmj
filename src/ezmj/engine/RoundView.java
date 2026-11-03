@@ -24,6 +24,12 @@ public interface RoundView {
 
     int roundWind();
 
+    /**
+     * 局風：這一圈的第幾局，編碼和圈風一樣，1 到 4 是東、南、西、北局。依起莊算，莊家是起莊那位時是東局，
+     * 下一家是南局，連莊時不變。連線時舊服務器沒有送就是 0，畫面只顯示圈風。
+     */
+    int handWind();
+
     int streak();
 
     int seatWind(int seat);

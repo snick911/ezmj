@@ -64,6 +64,8 @@ public final class OnlineGame implements GameView, RoundView {
     private int dealer;
     private int streak;
     private int roundWind = 1;
+    /** 舊服務器沒有送就是 0。 */
+    private int handWind;
     private int liveTiles;
     private Tile drawn;
     /** 剛摸牌的別家，他的最後一張牌要和手牌分開畫。 */
@@ -104,10 +106,20 @@ public final class OnlineGame implements GameView, RoundView {
         }
     }
 
+    /** roundStart 與 state 的 handWind。舊服務器沒有這個欄位，不在 1 到 4 之間也一樣當成 0，畫面退回只顯示圈風。 */
+    private static int handWind(Map<String, Object> message) {
+        if (message.get("handWind") == null) {
+            return 0;
+        }
+        int wind = Fields.integer(message, "handWind");
+        return wind >= 1 && wind <= SEATS ? wind : 0;
+    }
+
     public void applyRoundStart(Map<String, Object> message) {
         roundNumber = Fields.integer(message, "number");
         dealer = screen(Fields.integer(message, "dealer"));
         roundWind = Fields.integer(message, "roundWind");
+        handWind = handWind(message);
         streak = Fields.integer(message, "streak");
         phase = Round.Phase.TURN;
         current = dealer;
@@ -131,6 +143,7 @@ public final class OnlineGame implements GameView, RoundView {
         dealer = screen(Fields.integer(state, "dealer"));
         streak = Fields.integer(state, "streak");
         roundWind = Fields.integer(state, "roundWind");
+        handWind = handWind(state);
         liveTiles = Fields.integer(state, "liveTiles");
         drawn = Fields.tileOrNull(state, "drawn");
         claimTile = Fields.tileOrNull(state, "claimTile");
@@ -383,6 +396,11 @@ public final class OnlineGame implements GameView, RoundView {
     @Override
     public int roundWind() {
         return roundWind;
+    }
+
+    @Override
+    public int handWind() {
+        return handWind;
     }
 
     @Override

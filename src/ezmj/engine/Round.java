@@ -33,6 +33,7 @@ public final class Round implements RoundView {
     private final Wall wall;
     private final int dealer;
     private final int roundWind;
+    private final int handWind;
     private final int streak;
     private Consumer<String> log;
     private final int[] turnsTaken = new int[SEATS];
@@ -50,11 +51,13 @@ public final class Round implements RoundView {
     private boolean anyClaim;
     private RoundResult result;
 
-    public Round(Player[] players, Wall wall, int dealer, int roundWind, int streak, Consumer<String> log) {
+    /** handWind 是局風，見 RoundView.handWind，由 GameSession 依起莊算好傳進來。 */
+    public Round(Player[] players, Wall wall, int dealer, int roundWind, int handWind, int streak, Consumer<String> log) {
         this.players = players;
         this.wall = wall;
         this.dealer = dealer;
         this.roundWind = roundWind;
+        this.handWind = handWind;
         this.streak = streak;
         this.log = log;
         this.current = dealer;
@@ -72,8 +75,8 @@ public final class Round implements RoundView {
     }
 
     /** 從存檔接回一局。players 的手牌、面子、花牌與棄牌要先放好。 */
-    static Round restored(Player[] players, Wall wall, int dealer, int roundWind, int streak, State state) {
-        Round round = new Round(players, wall, dealer, roundWind, streak, message -> { });
+    static Round restored(Player[] players, Wall wall, int dealer, int roundWind, int handWind, int streak, State state) {
+        Round round = new Round(players, wall, dealer, roundWind, handWind, streak, message -> { });
         round.phase = state.phase();
         round.current = state.current();
         round.drawn = state.drawn();
@@ -522,6 +525,11 @@ public final class Round implements RoundView {
     @Override
     public int roundWind() {
         return roundWind;
+    }
+
+    @Override
+    public int handWind() {
+        return handWind;
     }
 
     @Override

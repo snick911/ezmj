@@ -201,7 +201,7 @@ final class RoundFlowTest {
                 for (int seat = 0; seat < 4; seat++) {
                     players[seat] = new Player("P" + seat, seat, seat == 0, Gender.FEMALE, 1000);
                 }
-                Round round = new Round(players, new Wall(random), i % 4, 1, 0, message -> { });
+                Round round = new Round(players, new Wall(random), i % 4, 1, 1, 0, message -> { });
                 round.start();
                 for (int seat = 0; seat < 4; seat++) {
                     check(players[seat].concealed().stream().noneMatch(Tile::isFlower), "手牌有花");

@@ -98,7 +98,7 @@ final class Table {
         for (int seat = 0; seat < 4; seat++) {
             players[seat] = new Player("P" + seat, seat, seat == 0, Gender.FEMALE, 100_000);
         }
-        Round round = new Round(players, new Wall(order), dealer, 1, 0, message -> { });
+        Round round = new Round(players, new Wall(order), dealer, 1, 1, 0, message -> { });
         round.start();
         return round;
     }

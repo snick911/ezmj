@@ -14,6 +14,7 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.lang.reflect.Method;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
@@ -36,6 +37,7 @@ import javax.swing.plaf.basic.BasicHTML;
 import ezmj.engine.Claim;
 import ezmj.engine.Round;
 import ezmj.engine.RoundEvent;
+import ezmj.engine.RoundView;
 import ezmj.model.BotLevel;
 import ezmj.model.GameSpeed;
 import ezmj.model.Gender;
@@ -672,6 +674,24 @@ final class OnlineTest {
             eq(0, game.player(0).concealed().size(), "手牌清空");
             eq(4800, game.player(0).chips(), "籌碼留著");
         });
+        test("局面：局風從 roundStart 與 state 來，舊服務器沒有送就是 0", () -> {
+            OnlineGame game = playing();
+            eq(0, game.handWind(), "舊服務器");
+            eq("東風圈", roundLabel(game), "退回原本的寫法");
+            game.applyRoundStart(parse("{\"type\":\"roundStart\",\"number\":8,\"dealer\":1,\"roundWind\":2,\"handWind\":3,"
+                    + "\"streak\":0,\"dealMs\":3000}"));
+            eq(3, game.handWind(), "roundStart");
+            eq("南風西局", roundLabel(game), "圈風加局風");
+            game.applyState(parse(state("TURN", 1, "\"drawn\":null").replace("\"roundWind\":1,", "\"roundWind\":1,\"handWind\":2,")),
+                    List.of());
+            eq(2, game.handWind(), "state");
+            eq("東風南局", roundLabel(game), "state 的圈風");
+            game.applyState(parse(state("TURN", 1, "\"drawn\":null").replace("\"roundWind\":1,", "\"roundWind\":1,\"handWind\":9,")),
+                    List.of());
+            eq(0, game.handWind(), "不認得的數字也當成沒有");
+            fails(IllegalArgumentException.class, () -> game.applyState(parse(state("TURN", 1, "\"drawn\":null")
+                    .replace("\"roundWind\":1,", "\"roundWind\":1,\"handWind\":\"東\",")), List.of()), "不是數字");
+        });
         test("局面：連線狀態變了名字跟著換，牌不動", () -> {
             OnlineGame game = playing();
             game.applyRoom(RoomInfo.parse(parse(ROOM_PLAYING.replace("\"connected\":false", "\"connected\":true"))));
@@ -723,6 +743,13 @@ final class OnlineTest {
         game.applyRoundStart(parse("{\"type\":\"roundStart\",\"number\":7,\"dealer\":0,\"roundWind\":1,\"streak\":1,\"dealMs\":3000}"));
         game.applyState(parse(state("TURN", 1, "\"drawn\":null")), List.of());
         return game;
+    }
+
+    /** 牌桌在 ezmj.ui，只能用反射叫。 */
+    private static String roundLabel(RoundView round) throws ReflectiveOperationException {
+        Method method = Class.forName("ezmj.ui.TableCanvas").getDeclaredMethod("roundLabel", RoundView.class);
+        method.setAccessible(true);
+        return (String) method.invoke(null, round);
     }
 
     @SuppressWarnings("unchecked")

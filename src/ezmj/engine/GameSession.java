@@ -83,7 +83,17 @@ public final class GameSession implements GameView {
         for (Player player : players) {
             player.resetForRound();
         }
-        return new Round(players, new Wall(random), dealer, roundWind, streak, log);
+        return new Round(players, new Wall(random), dealer, roundWind, handWind(), streak, log);
+    }
+
+    /** 下一局的局風，見 RoundView.handWind。 */
+    public int handWind() {
+        return handWind(firstDealer, dealer);
+    }
+
+    /** 起莊是東局，往下一家依序是南、西、北局。讀存檔時也用這個算，存檔裡不另外記。 */
+    static int handWind(int firstDealer, int dealer) {
+        return Math.floorMod(dealer - firstDealer, SEATS) + 1;
     }
 
     /** 結算金額並推進莊家與圈風。 */
