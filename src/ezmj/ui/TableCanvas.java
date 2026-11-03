@@ -6,6 +6,7 @@ import java.awt.Color;
 import java.awt.Composite;
 import java.awt.Font;
 import java.awt.FontMetrics;
+import java.awt.GradientPaint;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RadialGradientPaint;
@@ -47,7 +48,15 @@ final class TableCanvas extends JComponent {
     static final int DRAW_FLIGHT_MS = 170;
     private static final int FLOWER_FLIGHT_MS = 260;
     private static final int FLOWER_BANNER_MS = 650;
+    /** 胡別家打出的牌，流局也是這麼久。 */
     static final int WIN_BANNER_MS = 1100;
+    static final int SELF_DRAW_BANNER_MS = 1400;
+    /** 大胡，見 RoundResult.isBigWin。 */
+    static final int BIG_WIN_BANNER_MS = 2400;
+    private static final int SPARKS = 40;
+    private static final double GOLDEN_ANGLE = 2.39996323;
+    private static final Color BIG_WIN_TOP = new Color(0xC9, 0x3A, 0x32, 235);
+    private static final Color BIG_WIN_BOTTOM = new Color(0x6E, 0x12, 0x0E, 235);
     /** 發牌每四張一批輪流發，最後一批是莊家的第 17 張。 */
     static final int DEAL_PACKETS = 17;
     static final int DEAL_FLIGHT_MS = 200;
@@ -102,9 +111,12 @@ final class TableCanvas extends JComponent {
         }
     }
 
-    /** 跳出來的大字。位置以牌桌中心為原點。 */
-    private record Banner(String text, double x, double y, double size, Color color, boolean burst,
-                          long start, int durationMs) {
+    /** 大字的樣子：吃碰槓、補花與流局只有字，三種胡牌在字的後面各有不同的效果。 */
+    enum Style { PLAIN, WIN, SELF_DRAW, BIG_WIN }
+
+    /** 跳出來的大字。位置以牌桌中心為原點。detail 是大胡時寫在字下面的台數，其他時候是 null。 */
+    record Banner(String text, String detail, double x, double y, double size, Color color, Style style,
+                  long start, int durationMs) {
         double progress(long now) {
             return (now - start) / 1e6 / durationMs;
         }
@@ -230,13 +242,11 @@ final class TableCanvas extends JComponent {
                 addSeatBanner(event.seat(), "加槓");
                 break;
             case WIN:
-                addCenterBanner(winText("胡"), Theme.GOLD, true);
-                break;
             case SELF_WIN:
-                addCenterBanner(winText("自摸"), Theme.GOLD, true);
+                addWinBanner(event.type() == RoundEvent.Type.SELF_WIN);
                 break;
             default:
-                addCenterBanner("流局", Theme.MUTED, false);
+                addCenterBanner("流局", null, Theme.MUTED, Style.PLAIN, WIN_BANNER_MS);
                 break;
         }
         frameNow = System.nanoTime();
@@ -244,10 +254,36 @@ final class TableCanvas extends JComponent {
         repaint();
     }
 
-    /** 靠花牌胡的直接顯示八仙過海或七搶一。 */
-    private String winText(String normal) {
+    /** 結果在胡牌的事件之前就有了，單機與連線都是，所以這時候已經知道台數。靠花牌胡的直接顯示八仙過海或七搶一。 */
+    private void addWinBanner(boolean selfDraw) {
         RoundResult result = round.result();
-        return result.isFlowerWin() ? result.score().items().get(0).name() : normal;
+        Style style = result == null ? (selfDraw ? Style.SELF_DRAW : Style.WIN) : endStyle(result);
+        String text = result != null && result.isFlowerWin() ? result.score().items().get(0).name() : selfDraw ? "自摸" : "胡";
+        String detail = style == Style.BIG_WIN ? result.score().totalTai() + " 台" : null;
+        addCenterBanner(text, detail, Theme.GOLD, style, durationMs(style));
+    }
+
+    /** 一局結束的大字演多久，結果視窗等它演完才跳出來。 */
+    static int endBannerMs(RoundResult result) {
+        return durationMs(endStyle(result));
+    }
+
+    private static Style endStyle(RoundResult result) {
+        if (result == null || result.isDrawnGame()) {
+            return Style.PLAIN;
+        }
+        if (result.isBigWin()) {
+            return Style.BIG_WIN;
+        }
+        return result.isSelfDraw() ? Style.SELF_DRAW : Style.WIN;
+    }
+
+    private static int durationMs(Style style) {
+        switch (style) {
+            case SELF_DRAW: return SELF_DRAW_BANNER_MS;
+            case BIG_WIN:   return BIG_WIN_BANNER_MS;
+            default:        return WIN_BANNER_MS;
+        }
     }
 
     private void nextFrame() {
@@ -420,12 +456,14 @@ final class TableCanvas extends JComponent {
 
     private void addSeatBanner(int seat, String text, double size, int durationMs) {
         Point2D at = toTable(seat, 0, halfDepth(seat) * .62);
-        banners.add(new Banner(text, at.getX(), at.getY(), size, Theme.GOLD, false, System.nanoTime(), durationMs));
+        banners.add(new Banner(text, null, at.getX(), at.getY(), size, Theme.GOLD, Style.PLAIN, System.nanoTime(),
+                durationMs));
     }
 
-    private void addCenterBanner(String text, Color color, boolean burst) {
+    private void addCenterBanner(String text, String detail, Color color, Style style, int durationMs) {
         banners.clear();
-        banners.add(new Banner(text, 0, 0, 120 * unit(), color, burst, System.nanoTime(), WIN_BANNER_MS));
+        double size = (style == Style.BIG_WIN ? 140 : 120) * unit();
+        banners.add(new Banner(text, detail, 0, 0, size, color, style, System.nanoTime(), durationMs));
     }
 
     /** 這個位置的牌是不是還在飛。 */
@@ -506,7 +544,7 @@ final class TableCanvas extends JComponent {
                 paintFlight(g, flight);
             }
             for (Banner banner : banners) {
-                paintBanner(g, banner);
+                paintBanner(g, banner, Math.min(1, Math.max(0, banner.progress(frameNow))));
             }
         }
         g.dispose();
@@ -561,51 +599,162 @@ final class TableCanvas extends JComponent {
         g.setComposite(saved);
     }
 
-    /** 大字先放大再彈回原本大小，最後淡出。 */
-    private void paintBanner(Graphics2D g, Banner banner) {
-        double t = Math.min(1, Math.max(0, banner.progress(frameNow)));
-        double pop = t < .14 ? 1.7 - .7 * easeOut(t / .14) : 1;
-        float alpha = (float) (t > .7 ? (1 - t) / .3 : 1);
+    /**
+     * 大字先放大再彈回原本大小，最後淡出。t 是 0 到 1 的進度。
+     * 胡：金色的圈往外擴散；自摸：金光加上慢慢轉的金紅光芒；大胡：紅金閃光、更多更長的光芒、往外噴再落下的彩片，
+     * 紅底的框裡多一行台數，字放大後會跳動。網頁版照著畫，所以只用形狀、漸層、透明度、旋轉與文字。
+     */
+    static void paintBanner(Graphics2D g, Banner banner, double t) {
+        boolean big = banner.style() == Style.BIG_WIN;
+        double size = banner.size();
+        double pop;
+        if (big) {
+            pop = t < .12 ? 2 - easeOut(t / .12) : 1 + .04 * Math.sin((t - .12) * Math.PI * 8) * (1 - t);
+        } else {
+            pop = t < .14 ? 1.7 - .7 * easeOut(t / .14) : 1;
+        }
+        double fadeFrom = big ? .8 : .7;
+        float alpha = (float) (t > fadeFrom ? (1 - t) / (1 - fadeFrom) : 1);
         AffineTransform savedTransform = g.getTransform();
         Composite savedComposite = g.getComposite();
         g.translate(banner.x(), banner.y());
         g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
-        if (banner.burst()) {
-            paintBurst(g, banner.size(), t);
+        switch (banner.style()) {
+            case WIN:
+                paintRings(g, size, t);
+                break;
+            case SELF_DRAW:
+                paintGlow(g, size, t);
+                paintRays(g, size, t, 16, Math.PI / 3, Theme.RED);
+                break;
+            case BIG_WIN:
+                paintFlash(g, size, t);
+                paintRays(g, size, t, 24, Math.PI / 2, Color.WHITE);
+                paintSparks(g, size, t);
+                break;
+            default:
+                break;
         }
         g.scale(pop, pop);
-        g.setFont(Theme.fixedFont(Font.BOLD, (float) banner.size()));
-        FontMetrics metrics = g.getFontMetrics();
-        double textW = metrics.stringWidth(banner.text());
-        double padX = banner.size() * .35;
-        double padY = banner.size() * .14;
-        double boxH = metrics.getHeight() + padY * 2;
-        RoundRectangle2D box = new RoundRectangle2D.Double(-textW / 2 - padX, -boxH / 2, textW + padX * 2, boxH,
-                banner.size() * .3, banner.size() * .3);
-        g.setColor(new Color(0x0B, 0x1E, 0x18, 215));
-        g.fill(box);
-        g.setColor(banner.color());
-        g.setStroke(new BasicStroke((float) Math.max(1.5, banner.size() * .04)));
-        g.draw(box);
-        g.drawString(banner.text(), (float) (-textW / 2),
-                (float) (metrics.getAscent() - metrics.getHeight() / 2.0));
+        paintBox(g, banner, big);
         g.setTransform(savedTransform);
         g.setComposite(savedComposite);
     }
 
-    /** 胡牌時從中央往外放射的光芒。 */
-    private void paintBurst(Graphics2D g, double size, double t) {
-        double spread = easeOut(Math.min(1, t * 1.6));
-        double inner = size * (.6 + 1.2 * spread);
-        double outer = size * (.9 + 2.4 * spread);
-        g.setStroke(new BasicStroke((float) Math.max(2, size * .05), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        for (int i = 0; i < 16; i++) {
-            double angle = Math.PI * 2 * i / 16;
-            double reach = i % 2 == 0 ? outer : inner + (outer - inner) * .55;
-            g.setColor(i % 2 == 0 ? Theme.GOLD : Theme.RED);
+    /** 字和外框。大胡是紅色漸層底，字下面再寫台數。 */
+    private static void paintBox(Graphics2D g, Banner banner, boolean big) {
+        double size = banner.size();
+        Font font = Theme.fixedFont(Font.BOLD, (float) size);
+        FontMetrics metrics = g.getFontMetrics(font);
+        FontMetrics detailMetrics = banner.detail() == null ? null : g.getFontMetrics(font.deriveFont((float) (size * .36)));
+        double textW = metrics.stringWidth(banner.text());
+        double detailH = 0;
+        if (detailMetrics != null) {
+            textW = Math.max(textW, detailMetrics.stringWidth(banner.detail()));
+            detailH = detailMetrics.getHeight();
+        }
+        double padX = size * .35;
+        double padY = size * .14;
+        double boxH = metrics.getHeight() + detailH + padY * 2;
+        double top = -boxH / 2;
+        RoundRectangle2D box = new RoundRectangle2D.Double(-textW / 2 - padX, top, textW + padX * 2, boxH,
+                size * .3, size * .3);
+        if (big) {
+            g.setPaint(new GradientPaint(0, (float) top, BIG_WIN_TOP, 0, (float) -top, BIG_WIN_BOTTOM));
+        } else {
+            g.setColor(new Color(0x0B, 0x1E, 0x18, 215));
+        }
+        g.fill(box);
+        g.setColor(banner.color());
+        g.setStroke(new BasicStroke((float) Math.max(big ? 2 : 1.5, size * (big ? .06 : .04))));
+        g.draw(box);
+        g.setFont(font);
+        g.drawString(banner.text(), (float) (-metrics.stringWidth(banner.text()) / 2.0),
+                (float) (top + padY + metrics.getAscent()));
+        if (detailMetrics != null) {
+            g.setFont(detailMetrics.getFont());
+            g.setColor(Color.WHITE);
+            g.drawString(banner.detail(), (float) (-detailMetrics.stringWidth(banner.detail()) / 2.0),
+                    (float) (top + padY + metrics.getHeight() + detailMetrics.getAscent()));
+        }
+    }
+
+    /** 胡：三個金色的圈接連往外擴散，越外面越細越淡。 */
+    private static void paintRings(Graphics2D g, double size, double t) {
+        for (int ring = 0; ring < 3; ring++) {
+            double r = (t - ring * .12) / .55;
+            if (r <= 0 || r >= 1) {
+                continue;
+            }
+            double radius = size * (.55 + 2.0 * easeOut(r));
+            g.setColor(withAlpha(Theme.GOLD, .85 * (1 - r)));
+            g.setStroke(new BasicStroke((float) Math.max(1.5, size * .07 * (1 - r))));
+            g.draw(new Ellipse2D.Double(-radius, -radius, radius * 2, radius * 2));
+        }
+    }
+
+    /** 自摸：中央一團往外變大的金光。 */
+    private static void paintGlow(Graphics2D g, double size, double t) {
+        double radius = size * (1 + 1.6 * easeOut(Math.min(1, t * 1.6)));
+        g.setPaint(new RadialGradientPaint(new Point2D.Double(0, 0), (float) radius, new float[] {0f, 1f},
+                new Color[] {withAlpha(Theme.GOLD, .55), withAlpha(Theme.GOLD, 0)}));
+        g.fill(new Ellipse2D.Double(-radius, -radius, radius * 2, radius * 2));
+    }
+
+    /** 大胡：一開始整片紅金閃一下。 */
+    private static void paintFlash(Graphics2D g, double size, double t) {
+        if (t >= .3) {
+            return;
+        }
+        double strength = .6 * (1 - t / .3);
+        double radius = size * 4;
+        g.setPaint(new RadialGradientPaint(new Point2D.Double(0, 0), (float) radius, new float[] {0f, .5f, 1f},
+                new Color[] {withAlpha(Theme.GOLD, strength), withAlpha(Theme.RED, strength / 2), withAlpha(Theme.RED, 0)}));
+        g.fill(new Ellipse2D.Double(-radius, -radius, radius * 2, radius * 2));
+    }
+
+    /**
+     * 從中央往外放射、慢慢轉的光芒。單數的光芒短一點，顏色用 second。turn 是整段時間轉幾弧度。
+     * 自摸 16 道、大胡 24 道，大胡的更長。
+     */
+    private static void paintRays(Graphics2D g, double size, double t, int count, double turn, Color second) {
+        boolean big = count > 16;
+        double spread = easeOut(Math.min(1, t * (big ? 1.4 : 1.6)));
+        double inner = size * (big ? .7 + 1.0 * spread : .6 + 1.2 * spread);
+        double outer = size * (big ? 1.1 + 3.0 * spread : .9 + 2.4 * spread);
+        g.setStroke(new BasicStroke((float) Math.max(2, size * (big ? .06 : .05)), BasicStroke.CAP_ROUND,
+                BasicStroke.JOIN_ROUND));
+        for (int i = 0; i < count; i++) {
+            double angle = Math.PI * 2 * i / count + t * turn;
+            double reach = i % 2 == 0 ? outer : inner + (outer - inner) * (big ? .6 : .55);
+            g.setColor(i % 2 == 0 ? Theme.GOLD : second);
             g.draw(new Line2D.Double(Math.cos(angle) * inner, Math.sin(angle) * inner,
                     Math.cos(angle) * reach, Math.sin(angle) * reach));
         }
+    }
+
+    /** 大胡：彩片照黃金角往四面噴出去，遠近不一，再慢慢往下掉、邊轉邊淡。 */
+    private static void paintSparks(Graphics2D g, double size, double t) {
+        Color[] colors = {Theme.GOLD, Theme.RED, Color.WHITE};
+        double travel = easeOut(Math.min(1, t * 1.3));
+        double drop = size * 1.2 * t * t;
+        double side = size * .11 * (1 - .4 * t);
+        AffineTransform saved = g.getTransform();
+        for (int i = 0; i < SPARKS; i++) {
+            double angle = i * GOLDEN_ANGLE;
+            double reach = .55 + .45 * ((i * .618034) % 1);
+            double distance = size * 3.2 * reach * travel;
+            g.translate(Math.cos(angle) * distance, Math.sin(angle) * distance + drop);
+            g.rotate(angle + t * 8);
+            g.setColor(withAlpha(colors[i % colors.length], 1 - .8 * t));
+            g.fill(new Rectangle2D.Double(-side / 2, -side / 2, side, side));
+            g.setTransform(saved);
+        }
+    }
+
+    private static Color withAlpha(Color color, double alpha) {
+        return new Color(color.getRed(), color.getGreen(), color.getBlue(),
+                (int) Math.round(255 * Math.max(0, Math.min(1, alpha))));
     }
 
     private static double easeOut(double t) {

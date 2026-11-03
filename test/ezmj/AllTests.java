@@ -15,6 +15,7 @@ public final class AllTests {
         SessionTest.botNames();
         SessionTest.records();
         SessionTest.flowerWins();
+        SessionTest.bigSettings();
         SettingsTest.run();
         HonorRollTest.run();
         AchievementTest.run();

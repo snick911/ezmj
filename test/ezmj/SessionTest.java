@@ -5,6 +5,9 @@ import static ezmj.T.eq;
 import static ezmj.T.test;
 import static ezmj.T.tile;
 
+import java.lang.reflect.Method;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.HashSet;
@@ -14,6 +17,7 @@ import java.util.Set;
 
 import ezmj.engine.BotNames;
 import ezmj.engine.GameSession;
+import ezmj.engine.PlayerStats;
 import ezmj.engine.Round;
 import ezmj.engine.RoundRecord;
 import ezmj.engine.RoundResult;
@@ -23,6 +27,7 @@ import ezmj.model.BotLevel;
 import ezmj.model.GameConfig;
 import ezmj.model.GameRecord;
 import ezmj.model.Gender;
+import ezmj.model.HonorRoll;
 import ezmj.rules.ScoreItem;
 import ezmj.rules.ScoreResult;
 import ezmj.rules.Scorer;
@@ -134,6 +139,93 @@ final class SessionTest {
 
     private static RoundResult tsumo(int winner, int tai) {
         return new RoundResult(winner, -1, tile("1w"), new ScoreResult(List.of(new ScoreItem("測試", tai))));
+    }
+
+    /** 最大的選項：籌碼一千萬，底與每台各一百萬。 */
+    private static final int MAX_CHIPS = 10_000_000;
+    private static final int MAX_PAY = 1_000_000;
+
+    /** 底和每台不能大於籌碼本金、最大選項的金額、大胡與大字演多久。 */
+    static void bigSettings() {
+        T.section("大額設定與大胡");
+
+        test("設定：底和每台不能大於籌碼本金，等於可以", () -> {
+            check(GameConfig.paysFit(1_000, 1_000, 1_000), "都等於本金");
+            check(!GameConfig.paysFit(1_000, 1_001, 20), "底太大");
+            check(!GameConfig.paysFit(1_000, 100, 1_001), "每台太大");
+            new GameConfig("測試", MAX_PAY, MAX_PAY, MAX_PAY, BotLevel.NORMAL);
+            for (int[] bad : List.of(new int[] {10_000, 50_000, 20}, new int[] {10_000, 100, 50_000})) {
+                try {
+                    new GameConfig("測試", bad[0], bad[1], bad[2], BotLevel.NORMAL);
+                    throw new AssertionError("應該拒絕：" + Arrays.toString(bad));
+                } catch (IllegalArgumentException e) {
+                    eq(GameConfig.PAYS_TOO_HIGH, e.getMessage(), "說明");
+                }
+            }
+        });
+
+        test("最大的選項不會溢位：莊家連 20 拉 20 自摸 100 台", () -> {
+            GameSession session = new GameSession(new GameConfig("測試", MAX_CHIPS, MAX_PAY, MAX_PAY, BotLevel.NORMAL),
+                    new Random(5));
+            int dealer = session.dealer();
+            for (int i = 0; i < 20; i++) {
+                session.settle(RoundResult.drawnGame());
+            }
+            Settlement settlement = session.settle(tsumo(dealer, 100));
+            // 每家付 底 + (100 + 莊家台 1 + 連莊 2×20) 台
+            int pay = MAX_PAY + 141 * MAX_PAY;
+            eq(3 * pay, settlement.deltas()[dealer], "莊家收三家");
+            eq(141, settlement.tais()[(dealer + 1) % 4], "付款的台數");
+            eq(MAX_CHIPS + 3 * pay, session.player(dealer).chips(), "莊家的籌碼");
+            eq(MAX_CHIPS - pay, session.player((dealer + 2) % 4).chips(), "輸成負的");
+            eq(3 * pay, session.record(dealer, "2026-11-03").winnings(), "這場贏的錢");
+            check(session.isOver(), "有人輸光");
+            HonorRoll roll = new HonorRoll();
+            roll.add(session.record(dealer, "2026-11-03"));
+            Path file = Files.createTempDirectory("ezmj-big").resolve("honor.properties");
+            roll.save(file);
+            eq(3 * pay, HonorRoll.load(file).top(HonorRoll.Category.WINNINGS).get(0).winnings(), "榮譽榜存了讀得回來");
+        });
+
+        test("最大的選項打很多場：統計的累計輸贏超過 int 也對", () -> {
+            PlayerStats stats = new PlayerStats();
+            long expected = 0;
+            for (int game = 0; game < 8; game++) {
+                GameSession session = new GameSession(new GameConfig("測試", MAX_CHIPS, MAX_PAY, MAX_PAY, BotLevel.NORMAL),
+                        new Random(game));
+                expected += session.settle(tsumo(0, 100)).deltas()[0];
+                stats.recordRound(session);
+                stats.recordGame(session);
+            }
+            check(expected > Integer.MAX_VALUE, "超過 int");
+            eq(expected, stats.total().winnings(), "累計");
+            Path file = Files.createTempDirectory("ezmj-big").resolve("stats.properties");
+            stats.save(file);
+            eq(expected, PlayerStats.load(file).total().winnings(), "存了讀得回來");
+        });
+
+        test("大胡：牌型台數 10 台以上，胡或自摸都算，流局不算", () -> {
+            check(!ron(0, 1, 9).isBigWin(), "9 台");
+            check(ron(0, 1, 10).isBigWin(), "10 台的胡");
+            check(tsumo(0, 12).isBigWin(), "12 台的自摸");
+            check(!RoundResult.drawnGame().isBigWin(), "流局");
+        });
+
+        test("大字演多久：胡和流局一樣，自摸久一點，大胡最久；結果視窗等它演完", () -> {
+            int ron = endBannerMs(ron(0, 1, 3));
+            int selfDraw = endBannerMs(tsumo(0, 3));
+            int big = endBannerMs(ron(0, 1, 10));
+            eq(ron, endBannerMs(RoundResult.drawnGame()), "流局");
+            check(ron < selfDraw && selfDraw < big, "胡 " + ron + "、自摸 " + selfDraw + "、大胡 " + big);
+            eq(big, endBannerMs(tsumo(0, 16)), "大胡的自摸");
+        });
+    }
+
+    /** 牌桌在 ezmj.ui，只能用反射叫。 */
+    private static int endBannerMs(RoundResult result) throws ReflectiveOperationException {
+        Method method = Class.forName("ezmj.ui.TableCanvas").getDeclaredMethod("endBannerMs", RoundResult.class);
+        method.setAccessible(true);
+        return (int) method.invoke(null, result);
     }
 
     /** 由莊家位置算出相對座位，讓案例不依賴隨機的起莊。 */

@@ -260,7 +260,8 @@ final class SaveTest {
                     good.replaceAll("round\\.wall=..", "round.wall="),
                     good.replace("round.player.0.concealed=", "round.player.0.concealed=1w"),
                     good.replaceAll("round\\.phase=\\w+", "round.phase=NOPE"),
-                    good.replaceAll("player\\.0\\.chips=\\d+", "player.0.chips=lots"))) {
+                    good.replaceAll("player\\.0\\.chips=\\d+", "player.0.chips=lots"),
+                    good.replaceAll("config\\.base=\\d+", "config.base=" + (CHIPS + 1)))) {
                 Files.writeString(file, bad, StandardCharsets.ISO_8859_1);
                 fails(UncheckedIOException.class, () -> {
                     try {

@@ -36,9 +36,9 @@ import ezmj.model.Tile;
 public final class StartPanel extends JPanel {
 
     private static final int MAX_NAME_LENGTH = 8;
-    static final Integer[] CHIP_OPTIONS = {10_000, 20_000, 50_000, 100_000, 500_000};
-    static final Integer[] BASE_OPTIONS = {50, 100, 300, 500, 1_000};
-    static final Integer[] TAI_OPTIONS = {10, 20, 50, 100, 200};
+    static final Integer[] CHIP_OPTIONS = {10_000, 20_000, 50_000, 100_000, 500_000, 1_000_000, 5_000_000, 10_000_000};
+    static final Integer[] BASE_OPTIONS = {50, 100, 300, 500, 1_000, 5_000, 10_000, 50_000, 100_000, 500_000, 1_000_000};
+    static final Integer[] TAI_OPTIONS = {10, 20, 50, 100, 200, 5_000, 10_000, 50_000, 100_000, 200_000, 500_000, 1_000_000};
 
     private final JTextField nameField = new JTextField(14);
     private final JComboBox<Integer> chipBox = combo(CHIP_OPTIONS, 20_000);
@@ -51,6 +51,7 @@ public final class StartPanel extends JPanel {
     private final JButton resumeButton = Theme.button("繼續上次的牌局", Theme.BUTTON);
     private final JButton onlineButton = Theme.button("連線對戰", Theme.BUTTON);
     private final JLabel resumeInfo = new JLabel(" ", SwingConstants.CENTER);
+    private final JLabel payWarning = warningLabel();
 
     public StartPanel(Consumer<GameConfig> onStart, Runnable onResume, Runnable onOnline) {
         super(new GridBagLayout());
@@ -82,15 +83,22 @@ public final class StartPanel extends JPanel {
         addRow(card, c, "每台", taiBox);
         addRow(card, c, "電腦等級", levelRow(levelBoxes));
 
-        startButton.setFont(Theme.font(Font.BOLD, 20f));
-        syncSizes();
-        startButton.setEnabled(false);
         c.gridx = 0;
         c.gridy++;
         c.gridwidth = 2;
         c.fill = GridBagConstraints.NONE;
         c.anchor = GridBagConstraints.CENTER;
-        c.insets = new Insets(22, 0, 0, 0);
+        c.insets = new Insets(8, 0, 0, 0);
+        card.add(payWarning, c);
+        for (JComboBox<Integer> box : List.of(chipBox, baseBox, taiBox)) {
+            box.addActionListener(e -> syncStartButton());
+        }
+
+        startButton.setFont(Theme.font(Font.BOLD, 20f));
+        syncSizes();
+        startButton.setEnabled(false);
+        c.gridy++;
+        c.insets = new Insets(8, 0, 0, 0);
         card.add(startButton, c);
 
         resumeButton.setFont(Theme.font(Font.BOLD, 17f));
@@ -183,7 +191,24 @@ public final class StartPanel extends JPanel {
 
     private void syncStartButton() {
         String name = nameField.getText().trim();
-        startButton.setEnabled(!name.isEmpty() && name.length() <= MAX_NAME_LENGTH);
+        boolean paysFit = paysFit(chipBox, baseBox, taiBox, payWarning);
+        startButton.setEnabled(!name.isEmpty() && name.length() <= MAX_NAME_LENGTH && paysFit);
+    }
+
+    /** 底和每台不能大於籌碼本金的提示。沒事時是空白，位置先留著，選項一改畫面才不會跳。 */
+    static JLabel warningLabel() {
+        JLabel label = new JLabel(" ", SwingConstants.CENTER);
+        label.setFont(Theme.font(Font.PLAIN, 14f));
+        label.setForeground(Theme.GOLD);
+        return label;
+    }
+
+    /** 檢查三個下拉選單，順便更新提示。連線開房也用這個。 */
+    static boolean paysFit(JComboBox<Integer> chips, JComboBox<Integer> base, JComboBox<Integer> tai, JLabel warning) {
+        boolean fit = GameConfig.paysFit((Integer) chips.getSelectedItem(), (Integer) base.getSelectedItem(),
+                (Integer) tai.getSelectedItem());
+        warning.setText(fit ? " " : GameConfig.PAYS_TOO_HIGH);
+        return fit;
     }
 
     /** 回到開始畫面時保留上次的設定，並把游標放回姓名欄。 */

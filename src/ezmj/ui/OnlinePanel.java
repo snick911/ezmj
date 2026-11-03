@@ -101,6 +101,7 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
     private final JLabel listStatus = new JLabel(LOADING);
     private final JButton refreshButton = Theme.button("重新整理", Theme.BUTTON);
     private final JButton listJoinButton = Theme.button("加入", Theme.RED);
+    private final JLabel payWarning = StartPanel.warningLabel();
     private final JButton createButton = Theme.button("開房間", Theme.RED);
     private final JButton joinButton = Theme.button("加入房間", Theme.RED);
     private final JButton resumeButton = Theme.button("接回牌局", Theme.BUTTON);
@@ -187,7 +188,11 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
         StartPanel.addRow(right, c, "補位電腦等級", StartPanel.levelRow(levelBoxes));
         StartPanel.addRow(right, c, "等待秒數", waitSpinner);
         StartPanel.addRow(right, c, "電腦速度", speedBox);
-        addWide(right, c, createButton, 6);
+        addWide(right, c, payWarning, 2);
+        addWide(right, c, createButton, 4);
+        for (JComboBox<Integer> box : List.of(chipBox, baseBox, taiBox)) {
+            box.addActionListener(e -> syncButtons());
+        }
 
         JPanel bottom = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 0));
         bottom.setOpaque(false);
@@ -405,7 +410,7 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
             // 收掉「先輸入名字」的提示
             status.setText(" ");
         }
-        createButton.setEnabled(ready);
+        createButton.setEnabled(StartPanel.paysFit(chipBox, baseBox, taiBox, payWarning) && ready);
         joinButton.setEnabled(ready && code().length() == ROOM_CODE_LENGTH);
         listJoinButton.setEnabled(ready && selected() != null);
         resumeButton.setEnabled(!busy);

@@ -259,8 +259,8 @@ public final class GameController implements TableFlow.Listener, TablePresenter.
         presenter.showIdle(" ");
         view.refresh(session, round);
         Runnable showResult = roundEndHandler.onRoundEnd(session, round, settlement, this::startRound);
-        // 有動畫時先讓胡牌的大字演完，再跳出結果
-        TablePresenter.after(settings.animationEnabled() ? TableCanvas.WIN_BANNER_MS : 0, () -> {
+        // 有動畫時先讓胡牌的大字演完，再跳出結果；大胡演得比較久
+        TablePresenter.after(settings.animationEnabled() ? TableCanvas.endBannerMs(round.result()) : 0, () -> {
             if (!presenter.isStopped()) {
                 showResult.run();
             }

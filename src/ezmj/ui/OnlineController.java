@@ -503,17 +503,21 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
         presenter.showIdle(" ");
         host.refreshHistory();
         int serial = roundSerial;
-        // 有動畫時先讓胡牌的大字演完，再跳出結果
-        TablePresenter.after(settings.animationEnabled() ? TableCanvas.WIN_BANNER_MS : 0, () -> showResult(end, serial));
+        // 有動畫時先讓胡牌的大字演完，再跳出結果；大胡演得比較久。台數在上面的 applyRoundEnd 就有了
+        int bannerMs = settings.animationEnabled() ? TableCanvas.endBannerMs(game.result()) : 0;
+        TablePresenter.after(bannerMs, () -> showResult(end, serial, bannerMs));
     }
 
-    /** 結果視窗是 modal，開著的時候訊息還是會進來，所以關掉之後要先看局面是不是已經往下走了。 */
-    private void showResult(OnlineGame.RoundEnd end, int serial) {
+    /**
+     * 結果視窗是 modal，開著的時候訊息還是會進來，所以關掉之後要先看局面是不是已經往下走了。
+     * 服務器從送出 roundEnd 開始算下一局的時間，大字演掉的部分要扣掉。
+     */
+    private void showResult(OnlineGame.RoundEnd end, int serial, int bannerMs) {
         if (shutDown || serial != roundSerial || game == null) {
             return;
         }
         OnlineGame shown = game;
-        int seconds = end.gameOver() ? RESULT_SECONDS : Math.max(1, (end.nextRoundMs() + 999) / 1000);
+        int seconds = end.gameOver() ? RESULT_SECONDS : Math.max(1, (end.nextRoundMs() - bannerMs + 999) / 1000);
         openDialog = new ResultDialog(host.frame(), game, game, end.settlement(), List.of(),
                 end.gameOver() ? "查看最終排名" : "下一局", seconds);
         openDialog.setVisible(true);
