@@ -16,6 +16,7 @@ import ezmj.model.Tile;
 final class NormalStrategy implements Strategy {
 
     private static final int STRAY_FIRST = 10;
+    private static final int LATE_WALL = 32;
 
     private final Personality personality;
 
@@ -112,6 +113,23 @@ final class NormalStrategy implements Strategy {
             }
         }
         return best;
+    }
+
+    /**
+     * 不數張數，只看聽幾種牌：聽兩種以上就報。愛衝與愛做大牌一聽就報，想要多那 1 台；
+     * 穩健的人牌牆剩不多時單聽也報；保守的只聽一種就不報，留著手牌好換。
+     */
+    @Override
+    public boolean declareListening(TableView view, List<Tile> waits) {
+        switch (personality) {
+            case BOLD:
+            case GREEDY:
+                return true;
+            case CAUTIOUS:
+                return waits.size() >= 2;
+            default:
+                return waits.size() >= 2 || view.liveTiles() < LATE_WALL;
+        }
     }
 
     /** after 是宣告並打一張之後的向聽。 */

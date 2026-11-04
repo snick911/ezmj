@@ -46,6 +46,11 @@ final class TableFlowTest {
         public Claim chooseClaim(Round round, int seat, List<Claim> options) {
             return null;
         }
+
+        @Override
+        public boolean declareListening(Round round, int seat) {
+            return false;
+        }
     };
 
     private TableFlowTest() {
@@ -98,6 +103,7 @@ final class TableFlowTest {
         int checkpoints;
         int finished;
         int listening;
+        final Map<Integer, Integer> listenOffers = new HashMap<>();
 
         @Override
         public void log(String message) {
@@ -115,6 +121,9 @@ final class TableFlowTest {
 
         @Override
         public void event(RoundEvent event) {
+            if (event.type() == RoundEvent.Type.LISTEN) {
+                listening++;
+            }
         }
 
         @Override
@@ -146,8 +155,8 @@ final class TableFlowTest {
         }
 
         @Override
-        public void listening(int seat) {
-            listening++;
+        public void canListen(int seat, int listenId) {
+            listenOffers.put(seat, listenId);
         }
 
         @Override
@@ -205,6 +214,7 @@ final class TableFlowTest {
         manyPeople();
         staleAndIllegal();
         automation();
+        claimRace();
         kongs();
         thinking();
         stopping();
@@ -406,6 +416,11 @@ final class TableFlowTest {
             public Claim chooseClaim(Round round, int seat, List<Claim> options) {
                 return options.get(0);
             }
+
+            @Override
+            public boolean declareListening(Round round, int seat) {
+                return false;
+            }
         };
 
         test("打開代打：輪到自己時照節奏交給電腦", () -> {
@@ -465,7 +480,7 @@ final class TableFlowTest {
             eq(1, round.current(), "代打替座位 1 吃了");
         });
 
-        test("聽牌模式：摸什麼打什麼，只胡不吃碰，胡了就結束", () -> {
+        test("舊的報聽（打出並報聽，給還沒更新的連線客戶端）：摸什麼打什麼，只胡不吃碰，胡了就結束", () -> {
             Clock clock = new Clock();
             Recorder recorder = new Recorder();
             TableFlow flow = flow(Set.of(1), NEVER, 0, clock, recorder);
@@ -485,18 +500,183 @@ final class TableFlowTest {
             eq(0, recorder.claimAsks.size(), "聽牌之後也不問宣告");
         });
 
-        test("聽牌模式：摸到胡的牌就自摸；開新局就解除", () -> {
+        test("報聽：打完聽牌才問，按了就公開；摸到胡的牌就自摸，多算 1 台；開新局就解除", () -> {
             Clock clock = new Clock();
             Recorder recorder = new Recorder();
             TableFlow flow = flow(Set.of(1), NEVER, 0, clock, recorder);
-            Round round = Table.dealer(0).hand(1, WINS_ON_3W).draws("9w 3w").start();
-            flow.setListening(1, T.hand("3w"));
+            // 座位 1 摸到 2z 打掉就聽 3w，之後每家打剛摸的牌，座位 1 再摸到 3w 自摸
+            Round round = Table.dealer(0).hand(1, WINS_ON_3W).draws("9w 2z 1w 1p 2p 3w").start();
             flow.resume(round);
-            clock.pass(1000);
+            clock.pass(150);
+            check(!recorder.listenOffers.containsKey(1), "還沒打牌不問");
+            flow.discard(1, recorder.turnAsks.get(1), tile("2z"));
+            int offer = recorder.listenOffers.get(1);
+            check(round.canDeclareListening(1), "可以報聽");
+            eq(offer, flow.listenOffer(1), "重連時補送用");
+            flow.declareListening(1, offer + 1);
+            check(!round.isListening(1), "編號不對就沒有作用");
+            flow.declareListening(1, offer);
+            check(round.isListening(1), "報聽了");
+            eq(1, recorder.listening, "全桌都知道");
+            eq(0, flow.listenOffer(1), "報過就沒有機會了");
+            eq(T.hand("3w"), flow.listeningWaits(1), "聽 3w");
+            clock.pass(10_000);
             eq(1, round.result().winner(), "自摸");
             check(round.result().isSelfDraw(), "是自摸");
+            check(round.result().score().items().stream().anyMatch(item -> item.name().equals("聽牌") && item.tai() == 1),
+                    "多算 1 台：" + round.result().score().items());
+            eq(1, recorder.turnAsks.size(), "報聽之後不再問");
             flow.startRound();
-            check(flow.listeningWaits(1) == null, "新的一局不聽牌");
+            check(flow.listeningWaits(1) == null, "新的一局沒有報聽");
+        });
+
+        test("報聽的機會：一直到下一次摸牌，放棄別家的牌不影響", () -> {
+            Clock clock = new Clock();
+            Recorder recorder = new Recorder();
+            TableFlow flow = flow(Set.of(1), NEVER, 0, clock, recorder);
+            Round round = Table.dealer(0).hand(1, WINS_ON_3W).draws("9w 2z 1w 1p 2p 4p").start();
+            flow.resume(round);
+            clock.pass(150);
+            flow.discard(1, recorder.turnAsks.get(1), tile("2z"));
+            int offer = recorder.listenOffers.get(1);
+            clock.pass(300);
+            eq(2, round.player(2).discards().size() + round.player(3).discards().size(), "別家各打了一張，座位 1 都放棄");
+            check(round.canDeclareListening(1), "還可以報");
+            clock.pass(10_000);
+            eq(1, round.current(), "又輪到座位 1 摸牌");
+            eq(Round.Phase.TURN, round.phase(), "等座位 1 打牌");
+            check(!round.canDeclareListening(1), "摸牌之後就沒有了");
+            flow.declareListening(1, offer);
+            check(!round.isListening(1), "過期的編號沒有作用");
+        });
+
+        test("被問要不要碰的時候報聽：改成自動，能胡才胡，這次不吃碰", () -> {
+            Clock clock = new Clock();
+            Recorder recorder = new Recorder();
+            TableFlow flow = flow(Set.of(1), NEVER, 0, clock, recorder);
+            // 座位 1 打 2z 聽 3w，手上有兩張 9p；座位 2 打 9p，座位 1 可以碰
+            Round round = Table.dealer(0).hand(1, WINS_ON_3W).draws("9w 2z 9p").start();
+            flow.resume(round);
+            clock.pass(150);
+            flow.discard(1, recorder.turnAsks.get(1), tile("2z"));
+            int offer = recorder.listenOffers.get(1);
+            clock.pass(50 + 100);
+            ClaimAsk pong = recorder.claimAsks.get(1);
+            check(flow.isWaiting(1, pong.id()), "問座位 1 要不要碰");
+            flow.declareListening(1, offer);
+            check(!flow.isWaiting(1, pong.id()), "不再等他決定");
+            clock.pass(50);
+            eq(3, round.current(), "沒有碰，下一家摸牌");
+            eq(0, round.player(1).melds().size(), "沒有面子");
+        });
+
+        test("電腦打完牌聽牌了，自己決定要不要報聽，報了之後摸什麼打什麼", () -> {
+            Clock clock = new Clock();
+            Recorder recorder = new Recorder();
+            Bot listens = new Bot() {
+                @Override
+                public void playTurn(Round round, int seat, TurnOptions options) {
+                    round.discard(seat, round.rightmostTile(seat));
+                }
+
+                @Override
+                public Claim chooseClaim(Round round, int seat, List<Claim> options) {
+                    return null;
+                }
+
+                @Override
+                public boolean declareListening(Round round, int seat) {
+                    return true;
+                }
+            };
+            TableFlow flow = new TableFlow(session(1), Set.of(0), listens, NEVER, pacing(0), clock, recorder);
+            Round round = Table.dealer(0).hand(1, WINS_ON_3W).draws("9w 2z").start();
+            flow.resume(round);
+            flow.discard(0, recorder.turnAsks.get(0), tile("9w"));
+            clock.pass(50 + 100);
+            check(round.isListening(1), "電腦報聽了");
+            eq(1, recorder.listening, "全桌都知道");
+            check(!recorder.listenOffers.containsKey(1), "不用問電腦");
+        });
+    }
+
+    private static void claimRace() {
+        Bot pongs = new Bot() {
+            @Override
+            public void playTurn(Round round, int seat, TurnOptions options) {
+                round.discard(seat, round.rightmostTile(seat));
+            }
+
+            @Override
+            public Claim chooseClaim(Round round, int seat, List<Claim> options) {
+                return options.stream().filter(claim -> claim.type() != Claim.Type.CHOW).findFirst().orElse(null);
+            }
+
+            @Override
+            public boolean declareListening(Round round, int seat) {
+                return false;
+            }
+        };
+
+        test("電腦要碰、真人只能吃：等 2 秒就先碰，不等真人", () -> {
+            Clock clock = new Clock();
+            Recorder recorder = new Recorder();
+            TableFlow flow = new TableFlow(session(1), Set.of(0, 1), pongs, NEVER, pacing(0), clock, recorder);
+            Round round = chowAndPong();
+            flow.resume(round);
+            flow.discard(0, recorder.turnAsks.get(0), tile("1w"));
+            ClaimAsk chow = recorder.claimAsks.get(1);
+            clock.pass(TableFlow.BOT_CLAIM_MS - 1);
+            check(flow.isWaiting(1, chow.id()), "2 秒內還在等真人");
+            clock.pass(1);
+            check(!flow.isWaiting(1, chow.id()), "被碰走了，不再等");
+            eq(2, round.current(), "座位 2 碰了");
+            eq(Meld.Type.PONG, round.player(2).melds().get(0).type(), "碰");
+            eq(0, flow.thinking(1).count(), "被搶先的那次不算思考");
+            flow.answerClaim(1, chow.id(), option(chow.options(), Claim.Type.CHOW));
+            eq(0, round.player(1).melds().size(), "過期的決定沒有作用");
+        });
+
+        test("真人能胡：電腦要碰也照舊等真人", () -> {
+            Clock clock = new Clock();
+            Recorder recorder = new Recorder();
+            TableFlow flow = new TableFlow(session(1), Set.of(0, 1), pongs, NEVER, pacing(0), clock, recorder);
+            // 座位 1 胡 1w 也能吃，座位 2 能碰
+            Round round = Table.dealer(0).hand(1, "2w3w 4w5w6w 7p8p9p 2s3s4s 5s6s7s 9p9p").hand(2, "1w1w").draws("1w").start();
+            flow.resume(round);
+            flow.discard(0, recorder.turnAsks.get(0), tile("1w"));
+            ClaimAsk ask = recorder.claimAsks.get(1);
+            clock.pass(10_000);
+            check(flow.isWaiting(1, ask.id()), "還在等真人決定要不要胡");
+            flow.answerClaim(1, ask.id(), null);
+            eq(2, round.current(), "真人放棄，電腦碰");
+        });
+
+        test("真人對真人：一位決定碰，只能吃的那位就不用等", () -> {
+            Clock clock = new Clock();
+            Recorder recorder = new Recorder();
+            TableFlow flow = flow(Set.of(0, 1, 2), NEVER, 0, clock, recorder);
+            Round round = chowAndPong();
+            flow.resume(round);
+            flow.discard(0, recorder.turnAsks.get(0), tile("1w"));
+            ClaimAsk chow = recorder.claimAsks.get(1);
+            ClaimAsk pong = recorder.claimAsks.get(2);
+            flow.answerClaim(2, pong.id(), option(pong.options(), Claim.Type.PONG));
+            check(!flow.isWaiting(1, chow.id()), "不等座位 1");
+            eq(2, round.current(), "座位 2 碰了");
+        });
+
+        test("真人很快決定吃，電腦要碰：真人都決定了就處理，碰比吃大", () -> {
+            Clock clock = new Clock();
+            Recorder recorder = new Recorder();
+            TableFlow flow = new TableFlow(session(1), Set.of(0, 1), pongs, NEVER, pacing(0), clock, recorder);
+            Round round = chowAndPong();
+            flow.resume(round);
+            flow.discard(0, recorder.turnAsks.get(0), tile("1w"));
+            ClaimAsk chow = recorder.claimAsks.get(1);
+            flow.answerClaim(1, chow.id(), option(chow.options(), Claim.Type.CHOW));
+            eq(2, round.current(), "不用等 2 秒");
+            eq(0, round.player(1).melds().size(), "沒吃到");
         });
     }
 
@@ -619,7 +799,19 @@ final class TableFlowTest {
             while (round.phase() != Round.Phase.FINISHED) {
                 if (round.phase() == Round.Phase.TURN) {
                     int seat = round.current();
-                    (seat == 0 ? proxy : bot).playTurn(round, seat, round.turnOptions(seat));
+                    Bot player = seat == 0 ? proxy : bot;
+                    TurnOptions options = round.turnOptions(seat);
+                    if (round.isListening(seat) && options.canSelfWin()) {
+                        round.declareSelfWin(seat);
+                    } else if (round.isListening(seat)) {
+                        round.discard(seat, round.rightmostTile(seat));
+                    } else {
+                        player.playTurn(round, seat, options);
+                    }
+                    // 打完牌聽牌了，電腦自己決定要不要報聽
+                    if (round.canDeclareListening(seat) && player.declareListening(round, seat)) {
+                        round.declareListening(seat);
+                    }
                 } else {
                     Map<Integer, Claim> decisions = new HashMap<>();
                     for (int seat = 1; seat < 4; seat++) {

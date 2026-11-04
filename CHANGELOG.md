@@ -4,6 +4,27 @@
 
 ## 未發布
 
+### 新增
+
+- 報聽改成打出後宣告、公開、多 1 台。動作列不再列出「打 X 聽」；打出牌後已經聽牌，就浮現「聽牌」按鈕，機會到下一次摸牌、吃碰槓或這局結束。報聽之後照舊自動摸打、自動胡、不吃碰槓，但全桌都看得到：名字右端有圓圈的「聽」，宣告時有動畫。胡的時候多「聽牌」1 台，算在牌型合計裡，也會影響大胡。
+- 電腦也會報聽：初學者不報，一般看聽幾種，業餘數剩下的張數，職業還會考慮報了不能吃碰、不能防守、別家也會知道。職業與業餘看得到別家的報聽。
+- 連線而且桌上有兩位以上真人時，右側有聊天：訊息列表、輸入框、送出，按 Enter 也送出，一則最多 100 字。要 `ezmjService` 支援聊天才能用，舊服務器會在聊天區說明。
+- 右側的紀錄可以收合，收起來只顯示最新一則。有聊天時預設收起來，單機照舊展開。
+
+### 變更
+
+- 等宣告時，已經決定的宣告比每一位還沒決定的人能做的都大，就不再等他們。電腦的宣告在等宣告開始 2 秒後才算數，所以你只能吃、電腦要碰時，2 秒後電腦就先碰。你能胡、或有和電腦一樣大的選項時照舊等你。真人對真人也一樣。被搶先時按鈕收起來，提示會寫被誰碰走了；自己按了「過」的不算被搶走，不提示。
+- 吃、碰、槓之後輪到自己打牌，動作列的提示放大成金色並閃動，自己的手牌外框也一明一暗，直到打出牌。
+- 存檔記下誰報聽了、誰還能報聽。以前的存檔裡的聽牌模式讀回來當作自己報聽了，胡的時候也多 1 台。
+- 引擎：`Round` 有 `canDeclareListening`、`declareListening`、`isListening`、`listeningWaits`；`RoundView` 多 `isListening`；`RoundEvent.Type` 多 `LISTEN`；`WinContext` 多 `declaredListening`。`TableFlow.Listener` 少了 `listening`、多了 `canListen`；`TableFlow` 有 `declareListening(seat, listenId)`、`listenOffer`、`BOT_CLAIM_MS`，舊的 `declareListening(seat, waitId, tile)` 留給還沒更新的連線客戶端。`Bot` 與 `Strategy` 多 `declareListening`，`TableView.Opponent` 多 `listening`。`GameSave.save` 少了等的牌那個參數。
+- 連線：`OnlineClient` 多 `declareListen` 與 `chat`；`OnlineGame` 讀 `LISTEN` 事件、`state` 的 `listening`、`canListen` 與 `chat`。`ezmj_web` 與 `ezmjService` 直接編譯這些原始碼，要跟著改才編得過。
+
+### 測試
+
+- 宣告的先後：電腦要碰、真人只能吃時 2 秒後先碰；真人能胡照舊等；真人對真人；被搶先的那次不算思考。
+- 報聽：打完才問、編號過期、機會到下一次摸牌為止、被問要不要碰時報聽、電腦自己報聽、多算 1 台、存檔與舊存檔。獨立裁判也照新規則比對報聽的機會、報聽後的宣告與打牌限制，以及多的 1 台。
+- 各等級電腦報不報聽、連線的報聽與聊天訊息。
+
 ## 0.7.1 - 2026-11-03
 
 ### 變更

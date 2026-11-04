@@ -11,6 +11,8 @@ import java.awt.FontMetrics;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.awt.geom.Ellipse2D;
 import java.util.List;
 import java.util.Locale;
@@ -26,7 +28,10 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
+import javax.swing.JTextField;
 import javax.swing.SwingConstants;
+import javax.swing.Timer;
+import javax.swing.text.AbstractDocument;
 
 import ezmj.engine.GameView;
 import ezmj.engine.RoundEvent;
@@ -36,6 +41,10 @@ import ezmj.model.Tile;
 
 /** 牌桌主畫面：中間是牌桌，下方是動作列，右側是計分板與紀錄。 */
 public final class TablePanel extends JPanel {
+
+    /** 聊天一則最多幾個字，和服務器一樣。 */
+    static final int MAX_CHAT_LENGTH = 100;
+    private static final int PROMPT_BLINK_MS = 450;
 
     /** 動作列上的一個按鈕。 */
     record ActionItem(String label, Color color, Runnable run) {
@@ -50,9 +59,23 @@ public final class TablePanel extends JPanel {
     /** 每家一列，欄位依序是門風、玩家、籌碼。 */
     private final JLabel[][] scoreCells = new JLabel[4][];
     private final JTextArea logArea = new JTextArea();
+    private final JScrollPane logScroll = new JScrollPane(logArea);
+    /** 紀錄收起來時只顯示最新一則。 */
+    private final JLabel latestLog = new JLabel(" ");
+    private final JButton logToggle = Theme.button("收合", Theme.PANEL_LIGHT);
+    private final JPanel chatBox = new JPanel();
+    private final JTextArea chatArea = new JTextArea();
+    private final JTextField chatField = new JTextField();
+    private final JLabel chatNotice = new JLabel(" ");
     private final JPanel actionBar = new JPanel();
     private final JPanel sidebar = new JPanel();
     private final JButton autoPlayButton = Theme.button("電腦代打：關", Theme.PANEL_LIGHT);
+    /** 吃碰槓後要打牌，提示一閃一閃。 */
+    private final Timer promptBlink = new Timer(PROMPT_BLINK_MS, e -> blinkHint());
+    private boolean blinkOn;
+    private boolean logExpanded = true;
+    /** 聊天送出的地方；沒有聊天時是 null。 */
+    private Consumer<String> chatSender;
 
     /** onToggleAutoPlay 是 null 時沒有電腦代打的按鈕，多人遊戲不能用。 */
     TablePanel(Consumer<Tile> onDiscard, Runnable onLeave, Runnable onToggleAutoPlay, Runnable onShowHistory) {
@@ -128,16 +151,14 @@ public final class TablePanel extends JPanel {
         side.add(leftAligned(thinkInfo));
         side.add(Box.createVerticalStrut(8));
 
-        logArea.setEditable(false);
-        logArea.setLineWrap(true);
-        logArea.setFont(Theme.font(Font.PLAIN, 13f));
-        logArea.setBackground(Theme.PANEL_LIGHT);
-        logArea.setForeground(Theme.TEXT);
-        logArea.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
-        JScrollPane scroll = new JScrollPane(logArea);
-        scroll.setBorder(null);
-        scroll.setAlignmentX(LEFT_ALIGNMENT);
-        side.add(scroll);
+        side.add(buildLogHeader());
+        side.add(Box.createVerticalStrut(4));
+        styleTextArea(logArea);
+        logScroll.setBorder(null);
+        logScroll.setAlignmentX(LEFT_ALIGNMENT);
+        side.add(logScroll);
+        side.add(Box.createVerticalStrut(10));
+        side.add(buildChatBox());
         side.add(Box.createVerticalStrut(10));
 
         JButton history = Theme.button("輸贏歷程", Theme.PANEL_LIGHT);
@@ -158,6 +179,138 @@ public final class TablePanel extends JPanel {
         leave.addActionListener(e -> onLeave.run());
         side.add(leave);
         return side;
+    }
+
+    /** 「紀錄」一行：收起來時顯示最新一則，右邊的按鈕展開或收合，點這一行也可以。 */
+    private JPanel buildLogHeader() {
+        JLabel title = new JLabel("紀錄");
+        title.setFont(Theme.font(Font.BOLD, 13f));
+        title.setForeground(Theme.GOLD);
+        latestLog.setFont(Theme.font(Font.PLAIN, 13f));
+        latestLog.setForeground(Theme.TEXT);
+        latestLog.setMinimumSize(new Dimension(0, 0));
+        logToggle.setFont(Theme.font(Font.PLAIN, 12f));
+        logToggle.setBorder(BorderFactory.createEmptyBorder(2, 8, 2, 8));
+        logToggle.addActionListener(e -> setLogExpanded(!logExpanded));
+        JPanel header = new JPanel(new BorderLayout(8, 0)) {
+            @Override
+            public Dimension getMaximumSize() {
+                return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+            }
+        };
+        header.setOpaque(false);
+        header.setAlignmentX(LEFT_ALIGNMENT);
+        header.add(title, BorderLayout.WEST);
+        header.add(latestLog, BorderLayout.CENTER);
+        header.add(logToggle, BorderLayout.EAST);
+        header.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                setLogExpanded(!logExpanded);
+            }
+        });
+        latestLog.setVisible(false);
+        return header;
+    }
+
+    /** 聊天：訊息列表、一行說明、輸入框與送出，按 Enter 也送出。有聊天時才出現。 */
+    private JPanel buildChatBox() {
+        chatBox.setLayout(new BoxLayout(chatBox, BoxLayout.Y_AXIS));
+        chatBox.setOpaque(false);
+        chatBox.setAlignmentX(LEFT_ALIGNMENT);
+        JLabel title = new JLabel("聊天");
+        title.setFont(Theme.font(Font.BOLD, 13f));
+        title.setForeground(Theme.GOLD);
+        chatBox.add(leftAligned(title));
+        chatBox.add(Box.createVerticalStrut(4));
+        styleTextArea(chatArea);
+        chatArea.setWrapStyleWord(false);
+        JScrollPane chatScroll = new JScrollPane(chatArea);
+        chatScroll.setBorder(null);
+        chatScroll.setAlignmentX(LEFT_ALIGNMENT);
+        chatBox.add(chatScroll);
+        chatNotice.setFont(Theme.font(Font.PLAIN, 12f));
+        chatNotice.setForeground(Theme.MUTED);
+        chatBox.add(leftAligned(chatNotice));
+        chatField.setFont(Theme.font(Font.PLAIN, 13f));
+        ((AbstractDocument) chatField.getDocument()).setDocumentFilter(new LengthLimit(MAX_CHAT_LENGTH));
+        chatField.addActionListener(e -> sendChat());
+        JButton send = Theme.button("送出", Theme.BUTTON);
+        send.setFont(Theme.font(Font.PLAIN, 13f));
+        send.setBorder(BorderFactory.createEmptyBorder(4, 10, 4, 10));
+        send.addActionListener(e -> sendChat());
+        JPanel input = new JPanel(new BorderLayout(6, 0)) {
+            @Override
+            public Dimension getMaximumSize() {
+                return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+            }
+        };
+        input.setOpaque(false);
+        input.setAlignmentX(LEFT_ALIGNMENT);
+        input.add(chatField, BorderLayout.CENTER);
+        input.add(send, BorderLayout.EAST);
+        chatBox.add(input);
+        chatBox.setVisible(false);
+        return chatBox;
+    }
+
+    private static void styleTextArea(JTextArea area) {
+        area.setEditable(false);
+        area.setLineWrap(true);
+        area.setFont(Theme.font(Font.PLAIN, 13f));
+        area.setBackground(Theme.PANEL_LIGHT);
+        area.setForeground(Theme.TEXT);
+        area.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
+    }
+
+    /** 收起來時只留「紀錄」那一行，空出來的地方給聊天。 */
+    void setLogExpanded(boolean expanded) {
+        logExpanded = expanded;
+        logScroll.setVisible(expanded);
+        latestLog.setVisible(!expanded);
+        logToggle.setText(expanded ? "收合" : "展開");
+        sidebar.revalidate();
+        sidebar.repaint();
+    }
+
+    /**
+     * 有聊天時 sender 不是 null：顯示聊天，紀錄預設收起來。沒有聊天就藏起來，紀錄照舊展開。
+     * 只有連線、而且桌上有兩位以上真人時才有聊天。
+     */
+    void setChat(Consumer<String> sender) {
+        boolean wasOn = chatSender != null;
+        chatSender = sender;
+        if ((sender != null) == wasOn) {
+            return;
+        }
+        chatBox.setVisible(sender != null);
+        setLogExpanded(sender == null);
+    }
+
+    /** 文字來自網路，用 JTextArea 顯示，不會被當成 HTML。 */
+    void appendChat(String name, String text, boolean mine) {
+        chatArea.append((mine ? "我" : name) + "：" + text + "\n");
+        chatArea.setCaretPosition(chatArea.getDocument().getLength());
+        chatNotice.setText(" ");
+    }
+
+    /** 聊天送不出去的原因，例如說太快或舊服務器不能聊天。 */
+    void showChatNotice(String text) {
+        chatNotice.setText(safeLabel(text));
+    }
+
+    private void sendChat() {
+        String text = chatField.getText().strip();
+        if (chatSender == null || text.isEmpty()) {
+            return;
+        }
+        chatSender.accept(text);
+        chatField.setText("");
+    }
+
+    /** JLabel 的文字以 <html> 開頭就會當成 HTML，前面墊一個空白。 */
+    private static String safeLabel(String text) {
+        return text.startsWith("<") ? " " + text : text;
     }
 
     private ResultDialog.GridTable buildScoreTable() {
@@ -233,7 +386,35 @@ public final class TablePanel extends JPanel {
 
     void bindRound(RoundView round) {
         logArea.setText("");
+        latestLog.setText(" ");
+        setDiscardPrompt(false);
         canvas.setRound(round);
+    }
+
+    /**
+     * 吃碰槓之後要打一張牌：動作列的提示放大成金色粗體並閃動，手牌外框也一明一暗，直到打出牌。
+     * 一般的提示是灰色、15 點。
+     */
+    void setDiscardPrompt(boolean on) {
+        canvas.setDiscardPrompt(on);
+        if (on == promptBlink.isRunning()) {
+            return;
+        }
+        if (on) {
+            hint.setFont(Theme.font(Font.BOLD, 18f));
+            blinkOn = true;
+            hint.setForeground(Theme.GOLD);
+            promptBlink.start();
+        } else {
+            promptBlink.stop();
+            hint.setFont(Theme.font(Font.PLAIN, 15f));
+            hint.setForeground(Theme.MUTED);
+        }
+    }
+
+    private void blinkHint() {
+        blinkOn = !blinkOn;
+        hint.setForeground(blinkOn ? Theme.GOLD : Color.WHITE);
     }
 
     void animate(RoundEvent event) {
@@ -247,6 +428,8 @@ public final class TablePanel extends JPanel {
     void appendLog(String message) {
         logArea.append(message + "\n");
         logArea.setCaretPosition(logArea.getDocument().getLength());
+        latestLog.setText(safeLabel(message));
+        latestLog.setToolTipText(safeLabel(message));
     }
 
     /** 由目前狀態更新計分板與牌桌。 */

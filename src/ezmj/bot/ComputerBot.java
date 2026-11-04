@@ -10,6 +10,7 @@ import ezmj.engine.TurnOptions;
 import ezmj.model.BotLevel;
 import ezmj.model.Personality;
 import ezmj.model.Tile;
+import ezmj.rules.HandAnalyzer;
 
 /** 把策略接到引擎上。這是 bot 套件裡除了 TableView 之外唯一碰 Round 的地方，而且只用來執行決定。 */
 public final class ComputerBot implements Bot {
@@ -52,5 +53,11 @@ public final class ComputerBot implements Bot {
             melds.add(option);
         }
         return melds.isEmpty() ? null : strategy.chooseClaim(TableView.of(round, seat), melds);
+    }
+
+    @Override
+    public boolean declareListening(Round round, int seat) {
+        TableView view = TableView.of(round, seat);
+        return strategy.declareListening(view, HandAnalyzer.waits(view.hand(), view.melds()));
     }
 }

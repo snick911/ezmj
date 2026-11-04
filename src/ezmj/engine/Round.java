@@ -1,6 +1,7 @@
 package ezmj.engine;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -38,6 +39,10 @@ public final class Round implements RoundView {
     private Consumer<String> log;
     private final int[] turnsTaken = new int[SEATS];
     private final List<DiscardEvent> discardHistory = new ArrayList<>();
+    /** 報聽的座位。之後手牌鎖定，只能胡，全桌都知道。 */
+    private final boolean[] listening = new boolean[SEATS];
+    /** 打出牌之後已經聽牌、還可以報聽的座位。機會到他下一次摸牌、吃碰槓或這局結束為止。 */
+    private final boolean[] listenChance = new boolean[SEATS];
 
     private Consumer<RoundEvent> listener = event -> { };
     private Phase phase = Phase.TURN;
@@ -66,12 +71,12 @@ public final class Round implements RoundView {
     /** 存檔要留下、讀檔要接回的流程狀態。牌牆與四家的牌另外存。 */
     record State(Phase phase, int current, Tile drawn, Tile claimTile, int discarder, boolean robbing,
                  boolean discardOnly, boolean afterKong, boolean anyClaim, int[] turnsTaken,
-                 List<DiscardEvent> history) {
+                 List<DiscardEvent> history, boolean[] listening, boolean[] listenChance) {
     }
 
     State state() {
         return new State(phase, current, drawn, claimTile, discarder, robbing, discardOnly, afterKong, anyClaim,
-                turnsTaken.clone(), List.copyOf(discardHistory));
+                turnsTaken.clone(), List.copyOf(discardHistory), listening.clone(), listenChance.clone());
     }
 
     /** 從存檔接回一局。players 的手牌、面子、花牌與棄牌要先放好。 */
@@ -88,6 +93,8 @@ public final class Round implements RoundView {
         round.anyClaim = state.anyClaim();
         System.arraycopy(state.turnsTaken(), 0, round.turnsTaken, 0, SEATS);
         round.discardHistory.addAll(state.history());
+        System.arraycopy(state.listening(), 0, round.listening, 0, SEATS);
+        System.arraycopy(state.listenChance(), 0, round.listenChance, 0, SEATS);
         return round;
     }
 
@@ -158,6 +165,7 @@ public final class Round implements RoundView {
 
     private void finishFlowerWin(int seat, int from, Tile flower, ScoreResult score) {
         result = new RoundResult(seat, from, flower, score);
+        Arrays.fill(listenChance, false);
         drawn = null;
         claimTile = null;
         robbing = false;
@@ -169,6 +177,7 @@ public final class Round implements RoundView {
     private void draw(int seat, boolean replacement) {
         current = seat;
         discardOnly = false;
+        listenChance[seat] = false;
         Player player = players[seat];
         if (wall.liveCount() <= 0) {
             finishDrawnGame();
@@ -198,7 +207,8 @@ public final class Round implements RoundView {
             return TurnOptions.DISCARD_ONLY;
         }
         Player player = players[seat];
-        boolean canKong = wall.liveCount() > 0;
+        // 報聽之後不能再槓
+        boolean canKong = wall.liveCount() > 0 && !listening[seat];
         List<Tile> concealedKongs = new ArrayList<>();
         List<Tile> addKongs = new ArrayList<>();
         if (canKong) {
@@ -216,8 +226,12 @@ public final class Round implements RoundView {
         return new TurnOptions(HandAnalyzer.canWin(player.concealed()), concealedKongs, addKongs);
     }
 
+    /** 打出這張牌。打完已經聽牌、還沒報聽的話，就有報聽的機會，見 canDeclareListening。報聽的人只能打剛摸的牌。 */
     public void discard(int seat, Tile tile) {
         requireTurn(seat);
+        if (listening[seat] && drawn != null && !tile.equals(drawn)) {
+            throw new IllegalStateException("報聽之後只能打剛摸的牌");
+        }
         Player player = players[seat];
         player.removeFromHand(tile);
         player.addDiscard(tile);
@@ -229,8 +243,44 @@ public final class Round implements RoundView {
         drawn = null;
         afterKong = false;
         discardOnly = false;
+        listenChance[seat] = !listening[seat] && !HandAnalyzer.waits(player.concealed(), player.melds()).isEmpty();
         phase = Phase.CLAIMS;
         listener.accept(new RoundEvent(RoundEvent.Type.DISCARD, seat, tile, seat));
+    }
+
+    /** 現在可以報聽：打出牌後聽牌了，而且還沒摸下一張、沒有吃碰槓、這局還沒結束。輪到別人或等宣告時都可以報。 */
+    public boolean canDeclareListening(int seat) {
+        return listenChance[seat] && !listening[seat] && phase != Phase.FINISHED;
+    }
+
+    /** 報聽。之後手牌鎖定：只能胡，不能吃碰槓，輪到自己時只能打剛摸的牌。報聽是公開的，胡的時候多算 1 台。 */
+    public void declareListening(int seat) {
+        if (!canDeclareListening(seat)) {
+            throw new IllegalStateException("座位 " + seat + " 現在不能報聽");
+        }
+        listening[seat] = true;
+        listenChance[seat] = false;
+        log.accept(players[seat].name() + " 報聽");
+        listener.accept(new RoundEvent(RoundEvent.Type.LISTEN, seat, null, -1));
+    }
+
+    @Override
+    public boolean isListening(int seat) {
+        return listening[seat];
+    }
+
+    /** 報聽的人等的牌，沒有報聽是 null。手上多一張的時候（剛摸牌、已經胡了）先拿掉那張再算。 */
+    public List<Tile> listeningWaits(int seat) {
+        if (!listening[seat]) {
+            return null;
+        }
+        List<Tile> hand = new ArrayList<>(players[seat].concealed());
+        if (phase == Phase.TURN && current == seat && drawn != null) {
+            hand.remove(drawn);
+        } else if (phase == Phase.FINISHED && result.winner() == seat && !result.isFlowerWin()) {
+            hand.remove(result.winTile());
+        }
+        return HandAnalyzer.waits(hand, players[seat].melds());
     }
 
     /** 畫面上最右邊的手牌：剛摸的牌排在最右，沒有的話就是排序後的最後一張。 */
@@ -316,7 +366,8 @@ public final class Round implements RoundView {
         if (HandAnalyzer.canWin(withTile)) {
             claims.add(new Claim(Claim.Type.WIN, tile, List.of()));
         }
-        if (robbing) {
+        // 報聽之後只能胡
+        if (robbing || listening[seat]) {
             return claims;
         }
 
@@ -412,6 +463,7 @@ public final class Round implements RoundView {
         tiles.sort(Comparator.naturalOrder());
         anyClaim = true;
         claimTile = null;
+        listenChance[seat] = false;
         log.accept(player.name() + " " + claim.verb() + " " + claim.tile().label());
         switch (claim.type()) {
             case KONG:
@@ -448,8 +500,9 @@ public final class Round implements RoundView {
         boolean firstDraw = selfDraw && turnsTaken[seat] == 0 && !anyClaim;
         WinContext context = new WinContext(player.concealed(), player.melds(), player.flowers(), tile,
                 selfDraw, roundWind, seatWind(seat), robbedKong, afterKong, wall.liveCount() == 0,
-                firstDraw && seat == dealer, firstDraw && seat != dealer);
+                firstDraw && seat == dealer, firstDraw && seat != dealer, listening[seat]);
         result = new RoundResult(seat, from, tile, Scorer.score(context));
+        Arrays.fill(listenChance, false);
         drawn = null;
         claimTile = null;
         robbing = false;
@@ -461,6 +514,7 @@ public final class Round implements RoundView {
 
     private void finishDrawnGame() {
         result = RoundResult.drawnGame();
+        Arrays.fill(listenChance, false);
         drawn = null;
         claimTile = null;
         phase = Phase.FINISHED;

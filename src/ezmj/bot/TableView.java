@@ -19,9 +19,9 @@ public record TableView(int seat, int dealer, int streak, int roundWind, int sea
                         List<Opponent> opponents, List<DiscardEvent> history,
                         Tile claimTile, int discarder, boolean robbing, int chips) {
 
-    /** 別家攤在桌上的部分。暗槓只知道有幾組，不知道是什麼牌。籌碼大家都看得到。 */
+    /** 別家攤在桌上的部分。暗槓只知道有幾組，不知道是什麼牌。籌碼與有沒有報聽大家都看得到。 */
     public record Opponent(int seat, List<Meld> openMelds, int concealedKongs,
-                           List<Tile> flowers, List<Tile> discards, int chips) {
+                           List<Tile> flowers, List<Tile> discards, int chips, boolean listening) {
 
         public int meldCount() {
             return openMelds.size() + concealedKongs;
@@ -43,7 +43,8 @@ public record TableView(int seat, int dealer, int streak, int roundWind, int sea
                 }
             }
             opponents.add(new Opponent(other.seat(), List.copyOf(open), concealedKongs,
-                    List.copyOf(other.flowers()), List.copyOf(other.discards()), other.chips()));
+                    List.copyOf(other.flowers()), List.copyOf(other.discards()), other.chips(),
+                    round.isListening(other.seat())));
         }
         boolean claiming = round.phase() == Round.Phase.CLAIMS;
         return new TableView(seat, round.dealer(), round.streak(), round.roundWind(), round.seatWind(seat),

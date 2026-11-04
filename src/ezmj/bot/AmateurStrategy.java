@@ -25,6 +25,8 @@ final class AmateurStrategy implements Strategy {
     private static final int MID_WALL = 48;
     private static final int LATE_WALL = 32;
     private static final int ALARM_TURNS = 3;
+    /** 還剩這麼多張能胡就算好聽。 */
+    private static final int GOOD_WAIT_TILES = 4;
 
     private final Personality personality;
     /** 把局面看得比實際緊張幾步：保守是 1，愛衝是 -1。 */
@@ -159,5 +161,20 @@ final class AmateurStrategy implements Strategy {
         }
         int after = Efficiency.fastest(Efficiency.discards(counts, view.setsNeeded() - 1, unseen)).shanten();
         return tooFarToPush(view, after) ? null : best;
+    }
+
+    /**
+     * 數全桌扣完後還剩幾張能胡：夠多就報，牌牆剩不多時少一點也報。一張都沒有就不報，留著換聽。
+     * 愛衝要的張數少，保守要的多。
+     */
+    @Override
+    public boolean declareListening(TableView view, List<Tile> waits) {
+        int[] unseen = view.unseen();
+        int live = 0;
+        for (Tile wait : waits) {
+            live += unseen[wait.index()];
+        }
+        int needed = GOOD_WAIT_TILES + alarm;
+        return live > 0 && (live >= needed || (view.liveTiles() < LATE_WALL && live >= needed / 2));
     }
 }

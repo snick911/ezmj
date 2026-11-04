@@ -11,7 +11,7 @@ import ezmj.model.Tile;
 
 /**
  * 職業等級對一家對手的判讀，全部由桌面公開資訊推得：
- * 亮了幾組、打了幾巡、最近打什麼 → 多可能聽牌；牌河與剩餘張數 → 哪些牌型還湊得出來；
+ * 報聽了就一定聽牌，還多 1 台；不然看亮了幾組、打了幾巡、最近打什麼 → 多可能聽牌；牌河與剩餘張數 → 哪些牌型還湊得出來；
  * 面子和牌河的花色 → 是不是在做一色；攤出來的牌 → 胡了大概幾台。
  */
 final class OpponentRead {
@@ -63,7 +63,11 @@ final class OpponentRead {
         return basePay + total * taiPay;
     }
 
+    /** 報聽的人一定聽牌了。 */
     private double readTenpai() {
+        if (opponent.listening()) {
+            return 1;
+        }
         int turns = view.discardCount(opponent);
         double base = TENPAI_BY_MELDS_AND_TURN[Math.min(opponent.meldCount(), 5)][Math.min(turns / 4, 4)];
         // 一開始都打字牌和邊張，開始捨中張通常代表手牌已經成形
@@ -187,6 +191,9 @@ final class OpponentRead {
             }
         }
         if (opponent.meldCount() == 0) {
+            total += 1;
+        }
+        if (opponent.listening()) {
             total += 1;
         }
         if (opponent.openMelds().size() >= 3 && opponent.openMelds().stream().noneMatch(Meld::isSequence)) {

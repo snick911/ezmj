@@ -74,7 +74,9 @@ public final class ScoreGuide {
                             ron("3z3z", "3z").melds(chow("1w2w3w"), chow("4w5w6w"), chow("1p2p3p"),
                                     pong("9s9s9s"), pong("5s5s5s")).build()),
                     new Entry("獨聽", 1, "聽牌時只聽一種牌",
-                            ron(ALL_SEQUENCES, "3w").build()))),
+                            ron(ALL_SEQUENCES, "3w").build()),
+                    new Entry("聽牌", 1, "打出牌後已經聽牌，在下一次摸牌或吃碰槓之前報聽。報聽之後全桌都知道，手牌不能再換，也不能吃碰槓。胡別家打出的牌或自摸都算",
+                            ron(ALL_SEQUENCES, "6w").listening().build()))),
             new Group("特殊時機", List.of(
                     new Entry("海底撈月", 1, "自摸牌牆最後一張可摸的牌",
                             tsumo(ALL_SEQUENCES, "6w").lastTile().build()),
@@ -143,6 +145,7 @@ public final class ScoreGuide {
         private boolean lastTile;
         private boolean heavenly;
         private boolean earthly;
+        private boolean listening;
 
         Hand(String concealed, String winTile, boolean selfDraw) {
             this.concealed = concealed;
@@ -190,9 +193,14 @@ public final class ScoreGuide {
             return this;
         }
 
+        Hand listening() {
+            listening = true;
+            return this;
+        }
+
         WinContext build() {
             return new WinContext(Tile.parseAll(concealed), melds, Tile.parseAll(flowers),
-                    Tile.parseAll(winTile).get(0), selfDraw, 1, seat, robbed, afterKong, lastTile, heavenly, earthly);
+                    Tile.parseAll(winTile).get(0), selfDraw, 1, seat, robbed, afterKong, lastTile, heavenly, earthly, listening);
         }
     }
 }

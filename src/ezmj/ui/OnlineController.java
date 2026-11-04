@@ -245,7 +245,15 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
                 onRoom(RoomInfo.parse(message));
                 break;
             case "error":
-                onError(String.valueOf(message.get("message")));
+                onError(String.valueOf(message.get("code")), String.valueOf(message.get("message")));
+                break;
+            case "canListen":
+                if (presenter != null) {
+                    presenter.canListen(OnlineGame.parseListenOffer(message));
+                }
+                break;
+            case "chat":
+                onChat(message);
                 break;
             case "left":
                 forgetGame();
@@ -305,6 +313,7 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
                 openTable(info);
             }
             game.applyRoom(info);
+            syncChat();
             profile = profile.withGame(client.token(), info.code());
             saveProfile();
             if (roundBound) {
@@ -339,14 +348,40 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
         waiting = false;
     }
 
-    private void onError(String text) {
+    private void onError(String code, String text) {
         if (room == null) {
             // 開房間或加入失敗，回去改了再試
             end(text);
+        } else if (isChatError(code, text)) {
+            if (view != null) {
+                view.showChatNotice(code.equals("unknownType") ? "這台服務器還不能聊天。" : text);
+            }
         } else if (presenter != null) {
             view.setHint(text);
         } else {
             JOptionPane.showMessageDialog(host.frame(), text, "連線對戰", JOptionPane.WARNING_MESSAGE);
+        }
+    }
+
+    /** 聊天的錯誤顯示在聊天區。舊服務器不認得 chat，回的是 unknownType，訊息裡有 chat。 */
+    private static boolean isChatError(String code, String text) {
+        return code.equals("badChat") || code.equals("chatTooFast") || (code.equals("unknownType") && text.contains("chat"));
+    }
+
+    /** 牌桌上才看得到聊天，在房間畫面等人時收到的就略過。服務器不補送，斷線期間的訊息也沒有。 */
+    private void onChat(Map<String, Object> message) {
+        if (view == null || game == null) {
+            return;
+        }
+        OnlineGame.Chat chat = game.parseChat(message);
+        view.appendChat(chat.name(), chat.text(), chat.seat() == 0);
+    }
+
+    /** 桌上有兩位以上真人才能聊天，只有自己一位真人時就沒有聊天，紀錄照舊展開。 */
+    private void syncChat() {
+        if (view != null && room != null) {
+            long humans = room.seats().stream().filter(RoomInfo.Seat::human).count();
+            view.setChat(humans >= 2 ? client::chat : null);
         }
     }
 
@@ -453,7 +488,7 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
         OnlineGame.TurnAsk ask = OnlineGame.parseTurn(message);
         waitId = ask.waitId();
         waiting = true;
-        presenter.askTurn(ask.waitId(), ask.options(), ask.readyDiscards());
+        presenter.askTurn(ask.waitId(), ask.options());
     }
 
     private void onAskClaim(Map<String, Object> message) {
@@ -599,12 +634,10 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
         }
     }
 
+    /** 不屬於哪一次等待，過期的編號服務器會忽略。成立時全桌會收到 LISTEN 事件。 */
     @Override
-    public void declareListening(int id, Tile tile) {
-        if (sending(id)) {
-            presenter.listening(0);
-            client.listen(id, tile);
-        }
+    public void declareListening(int listenId) {
+        client.declareListen(listenId);
     }
 
     @Override

@@ -80,7 +80,7 @@ final class BotTest {
         for (int i = 0; i < melds; i++) {
             open.add(chow((i + 1) + "s" + (i + 2) + "s" + (i + 3) + "s"));
         }
-        return new Opponent(seat, open, 0, List.of(), hand(river), PLENTY_OF_CHIPS);
+        return new Opponent(seat, open, 0, List.of(), hand(river), PLENTY_OF_CHIPS, false);
     }
 
     private static TableView table(String tiles, List<Meld> melds, List<Opponent> opponents,
@@ -110,6 +110,39 @@ final class BotTest {
         allLevels();
         ladder();
         personalities();
+        listening();
+    }
+
+    private static void listening() {
+        // 兩面聽三萬、六萬；單騎聽四萬
+        String twoSided = "4w5w 1p2p3p 4p5p6p 7p8p9p 1s2s3s 9s9s";
+        String single = "4w 1p2p3p 4p5p6p 7p8p9p 1s2s3s 5s6s7s";
+        test("報聽：初學者不報；一般只看聽幾種，保守的單騎不報，愛衝一聽就報", () -> {
+            check(!strategy(BotLevel.BEGINNER).declareListening(quiet(twoSided, List.of()), waits(twoSided)), "初學者");
+            check(strategy(BotLevel.NORMAL).declareListening(quiet(twoSided, List.of()), waits(twoSided)), "一般：兩面就報");
+            check(!Strategy.of(BotLevel.NORMAL, Personality.CAUTIOUS, 100, 20, new Random(1))
+                    .declareListening(quiet(single, List.of()), waits(single)), "保守的單騎不報");
+            check(Strategy.of(BotLevel.NORMAL, Personality.BOLD, 100, 20, new Random(1))
+                    .declareListening(quiet(single, List.of()), waits(single)), "愛衝一聽就報");
+        });
+        test("報聽：業餘數還剩幾張，張數夠才報", () -> {
+            check(strategy(BotLevel.AMATEUR).declareListening(quiet(twoSided, List.of()), waits(twoSided)), "兩面八張");
+            check(!strategy(BotLevel.AMATEUR).declareListening(quiet(single, List.of()), waits(single)), "單騎只剩三張");
+        });
+        test("報聽：職業看到別家已經報聽，報了就不能防守，要更多張才報", () -> {
+            // 三萬被打掉三張，剩下一張三萬加四張六萬
+            List<Opponent> calm = List.of(opponent(1, 0, "3w3w3w"), opponent(2, 0, ""), opponent(3, 0, ""));
+            check(strategy(BotLevel.PRO).declareListening(table(twoSided, List.of(), calm, historyOf(calm), 50), waits(twoSided)),
+                    "沒人威脅時五張就報");
+            Opponent listening = new Opponent(2, List.of(), 0, List.of(), List.of(), PLENTY_OF_CHIPS, true);
+            List<Opponent> tense = List.of(opponent(1, 0, "3w3w3w"), listening, opponent(3, 0, ""));
+            check(!strategy(BotLevel.PRO).declareListening(table(twoSided, List.of(), tense, historyOf(tense), 50), waits(twoSided)),
+                    "別家報聽了，五張不夠");
+        });
+    }
+
+    private static List<Tile> waits(String tiles) {
+        return HandAnalyzer.waits(hand(tiles), List.of());
     }
 
     /** 一手要吃碰的選擇。 */
@@ -172,7 +205,7 @@ final class BotTest {
         List<Opponent> opponents = new ArrayList<>();
         for (Opponent each : view.opponents()) {
             opponents.add(new Opponent(each.seat(), each.openMelds(), each.concealedKongs(), each.flowers(), each.discards(),
-                    opponentChips));
+                    opponentChips, each.listening()));
         }
         return new TableView(view.seat(), view.dealer(), view.streak(), roundWind, view.seatWind(), view.liveTiles(),
                 view.hand(), view.melds(), view.flowers(), view.discards(), opponents, view.history(),
@@ -526,7 +559,7 @@ final class BotTest {
         });
         test("職業會看對手的花色：亮的都是條子、牌河沒有條子時，條子比較危險", () -> {
             Opponent flush = new Opponent(1, List.of(chow("1s2s3s"), chow("4s5s6s"), chow("7s8s9s")), 0, List.of(),
-                    hand("1w2w3w4w5w6p7p8p"), PLENTY_OF_CHIPS);
+                    hand("1w2w3w4w5w6p7p8p"), PLENTY_OF_CHIPS, false);
             List<Opponent> opponents = List.of(flush, opponent(2, 0, ""), opponent(3, 0, ""));
             TableView view = table("2s 4p 6w 1z2z", List.of(chow("1p2p3p"), chow("7w8w9w"), chow("4w5w6w"), chow("7p8p9p")),
                     opponents, historyOf(opponents), 6);

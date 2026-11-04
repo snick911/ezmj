@@ -68,4 +68,10 @@ final class BeginnerStrategy implements Strategy {
     public Claim chooseClaim(TableView view, List<Claim> options) {
         return options.get(0);
     }
+
+    /** 初學者看不出自己已經聽牌，不報聽。 */
+    @Override
+    public boolean declareListening(TableView view, List<Tile> waits) {
+        return false;
+    }
 }

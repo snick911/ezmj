@@ -66,6 +66,8 @@ public final class OnlineGame implements GameView, RoundView {
     private int roundWind = 1;
     /** 舊服務器沒有送就是 0。 */
     private int handWind;
+    /** 報聽了的畫面座位。自己看 listeningWaits，別家看 state 的 listening。 */
+    private final boolean[] listening = new boolean[SEATS];
     private int liveTiles;
     private Tile drawn;
     /** 剛摸牌的別家，他的最後一張牌要和手牌分開畫。 */
@@ -130,6 +132,7 @@ public final class OnlineGame implements GameView, RoundView {
         robbing = false;
         result = null;
         listeningWaits = null;
+        Arrays.fill(listening, false);
         for (int seat = 0; seat < SEATS; seat++) {
             players[seat] = player(seat, List.of(), List.of(), List.of(), List.of(), players[seat].chips());
         }
@@ -150,13 +153,15 @@ public final class OnlineGame implements GameView, RoundView {
         discarder = screen(Fields.integer(state, "discarder"));
         robbing = Fields.bool(state, "robbing");
         listeningWaits = Fields.tilesOrNull(state, "listeningWaits");
+        // 報聽不會換牌，摸到的牌還在手上
         for (RoundEvent event : events) {
             if (event.type() == RoundEvent.Type.DRAW) {
                 drawnSeat = event.seat();
-            } else if (event.type() != RoundEvent.Type.FLOWER) {
+            } else if (event.type() != RoundEvent.Type.FLOWER && event.type() != RoundEvent.Type.LISTEN) {
                 drawnSeat = -1;
             }
         }
+        listening[0] = listeningWaits != null;
 
         players[0] = player(0, Fields.tiles(state, "hand"), Fields.melds(state, "melds"), Fields.tiles(state, "flowers"),
                 Fields.tiles(state, "discards"), Fields.integer(state, "chips"));
@@ -170,6 +175,8 @@ public final class OnlineGame implements GameView, RoundView {
             melds.addAll(Fields.melds(opponent, "melds"));
             players[seat] = player(seat, Collections.nCopies(Fields.integer(opponent, "handCount"), HIDDEN), melds,
                     Fields.tiles(opponent, "flowers"), Fields.tiles(opponent, "discards"), Fields.integer(opponent, "chips"));
+            // 舊服務器的報聽不公開，沒有這個欄位
+            listening[seat] = opponent.get("listening") != null && Fields.bool(opponent, "listening");
         }
     }
 
@@ -241,6 +248,7 @@ public final class OnlineGame implements GameView, RoundView {
             case ADD_KONG:       return who + " 加槓 " + event.tile().label();
             case FLOWER:         return who + " 補花 " + event.tile().label();
             case DRAWN_GAME:     return "流局";
+            case LISTEN:         return who + " 報聽";
             case SELF_WIN:
                 return result != null && result.isFlowerWin() ? who + " " + flowerWinName() : who + " 自摸 " + event.tile().label();
             case WIN:
@@ -254,12 +262,31 @@ public final class OnlineGame implements GameView, RoundView {
         return result.score().items().get(0).name();
     }
 
-    /** 服務器的事件翻成畫面座位。別家摸的牌看不到，用暗牌代替。 */
+    /** 服務器的事件翻成畫面座位。別家摸的牌看不到，用暗牌代替。報聽沒有牌，也可能沒有 from。 */
     public RoundEvent parseEvent(Map<String, Object> message) {
-        RoundEvent.Type type = RoundEvent.Type.valueOf(Fields.string(message, "kind"));
+        RoundEvent.Type type;
+        try {
+            type = RoundEvent.Type.valueOf(Fields.string(message, "kind"));
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("不認得的事件：" + message.get("kind"), e);
+        }
         Tile tile = Fields.tileOrNull(message, "tile");
+        int from = message.get("from") == null ? -1 : screen(Fields.integer(message, "from"));
         return new RoundEvent(type, screen(Fields.integer(message, "seat")),
-                type == RoundEvent.Type.DRAW && tile == null ? HIDDEN : tile, screen(Fields.integer(message, "from")));
+                type == RoundEvent.Type.DRAW && tile == null ? HIDDEN : tile, from);
+    }
+
+    /** 一則聊天。seat 已經轉成畫面座位，0 是自己說的。 */
+    public record Chat(int seat, String name, String text) {
+    }
+
+    public Chat parseChat(Map<String, Object> message) {
+        return new Chat(screen(Fields.integer(message, "seat")), Fields.string(message, "name"), Fields.string(message, "text"));
+    }
+
+    /** canListen 訊息的編號：只送給打出牌後聽牌的那位，回覆 declareListen 時帶回去。 */
+    public static int parseListenOffer(Map<String, Object> message) {
+        return Fields.integer(message, "listenId");
     }
 
     public static TurnAsk parseTurn(Map<String, Object> message) {
@@ -401,6 +428,11 @@ public final class OnlineGame implements GameView, RoundView {
     @Override
     public int handWind() {
         return handWind;
+    }
+
+    @Override
+    public boolean isListening(int seat) {
+        return listening[seat];
     }
 
     @Override

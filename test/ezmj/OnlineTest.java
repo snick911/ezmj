@@ -302,6 +302,19 @@ final class OnlineTest {
                 check(probe.client.isConnected(), "連線還在");
             }
         });
+        test(name + "報聽與聊天的訊息", () -> {
+            try (FakeServer server = new FakeServer(webSocket); Probe probe = new Probe(server)) {
+                FakeConnection connection = probe.loggedIn();
+                probe.client.declareListen(7);
+                probe.client.chat("你好");
+                eq("{\"type\":\"declareListen\",\"listenId\":7}", connection.nextLine(), "報聽");
+                eq("{\"type\":\"chat\",\"text\":\"你好\"}", connection.nextLine(), "聊天");
+                connection.send("{\"type\":\"chat\",\"seat\":1,\"name\":\"<html><b>阿土\",\"text\":\"<HTML>嗨\"}");
+                eq("message:chat", probe.next(), "收到聊天走一般的訊息");
+                plainOnScreen((String) probe.lastMessage.get("name"), "<html><b>阿土");
+                plainOnScreen((String) probe.lastMessage.get("text"), "<HTML>嗨");
+            }
+        });
         test(name + "閒置時定期送 ping，pong 不往上傳", () -> {
             try (FakeServer server = new FakeServer(webSocket); Probe probe = new Probe(server)) {
                 FakeConnection connection = probe.loggedIn();
@@ -691,6 +704,26 @@ final class OnlineTest {
             eq(0, game.handWind(), "不認得的數字也當成沒有");
             fails(IllegalArgumentException.class, () -> game.applyState(parse(state("TURN", 1, "\"drawn\":null")
                     .replace("\"roundWind\":1,", "\"roundWind\":1,\"handWind\":\"東\",")), List.of()), "不是數字");
+        });
+        test("局面：報聽是公開的，別家看 state 的 listening，自己看 listeningWaits", () -> {
+            OnlineGame game = playing();
+            check(!game.isListening(1) && !game.isListening(0), "還沒有人報聽");
+            RoundEvent listen = game.parseEvent(parse("{\"type\":\"event\",\"kind\":\"LISTEN\",\"seat\":3,\"tile\":null}"));
+            eq(new RoundEvent(RoundEvent.Type.LISTEN, 1, null, -1), listen, "沒有 from 也讀得懂，座位 3 是下家");
+            eq("小美 報聽", game.describe(listen), "紀錄");
+            game.applyState(parse(state("TURN", 1, "\"drawn\":null")
+                    .replace("\"seat\":3,\"handCount\":9,", "\"seat\":3,\"handCount\":9,\"listening\":true,")
+                    .replace("\"listeningWaits\":null", "\"listeningWaits\":[\"3w\"]")), List.of(listen));
+            check(game.isListening(1), "下家報聽了");
+            check(!game.isListening(2), "對家沒有");
+            check(game.isListening(0), "自己報聽了");
+            game.applyRoundStart(parse("{\"type\":\"roundStart\",\"number\":8,\"dealer\":1,\"roundWind\":1,\"streak\":0,\"dealMs\":3000}"));
+            check(!game.isListening(1), "新的一局清掉");
+            eq(9, OnlineGame.parseListenOffer(parse("{\"type\":\"canListen\",\"listenId\":9}")), "報聽的編號");
+            OnlineGame.Chat chat = game.parseChat(parse("{\"type\":\"chat\",\"seat\":2,\"name\":\"小花\",\"text\":\"你好\"}"));
+            eq(new OnlineGame.Chat(0, "小花", "你好"), chat, "座位 2 是自己");
+            fails(IllegalArgumentException.class, () -> game.parseEvent(parse("{\"type\":\"event\",\"kind\":\"DANCE\",\"seat\":1}")),
+                    "不認得的事件");
         });
         test("局面：連線狀態變了名字跟著換，牌不動", () -> {
             OnlineGame game = playing();

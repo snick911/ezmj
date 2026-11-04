@@ -113,7 +113,7 @@ final class SaveTest {
             Round round = session.newRound(message -> { });
             round.start();
             while (round.phase() != Round.Phase.FINISHED) {
-                GameSave.save(file, seed, session, round, false, null, new ThinkTimer());
+                GameSave.save(file, seed, session, round, false, new ThinkTimer());
                 GameSave.Loaded loaded = GameSave.load(file);
                 sameTable(round, loaded.round(), "讀檔後");
                 saved[0]++;
@@ -161,7 +161,7 @@ final class SaveTest {
             for (int i = 0; i < 30 && round.phase() != Round.Phase.FINISHED; i++) {
                 step(round, bots);
             }
-            GameSave.save(file, 9, session, round, false, null, new ThinkTimer());
+            GameSave.save(file, 9, session, round, false, new ThinkTimer());
             Round restored = GameSave.load(file).round();
             ComputerBot[] same = bots();
             playOut(round, bots());
@@ -185,7 +185,7 @@ final class SaveTest {
             Round round = session.newRound(message -> { });
             round.start();
             eq(3, round.handWind(), "西局");
-            GameSave.save(file, 4, session, round, false, null, new ThinkTimer());
+            GameSave.save(file, 4, session, round, false, new ThinkTimer());
             check(!Files.readString(file, StandardCharsets.ISO_8859_1).contains("handWind"), "存檔沒有多一個欄位");
             GameSave.Loaded loaded = GameSave.load(file);
             eq(3, loaded.round().handWind(), "讀回來的這局");
@@ -200,7 +200,7 @@ final class SaveTest {
                 round.start();
                 playOut(round, bots());
                 session.settle(round.result());
-                GameSave.save(file, 3, session, round, true, null, new ThinkTimer());
+                GameSave.save(file, 3, session, round, true, new ThinkTimer());
             }
             GameSave.Loaded loaded = GameSave.load(file);
             GameSession restored = loaded.session();
@@ -232,20 +232,41 @@ final class SaveTest {
             eq(session.roundsPlayed() + 1, restored.roundsPlayed(), "接著打下一局");
         });
 
-        test("聽牌模式與思考時間也接得回來", () -> {
+        test("報聽、報聽的機會與思考時間也接得回來", () -> {
             Path file = tempFile();
-            GameSession session = newSession(4);
-            Round round = session.newRound(message -> { });
-            round.start();
+            Round round = Table.dealer(0).hand(0, "1w2w3w4w5w6w7w8w9w1w2w3w4w5w6w9w").draws("2z").start();
+            round.discard(0, tile("2z"));
+            check(round.canDeclareListening(0), "打完聽九萬");
+            GameSave.save(file, 77, newSession(4), round, false, new ThinkTimer());
+            check(GameSave.load(file).round().canDeclareListening(0), "還沒報，機會留著");
+
+            round.declareListening(0);
             ThinkTimer thinking = new ThinkTimer();
             thinking.start(0);
             thinking.finish(2_000_000_000L);
-            GameSave.save(file, 77, session, round, false, T.hand("3w6w"), thinking);
+            GameSave.save(file, 77, newSession(4), round, false, thinking);
             GameSave.Loaded loaded = GameSave.load(file);
             eq(77L, loaded.seed(), "種子");
-            eq(T.hand("3w6w"), loaded.listeningWaits(), "聽牌");
+            check(loaded.round().isListening(0), "報聽了");
+            check(!loaded.round().isListening(1), "別家沒有");
+            check(!loaded.round().canDeclareListening(0), "已經報了");
+            eq(T.hand("3w6w9w"), loaded.round().listeningWaits(0), "等的牌");
             eq(2_000_000_000L, loaded.thinkNanos(), "思考時間");
             eq(1, loaded.thinkCount(), "思考次數");
+        });
+
+        test("以前的存檔：報聽不公開，只記自己等的牌，讀回來當作自己報聽了", () -> {
+            Path file = tempFile();
+            Round round = Table.dealer(0).hand(0, "1w2w3w4w5w6w7w8w9w1w2w3w4w5w6w9w").draws("2z").start();
+            round.discard(0, tile("2z"));
+            GameSave.save(file, 77, newSession(4), round, false, new ThinkTimer());
+            String text = Files.readString(file, StandardCharsets.ISO_8859_1)
+                    .replaceAll("round\\.listeners=.*\\R", "").replaceAll("round\\.listenChances=.*\\R", "");
+            Files.writeString(file, text + "round.listening=9w\n", StandardCharsets.ISO_8859_1);
+            Round old = GameSave.load(file).round();
+            check(old.isListening(0), "自己報聽了");
+            check(!old.canDeclareListening(0), "不用再報");
+            eq(T.hand("3w6w9w"), old.listeningWaits(0), "等的牌");
         });
 
         test("等別家搶槓時存檔：加槓的那張牌不在手上也不在面子裡，讀回來沒人搶就補成槓", () -> {
@@ -261,7 +282,7 @@ final class SaveTest {
             Table.discardDrawnAndPass(round);
             round.declareAddKong(0, tile("5w"));
             check(round.isRobbing(), "等搶槓");
-            GameSave.save(file, 1, newSession(5), round, false, null, new ThinkTimer());
+            GameSave.save(file, 1, newSession(5), round, false, new ThinkTimer());
             Round restored = GameSave.load(file).round();
             check(restored.isRobbing(), "讀回來還在等搶槓");
             eq(tile("5w"), restored.claimTile(), "加槓的牌");
@@ -275,7 +296,7 @@ final class SaveTest {
             GameSession session = newSession(6);
             Round round = session.newRound(message -> { });
             round.start();
-            GameSave.save(file, 1, session, round, false, null, new ThinkTimer());
+            GameSave.save(file, 1, session, round, false, new ThinkTimer());
             String good = Files.readString(file, StandardCharsets.ISO_8859_1);
 
             for (String bad : List.of("", "version=99\n", "not a save at all",

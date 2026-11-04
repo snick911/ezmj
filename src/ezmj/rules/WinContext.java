@@ -7,7 +7,7 @@ import ezmj.model.Tile;
 
 /**
  * 計台需要的胡牌情境。concealed 已包含胡的那張牌。
- * roundWind 與 seatWind 為 1-4（東南西北）。
+ * roundWind 與 seatWind 為 1-4（東南西北）。declaredListening 是胡的人之前報聽了。
  */
 public record WinContext(
         List<Tile> concealed,
@@ -21,5 +21,6 @@ public record WinContext(
         boolean afterKong,
         boolean lastTile,
         boolean heavenly,
-        boolean earthly) {
+        boolean earthly,
+        boolean declaredListening) {
 }

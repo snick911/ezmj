@@ -52,6 +52,11 @@ final class ProStrategy implements Strategy {
     /** 字牌與么九比較容易被別家打出來，聽這些牌時張數加權。 */
     private static final double EASY_WAIT_WEIGHT = 1.25;
     private static final double PRESSURE_WEIGHT = 0.4;
+    /** 報聽要的剩餘張數，字牌與么九加權。 */
+    private static final double LISTEN_WAIT_TILES = 4;
+    /** 每台不到底的五分之一，就是底大台小。 */
+    private static final int CHEAP_TAI_RATIO = 5;
+    private static final double DANGEROUS_TENPAI = 0.7;
 
     private final Personality personality;
     private final int basePay;
@@ -123,6 +128,34 @@ final class ProStrategy implements Strategy {
             }
         }
         return choice;
+    }
+
+    /**
+     * 報聽多 1 台，代價是手牌鎖死：不能再換聽、不能吃碰槓，也不能棄胡，摸到什麼就得打什麼；
+     * 別家知道你聽了也會防著打，比較難胡別家的牌。所以要剩下的牌夠多才報：
+     * 底大台小時多的那 1 台不值錢，要更多張；別家看起來已經聽牌時報了就沒辦法防守，也要更多張。
+     */
+    @Override
+    public boolean declareListening(TableView view, List<Tile> waits) {
+        int[] unseen = view.unseen();
+        double live = 0;
+        for (Tile wait : waits) {
+            live += unseen[wait.index()] * (Efficiency.usefulness(wait) <= 1 ? EASY_WAIT_WEIGHT : 1);
+        }
+        double needed = LISTEN_WAIT_TILES + (taiPay * CHEAP_TAI_RATIO < basePay ? 2 : 0);
+        if (personality == Personality.BOLD) {
+            needed -= 1;
+        } else if (personality == Personality.CAUTIOUS) {
+            needed += 1;
+        }
+        double danger = 0;
+        for (Opponent opponent : view.opponents()) {
+            danger = Math.max(danger, new OpponentRead(view, opponent, unseen).tenpai());
+        }
+        if (danger >= DANGEROUS_TENPAI) {
+            needed += 2;
+        }
+        return live >= needed;
     }
 
     private static List<Meld> withClaim(List<Meld> melds, Meld.Type type, Claim claim) {

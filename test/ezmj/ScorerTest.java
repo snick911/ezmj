@@ -99,7 +99,7 @@ final class ScorerTest {
 
         ScoreResult score() {
             ScoreResult result = Scorer.score(new WinContext(hand(concealed), melds, flowers, tile(winTile), selfDraw,
-                    roundWind, seatWind, robbed, afterKong, lastTile, heavenly, earthly));
+                    roundWind, seatWind, robbed, afterKong, lastTile, heavenly, earthly, false));
             SCORED_ITEMS.addAll(result.items());
             return result;
         }
@@ -431,7 +431,7 @@ final class ScorerTest {
                     List<Tile> shuffled = new ArrayList<>(hand(tiles));
                     Collections.shuffle(shuffled, random);
                     int actual = Scorer.score(new WinContext(shuffled, List.of(), List.of(), tile(tiles.substring(0, 2)),
-                            false, 1, 2, false, false, false, false, false)).totalTai();
+                            false, 1, 2, false, false, false, false, false, false)).totalTai();
                     eq(expected, actual, "順序不同台數變了");
                 }
             }

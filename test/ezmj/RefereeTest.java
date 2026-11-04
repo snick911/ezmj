@@ -191,7 +191,8 @@ final class RefereeTest {
     // ---------- 獨立的計台：逐條照「台數計算」 ----------
 
     private record Win(int[] concealed, List<Meld> melds, List<Tile> flowers, Tile tile, boolean selfDraw, int roundWind,
-                       int seatWind, boolean robbed, boolean afterKong, boolean last, boolean heavenly, boolean earthly) {
+                       int seatWind, boolean robbed, boolean afterKong, boolean last, boolean heavenly, boolean earthly,
+                       boolean listening) {
     }
 
     private static boolean isWind(int kind) {
@@ -276,6 +277,9 @@ final class RefereeTest {
             items.put("全求人", 2);
         } else if (single) {
             items.put("獨聽", 1);
+        }
+        if (win.listening()) {
+            items.put("聽牌", 1);
         }
         if (win.last()) {
             items.put(win.selfDraw() ? "海底撈月" : "河底撈魚", 1);
@@ -457,6 +461,7 @@ final class RefereeTest {
         boolean clean = selfDraw && melds.isEmpty();
         boolean heavenly = clean && random.nextInt(10) == 0;
         boolean earthly = clean && !heavenly && random.nextInt(10) == 0;
+        boolean listening = !heavenly && !earthly && random.nextInt(4) == 0;
         int roundWind = 1 + random.nextInt(4);
         int seatWind = 1 + random.nextInt(4);
         List<Tile> flowers = new ArrayList<>();
@@ -469,9 +474,9 @@ final class RefereeTest {
         }
         Collections.shuffle(hand, random);
         ScoreResult actual = Scorer.score(new WinContext(hand, melds, flowers, winTile, selfDraw, roundWind, seatWind,
-                robbed, afterKong, last, heavenly, earthly));
+                robbed, afterKong, last, heavenly, earthly, listening));
         TreeMap<String, Integer> expected = expectedScore(new Win(concealed, melds, flowers, winTile, selfDraw, roundWind,
-                seatWind, robbed, afterKong, last, heavenly, earthly));
+                seatWind, robbed, afterKong, last, heavenly, earthly, listening));
         eq(total(expected), actual.totalTai(), "計台 " + hand + " 面子 " + melds + " 胡 " + winTile
                 + " 自摸 " + selfDraw + " 預期 " + expected + " 實際 " + actual.items());
     }
@@ -507,6 +512,10 @@ final class RefereeTest {
         boolean lastWin;
         boolean firstDrawWin;
         String flowerItem;
+        /** 報聽的座位：只能胡，不能吃碰槓，只能打剛摸的牌，胡了多 1 台。 */
+        final boolean[] listening = new boolean[4];
+        /** 打出牌後聽牌了、還可以報聽：到自己下一次摸牌、吃碰槓或這局結束。 */
+        final boolean[] chance = new boolean[4];
 
         Model(List<Tile> order, int dealer) {
             this.wall = new ArrayDeque<>(order);
@@ -574,6 +583,7 @@ final class RefereeTest {
             drawn = null;
             claimTile = null;
             robbing = false;
+            Arrays.fill(chance, false);
             return true;
         }
 
@@ -584,6 +594,7 @@ final class RefereeTest {
         void draw(int seat, boolean replacement) {
             current = seat;
             discardOnly = false;
+            chance[seat] = false;
             if (live() == 0) {
                 drawnGame();
                 return;
@@ -606,6 +617,7 @@ final class RefereeTest {
         }
 
         void drawnGame() {
+            Arrays.fill(chance, false);
             phase = Round.Phase.FINISHED;
             drawn = null;
             claimTile = null;
@@ -618,6 +630,7 @@ final class RefereeTest {
             afterKongWin = replaced;
             lastWin = live() == 0;
             firstDrawWin = discardCount[seat] == 0 && !anyMeld;
+            Arrays.fill(chance, false);
             phase = Round.Phase.FINISHED;
             drawn = null;
         }
@@ -630,7 +643,13 @@ final class RefereeTest {
             discarder = seat;
             drawn = null;
             discardOnly = false;
+            chance[seat] = !listening[seat] && waitKinds(seats[seat].hand, seats[seat].melds) > 0;
             phase = Round.Phase.CLAIMS;
+        }
+
+        void declareListening(int seat) {
+            listening[seat] = true;
+            chance[seat] = false;
         }
 
         void concealedKong(int seat, Tile tile) {
@@ -658,7 +677,7 @@ final class RefereeTest {
             if (canWin(seats[seat].hand)) {
                 options.add("自摸");
             }
-            if (live() > 0) {
+            if (live() > 0 && !listening[seat]) {
                 for (int kind = 0; kind < Tile.KINDS; kind++) {
                     if (seats[seat].hand[kind] == 4) {
                         options.add("暗槓" + kind);
@@ -685,7 +704,7 @@ final class RefereeTest {
             if (canWin(withTile)) {
                 options.add("WIN");
             }
-            if (robbing) {
+            if (robbing || listening[seat]) {
                 return options;
             }
             if (hand[kind] == 3 && live() > 0) {
@@ -761,6 +780,7 @@ final class RefereeTest {
             winTile = claimTile;
             robbedWin = robbing;
             lastWin = live() == 0;
+            Arrays.fill(chance, false);
             phase = Round.Phase.FINISHED;
             claimTile = null;
             robbing = false;
@@ -776,6 +796,7 @@ final class RefereeTest {
             Collections.sort(tiles);
             anyMeld = true;
             claimTile = null;
+            chance[seat] = false;
             if (claim.type() == Claim.Type.KONG) {
                 seats[seat].melds.add(new Meld(Meld.Type.OPEN_KONG, tiles));
                 draw(seat, true);
@@ -801,6 +822,8 @@ final class RefereeTest {
                 eq(seats[seat].melds, player.melds(), "座位 " + seat + " 面子");
                 eq(seats[seat].flowers, player.flowers(), "座位 " + seat + " 花牌");
                 eq(seats[seat].discards, player.discards(), "座位 " + seat + " 牌河");
+                eq(listening[seat], round.isListening(seat), "座位 " + seat + " 報聽");
+                eq(chance[seat], round.canDeclareListening(seat), "座位 " + seat + " 能不能報聽");
             }
         }
     }
@@ -963,7 +986,8 @@ final class RefereeTest {
         SeatModel seat = model.seats[model.winner];
         TreeMap<String, Integer> expected = expectedScore(new Win(seat.hand.clone(), seat.melds, seat.flowers, model.winTile,
                 model.from < 0, roundWind, seatWind, model.robbedWin, model.afterKongWin, model.lastWin,
-                model.firstDrawWin && model.winner == model.dealer, model.firstDrawWin && model.winner != model.dealer));
+                model.firstDrawWin && model.winner == model.dealer, model.firstDrawWin && model.winner != model.dealer,
+                model.listening[model.winner]));
         eq(expected, engineItems(result.score()), "實戰計台 " + round.player(model.winner).concealed() + " 面子 " + seat.melds);
     }
 
@@ -1019,6 +1043,17 @@ final class RefereeTest {
             model.selfWin(seat);
             return;
         }
+        // 報聽之後只能打剛摸的牌，打別張要被拒絕
+        if (model.listening[seat]) {
+            Tile drawn = round.drawn();
+            Tile other = round.player(seat).concealed().stream().filter(tile -> !tile.equals(drawn)).findFirst().orElse(null);
+            if (other != null) {
+                T.fails(IllegalStateException.class, () -> round.discard(seat, other), "報聽之後打別張");
+            }
+            round.discard(seat, drawn);
+            model.discard(seat, drawn);
+            return;
+        }
         Tile kong = chooseKong(round, seat, options, kind, strategies[seat], random);
         if (kong != null && options.concealedKongs().contains(kong)) {
             round.declareConcealedKong(seat, kong);
@@ -1036,6 +1071,11 @@ final class RefereeTest {
             }
             round.discard(seat, tile);
             model.discard(seat, tile);
+            eq(model.chance[seat], round.canDeclareListening(seat), "座位 " + seat + " 打完能不能報聽");
+            if (model.chance[seat] && random.nextInt(3) > 0) {
+                round.declareListening(seat);
+                model.declareListening(seat);
+            }
         }
     }
 

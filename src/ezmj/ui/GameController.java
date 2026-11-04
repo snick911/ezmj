@@ -122,13 +122,12 @@ public final class GameController implements TableFlow.Listener, TablePresenter.
             startRound();
             return;
         }
-        flow.setListening(HUMAN_SEAT, saved.listeningWaits());
         flow.resume(saved.round());
     }
 
     /** 存下目前的牌局，事件之間的狀態都是完整的，隨時可以存。 */
     void save(Path file, long seed) throws IOException {
-        GameSave.save(file, seed, session, round(), usedAutoPlay, flow.listeningWaits(HUMAN_SEAT), flow.thinking(HUMAN_SEAT));
+        GameSave.save(file, seed, session, round(), usedAutoPlay, flow.thinking(HUMAN_SEAT));
     }
 
     public void stop() {
@@ -167,8 +166,8 @@ public final class GameController implements TableFlow.Listener, TablePresenter.
     }
 
     @Override
-    public void declareListening(int waitId, Tile tile) {
-        flow.declareListening(HUMAN_SEAT, waitId, tile);
+    public void declareListening(int listenId) {
+        flow.declareListening(HUMAN_SEAT, listenId);
     }
 
     @Override
@@ -236,7 +235,7 @@ public final class GameController implements TableFlow.Listener, TablePresenter.
 
     @Override
     public void askTurn(int seat, int waitId, TurnOptions options) {
-        presenter.askTurn(waitId, options, round().readyDiscards(HUMAN_SEAT));
+        presenter.askTurn(waitId, options);
     }
 
     @Override
@@ -245,8 +244,8 @@ public final class GameController implements TableFlow.Listener, TablePresenter.
     }
 
     @Override
-    public void listening(int seat) {
-        presenter.listening(seat);
+    public void canListen(int seat, int listenId) {
+        presenter.canListen(listenId);
     }
 
     @Override

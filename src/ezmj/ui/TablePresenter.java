@@ -2,10 +2,8 @@ package ezmj.ui;
 
 import java.awt.Color;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -28,8 +26,6 @@ final class TablePresenter {
 
     private static final int SELF_SEAT = 0;
     private static final String TURN_HINT = "輪到你了：點一張手牌打出";
-    private static final int MAX_LISTEN_BUTTONS = 4;
-    private static final int MAX_LISTED_WAITS = 3;
 
     /** 這一桌牌的局面與自己的決定。waitId 分得出決定是不是這次等待的。 */
     interface Table {
@@ -37,7 +33,7 @@ final class TablePresenter {
 
         GameView game();
 
-        /** 自己在聽牌模式等的牌，沒有時是 null。 */
+        /** 自己報聽後等的牌，沒有報聽時是 null。 */
         List<Tile> listeningWaits();
 
         boolean isAutoPlay();
@@ -46,7 +42,8 @@ final class TablePresenter {
 
         void discard(int waitId, Tile tile);
 
-        void declareListening(int waitId, Tile tile);
+        /** 報聽，listenId 是 canListen 給的編號，過期了就沒有作用。 */
+        void declareListening(int listenId);
 
         void declareSelfWin(int waitId);
 
@@ -64,6 +61,16 @@ final class TablePresenter {
     private String promptHint = " ";
     /** 目前等待的編號，分得出按鈕是不是這次等待的。 */
     private int promptId;
+    /** 可以報聽時的編號，沒有時是 0。報聽的按鈕不屬於哪一次等待，等別人打牌或宣告時都在。 */
+    private int listenOffer;
+    /** 目前動作列上的按鈕，不含報聽。報聽的按鈕出現或消失時用來重畫；選牌或輪到自己時是 null。 */
+    private List<TablePanel.ActionItem> shownActions;
+    /** 正在問自己要不要吃碰槓胡。 */
+    private boolean claimAsked;
+    /** 問自己的時候被別人吃碰槓走了，下一次閒著的提示先說一聲。 */
+    private String takenNote;
+    /** 自己剛吃、碰或槓，接下來要打一張牌，提示要明顯。 */
+    private String claimedVerb;
 
     TablePresenter(Table table, AppSettings settings) {
         this.table = table;
@@ -113,6 +120,7 @@ final class TablePresenter {
     }
 
     void event(RoundEvent event) {
+        track(event);
         boolean animated = settings.animationEnabled();
         if (animated) {
             view.animate(event);
@@ -154,8 +162,68 @@ final class TablePresenter {
             case FLOWER:
                 playSound(SoundEffects.Cue.FLOWER, 0);
                 break;
+            case LISTEN:
+                // 喊「聽牌」就夠了
+                break;
             default:
                 playSound(SoundEffects.Cue.DRAWN_GAME, 0);
+                break;
+        }
+    }
+
+    /**
+     * 跟著事件收起過期的東西：自己摸牌、吃碰槓或這局結束，報聽的機會就沒了；自己打出牌，打牌的提示就收起。
+     * 問自己要不要宣告的時候被別人吃碰槓走，記下來讓之後的提示說一聲。
+     */
+    private void track(RoundEvent event) {
+        boolean self = event.seat() == SELF_SEAT;
+        switch (event.type()) {
+            case DISCARD:
+                claimAsked = false;
+                if (self) {
+                    claimedVerb = null;
+                    view.setDiscardPrompt(false);
+                }
+                break;
+            case CHOW:
+            case PONG:
+            case KONG:
+                if (self) {
+                    claimedVerb = event.type() == RoundEvent.Type.CHOW ? "吃" : event.type() == RoundEvent.Type.PONG ? "碰" : "槓";
+                    listenOffer = 0;
+                } else if (claimAsked) {
+                    takenNote = table.round().player(event.seat()).name() + " "
+                            + (event.type() == RoundEvent.Type.CHOW ? "吃" : event.type() == RoundEvent.Type.PONG ? "碰" : "槓")
+                            + "走了 " + event.tile().label();
+                }
+                claimAsked = false;
+                break;
+            case DRAW:
+                if (self) {
+                    listenOffer = 0;
+                }
+                break;
+            case LISTEN:
+                if (self) {
+                    listenOffer = 0;
+                    if (claimAsked) {
+                        // 報聽之後由電腦替你決定要不要胡，宣告的按鈕不用了
+                        claimAsked = false;
+                        showIdle("等待其他玩家決定…");
+                    } else {
+                        refreshListenButton();
+                    }
+                }
+                break;
+            case WIN:
+            case SELF_WIN:
+            case DRAWN_GAME:
+                listenOffer = 0;
+                claimedVerb = null;
+                claimAsked = false;
+                view.setDiscardPrompt(false);
+                break;
+            default:
                 break;
         }
     }
@@ -192,6 +260,9 @@ final class TablePresenter {
             case DRAWN_GAME:
                 VoiceLines.play(VoiceLines.Line.DRAWN_GAME, gender);
                 break;
+            case LISTEN:
+                VoiceLines.play(VoiceLines.Line.LISTEN, gender);
+                break;
             default:
                 break;
         }
@@ -208,17 +279,11 @@ final class TablePresenter {
         delay.start();
     }
 
-    /** 這個座位剛宣告聽牌。 */
-    void listening(int seat) {
-        if (settings.voiceEnabled()) {
-            VoiceLines.play(VoiceLines.Line.LISTEN, voiceOf(seat));
-        }
-    }
-
-    /** 輪到自己。readyDiscards 是打哪張牌會聽哪些牌。 */
-    void askTurn(int waitId, TurnOptions options, Map<Tile, List<Tile>> readyDiscards) {
+    /** 輪到自己。打牌後聽牌了不用先說，打完會再問要不要報聽。 */
+    void askTurn(int waitId, TurnOptions options) {
         promptId = waitId;
-        showTurnActions(options, readyDiscards);
+        claimAsked = false;
+        showTurnActions(options);
     }
 
     void askClaim(int waitId, List<Claim> options) {
@@ -226,37 +291,30 @@ final class TablePresenter {
         showClaimActions(options);
     }
 
-    private void addListenButtons(List<TablePanel.ActionItem> actions, Map<Tile, List<Tile>> readyDiscards) {
-        readyDiscards.entrySet().stream()
-                .sorted(Comparator.comparingInt((Map.Entry<Tile, List<Tile>> entry) -> entry.getValue().size()).reversed())
-                .limit(MAX_LISTEN_BUTTONS)
-                .forEach(entry -> actions.add(promptAction(
-                        "打" + entry.getKey().label() + " 聽" + waitsLabel(entry.getValue()), Theme.BUTTON,
-                        () -> table.declareListening(promptId, entry.getKey()))));
+    /** 打出牌後聽牌了，可以報聽。按鈕一直留著，直到自己摸牌、吃碰槓、報聽或這局結束。 */
+    void canListen(int listenId) {
+        listenOffer = listenId;
+        refreshListenButton();
     }
 
-    private static String waitsLabel(List<Tile> waits) {
-        if (waits.size() > MAX_LISTED_WAITS) {
-            return " " + waits.size() + " 種";
-        }
-        return waits.stream().map(Tile::label).collect(Collectors.joining("、"));
-    }
-
-    private void showTurnActions(TurnOptions options, Map<Tile, List<Tile>> readyDiscards) {
+    /** 吃碰槓之後要打一張牌，常常忘記，所以提示放大、變金色並閃動，手牌外框也亮起來。 */
+    private void showTurnActions(TurnOptions options) {
         List<TablePanel.ActionItem> actions = new ArrayList<>();
         if (options.canSelfWin()) {
             actions.add(promptAction("自摸", Theme.RED, () -> table.declareSelfWin(promptId)));
         }
         if (!options.concealedKongs().isEmpty() || !options.addKongs().isEmpty()) {
-            actions.add(promptAction("槓", Theme.BUTTON, () -> pickTurnKong(options, readyDiscards)));
+            actions.add(promptAction("槓", Theme.BUTTON, () -> pickTurnKong(options)));
         }
-        addListenButtons(actions, readyDiscards);
-        view.showActions(TURN_HINT, true, actions);
-        updatePromptHint(TURN_HINT);
+        String hint = claimedVerb == null ? TURN_HINT : claimedVerb + "完了，要打一張牌出去：點一張手牌";
+        shownActions = null;
+        view.showActions(hint, true, actions);
+        view.setDiscardPrompt(claimedVerb != null);
+        updatePromptHint(hint);
     }
 
     /** 自己的回合選要槓哪張，只有一張能槓就直接槓。 */
-    private void pickTurnKong(TurnOptions options, Map<Tile, List<Tile>> readyDiscards) {
+    private void pickTurnKong(TurnOptions options) {
         Set<Tile> tiles = new LinkedHashSet<>(options.concealedKongs());
         tiles.addAll(options.addKongs());
         if (tiles.size() == 1) {
@@ -264,9 +322,43 @@ final class TablePresenter {
             return;
         }
         String hint = "選要槓的牌";
+        shownActions = null;
         view.showPick(hint, tiles, null, tile -> table.declareKong(promptId, tile),
-                List.of(promptAction("取消", Theme.PANEL_LIGHT, () -> showTurnActions(options, readyDiscards))));
+                List.of(promptAction("取消", Theme.PANEL_LIGHT, () -> showTurnActions(options))));
         updatePromptHint(hint);
+    }
+
+    /** 動作列換成這些按鈕，可以報聽的話後面再加報聽。 */
+    private void show(String hint, List<TablePanel.ActionItem> actions) {
+        shownActions = actions;
+        view.showActions(hint, false, withListen(actions));
+    }
+
+    private List<TablePanel.ActionItem> withListen(List<TablePanel.ActionItem> actions) {
+        if (listenOffer == 0) {
+            return actions;
+        }
+        List<TablePanel.ActionItem> all = new ArrayList<>(actions);
+        all.add(new TablePanel.ActionItem("聽牌", Theme.RED, this::declareListening));
+        return all;
+    }
+
+    /** 按了就先收起按鈕，不會按兩次；真的成立要等事件。 */
+    private void declareListening() {
+        int id = listenOffer;
+        listenOffer = 0;
+        refreshListenButton();
+        if (id != 0) {
+            table.declareListening(id);
+        }
+    }
+
+    /** 報聽的按鈕出現或消失。選牌或輪到自己時動作列不動，回到一般的按鈕時就會跟著出現。 */
+    private void refreshListenButton() {
+        if (shownActions != null) {
+            view.showActions(promptHint, false, withListen(shownActions));
+            showPromptHint();
+        }
     }
 
     /** 這次等待的按鈕。按住時倒數到了、放開才送出的話，局面已經往下走，舊按鈕不能再有作用。 */
@@ -313,7 +405,9 @@ final class TablePresenter {
         }
         actions.add(promptAction("過", Theme.PANEL_LIGHT, () -> declareClaim(null)));
         String hint = claimHint() + "，要宣告嗎？";
-        view.showActions(hint, false, actions);
+        claimAsked = true;
+        view.setDiscardPrompt(false);
+        show(hint, actions);
         updatePromptHint(hint);
     }
 
@@ -322,6 +416,7 @@ final class TablePresenter {
         Set<Tile> tiles = Claim.handTiles(claims);
         tiles.remove(first);
         String hint = claimHint() + (first == null ? "：選要" + claims.get(0).verb() + "的牌" : "：再選一張");
+        shownActions = null;
         view.showPick(hint, tiles, first, tile -> {
             List<Claim> matching = Claim.using(claims, tile);
             if (matching.size() == 1) {
@@ -333,14 +428,21 @@ final class TablePresenter {
         updatePromptHint(hint);
     }
 
+    /** 按了「過」是自己放棄，之後別家吃碰就不是被搶走，不用提示。宣告了卻被更大的搶走照舊提示。 */
     private void declareClaim(Claim claim) {
+        if (claim == null) {
+            claimAsked = false;
+        }
         table.answerClaim(promptId, claim);
     }
 
-    /** 沒有要自己決定的事，收起按鈕。倒數的秒數會接在這段提示後面。 */
+    /** 沒有要自己決定的事，收起按鈕，可以報聽的話留著報聽。倒數的秒數會接在這段提示後面。 */
     void showIdle(String hint) {
-        promptHint = status() + hint;
-        view.showActions(promptHint, false, List.of());
+        String note = takenNote;
+        takenNote = null;
+        promptHint = status() + (note == null ? "" : note + "　") + hint;
+        view.setDiscardPrompt(false);
+        show(promptHint, List.of());
     }
 
     private String status() {

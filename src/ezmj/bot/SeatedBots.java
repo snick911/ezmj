@@ -34,4 +34,9 @@ public final class SeatedBots implements Bot {
     public Claim chooseClaim(Round round, int seat, List<Claim> options) {
         return bots.get(seat - 1).chooseClaim(round, seat, options);
     }
+
+    @Override
+    public boolean declareListening(Round round, int seat) {
+        return bots.get(seat - 1).declareListening(round, seat);
+    }
 }

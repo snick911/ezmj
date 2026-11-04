@@ -114,6 +114,9 @@ public final class Scorer {
         } else if (singleWait) {
             items.add(new ScoreItem("獨聽", 1));
         }
+        if (ctx.declaredListening()) {
+            items.add(new ScoreItem("聽牌", 1));
+        }
 
         if (ctx.lastTile()) {
             items.add(new ScoreItem(ctx.selfDraw() ? "海底撈月" : "河底撈魚", 1));

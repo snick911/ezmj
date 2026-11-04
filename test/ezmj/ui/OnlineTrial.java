@@ -35,8 +35,11 @@ import javax.swing.JDialog;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JScrollPane;
 import javax.swing.JSpinner;
 import javax.swing.JTable;
+import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 
@@ -62,6 +65,7 @@ public final class OnlineTrial {
     /** 大廳每 5 秒更新，看到房號之後多等一點，列表一定更新過。 */
     private static final int HIDDEN_CHECK_MS = 6_500;
     private static final String ROOM_NAME = "甲乙的牌局";
+    private static final String CHAT_TEXT = "大家好，<html>不是網頁";
     private static final List<String> LOCAL_ONLY_FILES =
             List.of("save.properties", "stats.properties", "achievements.properties", "honor.properties");
 
@@ -135,8 +139,8 @@ public final class OnlineTrial {
     /** 開有名稱的公開房間，來賓從大廳的列表連點兩下加入。打完整場：看最後成績、回到房間、再開一場。籌碼給很少，有人胡就有人輸光。 */
     private static int gameOver(Path dir, int port) throws Exception {
         Files.createDirectories(dir);
-        Process host = client(dir, "甲", "host", port, "--chips", "100", "--secondGame", "--roomName", ROOM_NAME);
-        Process guest = client(dir, "乙", "guest", port, "--secondGame", "--roomName", ROOM_NAME, "--fromLobby");
+        Process host = client(dir, "甲", "host", port, "--chips", "100", "--secondGame", "--roomName", ROOM_NAME, "--chat");
+        Process guest = client(dir, "乙", "guest", port, "--secondGame", "--roomName", ROOM_NAME, "--fromLobby", "--chat");
         return expect("甲", host, 0) + expect("乙", guest, 0);
     }
 
@@ -211,6 +215,8 @@ public final class OnlineTrial {
         private int decisionsAtDrop;
         private long codeSeenAt;
         private boolean lobbyWaitLogged;
+        private boolean chatSent;
+        private boolean sawChat;
 
         Client(String[] args) throws IOException {
             role = args[1];
@@ -279,6 +285,9 @@ public final class OnlineTrial {
             }
             if (options.containsKey("--drop") && !sawLostHint) {
                 fail("斷線時應該要看到重新連線的提示");
+            }
+            if (options.containsKey("--chat") && !sawChat) {
+                fail("應該要看到房主說的話");
             }
             log("通過，結果視窗 " + results + " 次，自己決定 " + decisions + " 次，本機紀錄檔 " + found);
             System.exit(0);
@@ -557,6 +566,9 @@ public final class OnlineTrial {
                 }
             }
             checkDisconnectMark(table);
+            if (options.containsKey("--chat")) {
+                checkChat(table);
+            }
 
             if (options.containsKey("--secondGame") && games >= 2 && !leaving) {
                 leaving = true;
@@ -652,6 +664,30 @@ public final class OnlineTrial {
             int x = lastHintPress;
             SwingUtilities.invokeLater(() -> canvas.dispatchEvent(new MouseEvent(canvas, MouseEvent.MOUSE_PRESSED,
                     System.currentTimeMillis(), 0, x, y, 1, false, MouseEvent.BUTTON1)));
+        }
+
+        /** 兩位真人才有聊天：房主說一句，雙方都要在聊天區看到，紀錄也要收起來。文字裡的 <html> 不能變成網頁。 */
+        private void checkChat(TablePanel table) {
+            if (!((JPanel) field(table, "chatBox")).isVisible()) {
+                return;
+            }
+            if (role.equals("host") && !chatSent) {
+                chatSent = true;
+                if (((JScrollPane) field(table, "logScroll")).isVisible()) {
+                    fail("有聊天時紀錄應該收起來");
+                }
+                JTextField input = (JTextField) field(table, "chatField");
+                input.setText(CHAT_TEXT);
+                input.postActionEvent();
+                log("送出聊天");
+            }
+            // 從網路收到的 <html> 前面會墊一個空白
+            String text = ((JTextArea) field(table, "chatArea")).getText();
+            if (!sawChat && text.replace(" <html>", "<html>").contains(CHAT_TEXT)) {
+                sawChat = true;
+                shot("chat");
+                log("聊天區：" + text.strip());
+            }
         }
 
         private void checkDisconnectMark(TablePanel table) {

@@ -34,9 +34,9 @@ public final class GameSave {
     private static final String ITEMS = "\n";
     private static final String NONE = "";
 
-    /** 讀回來的牌局。round 是 null 表示下一局還沒開始；listeningWaits 是 null 表示沒有鎖定手牌。 */
+    /** 讀回來的牌局。round 是 null 表示下一局還沒開始。誰報聽了、誰還能報聽都在 round 裡。 */
     public record Loaded(long seed, GameSession session, Round round, boolean usedAutoPlay,
-                         List<Tile> listeningWaits, long thinkNanos, int thinkCount) {
+                         long thinkNanos, int thinkCount) {
     }
 
     private GameSave() {
@@ -44,7 +44,7 @@ public final class GameSave {
 
     /** round 是 null 或已經結束，都當作局與局之間。 */
     public static void save(Path file, long seed, GameSession session, Round round, boolean usedAutoPlay,
-                            List<Tile> listeningWaits, ThinkTimer thinking) throws IOException {
+                            ThinkTimer thinking) throws IOException {
         Properties values = new Properties();
         values.setProperty("version", String.valueOf(VERSION));
         values.setProperty("seed", String.valueOf(seed));
@@ -53,7 +53,7 @@ public final class GameSave {
         values.setProperty("think.count", String.valueOf(thinking.count()));
         writeSession(values, session);
         if (round != null && round.phase() != Round.Phase.FINISHED) {
-            writeRound(values, round, listeningWaits);
+            writeRound(values, round);
         }
         PropertyFiles.store(values, file);
     }
@@ -113,7 +113,7 @@ public final class GameSave {
         }
     }
 
-    private static void writeRound(Properties values, Round round, List<Tile> listeningWaits) {
+    private static void writeRound(Properties values, Round round) {
         Round.State state = round.state();
         values.setProperty("round.phase", state.phase().name());
         values.setProperty("round.dealer", String.valueOf(round.dealer()));
@@ -131,9 +131,8 @@ public final class GameSave {
         values.setProperty("round.wall", codes(round.wall().order()));
         values.setProperty("round.history", state.history().stream()
                 .map(event -> event.seat() + event.tile().code()).collect(Collectors.joining(LIST)));
-        if (listeningWaits != null) {
-            values.setProperty("round.listening", codes(listeningWaits));
-        }
+        values.setProperty("round.listeners", seats(state.listening()));
+        values.setProperty("round.listenChances", seats(state.listenChance()));
         for (int seat = 0; seat < SEATS; seat++) {
             Player player = round.player(seat);
             String prefix = "round.player." + seat + ".";
@@ -180,8 +179,7 @@ public final class GameSave {
                 integer(values, "session.drawnGames"), wins, selfDraws, dealIns, history);
 
         Round round = values.containsKey("round.phase") ? readRound(values, players, session.firstDealer()) : null;
-        List<Tile> waits = values.containsKey("round.listening") ? Tile.parseAll(text(values, "round.listening")) : null;
-        return new Loaded(seed, session, round, Boolean.parseBoolean(text(values, "usedAutoPlay")), waits,
+        return new Loaded(seed, session, round, Boolean.parseBoolean(text(values, "usedAutoPlay")),
                 Long.parseLong(text(values, "think.nanos")), integer(values, "think.count"));
     }
 
@@ -245,7 +243,7 @@ public final class GameSave {
                 integer(values, "round.current"), tile(text(values, "round.drawn")), tile(text(values, "round.claimTile")),
                 integer(values, "round.discarder"), bool(values, "round.robbing"), bool(values, "round.discardOnly"),
                 bool(values, "round.afterKong"), bool(values, "round.anyClaim"), ints(text(values, "round.turnsTaken")),
-                discards);
+                discards, listeners(values), seatFlags(values.getProperty("round.listenChances", NONE)));
         int dealer = integer(values, "round.dealer");
         Round round = Round.restored(players, new Wall(Tile.parseAll(text(values, "round.wall"))), dealer,
                 integer(values, "round.roundWind"), GameSession.handWind(firstDealer, dealer), integer(values, "round.streak"),
@@ -295,6 +293,39 @@ public final class GameSave {
             parts.add(String.valueOf(number));
         }
         return String.join(LIST, parts);
+    }
+
+    /** 成立的座位，例如「0,2」；都沒有時是空字串。 */
+    private static String seats(boolean[] flags) {
+        List<String> parts = new ArrayList<>();
+        for (int seat = 0; seat < flags.length; seat++) {
+            if (flags[seat]) {
+                parts.add(String.valueOf(seat));
+            }
+        }
+        return String.join(LIST, parts);
+    }
+
+    private static boolean[] seatFlags(String text) {
+        boolean[] flags = new boolean[SEATS];
+        if (!text.isEmpty()) {
+            for (int seat : ints(text)) {
+                flags[seat] = true;
+            }
+        }
+        return flags;
+    }
+
+    /**
+     * 報聽的座位。以前的報聽不公開，存檔只記自己等的牌（round.listening），讀回來就當作自己報聽了，
+     * 胡的時候也多算 1 台；那時電腦不會報聽。
+     */
+    private static boolean[] listeners(Properties values) {
+        boolean[] flags = seatFlags(values.getProperty("round.listeners", NONE));
+        if (values.containsKey("round.listening")) {
+            flags[0] = true;
+        }
+        return flags;
     }
 
     private static int[] ints(String text) {

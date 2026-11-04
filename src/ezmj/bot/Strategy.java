@@ -21,6 +21,9 @@ public interface Strategy {
     /** 從吃、碰、槓的選項挑一個；回傳 null 表示不宣告。 */
     Claim chooseClaim(TableView view, List<Claim> options);
 
+    /** 剛打出牌、已經聽牌，要不要報聽。waits 是現在聽的牌。報聽多 1 台，但手牌不能再換、不能吃碰槓，別家也會知道。 */
+    boolean declareListening(TableView view, List<Tile> waits);
+
     static Strategy of(BotLevel level, int basePay, int taiPay, Random random) {
         return of(level, Personality.BALANCED, basePay, taiPay, random);
     }

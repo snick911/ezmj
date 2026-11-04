@@ -16,16 +16,23 @@ import ezmj.engine.Settlement;
 import ezmj.engine.ThinkTimer;
 import ezmj.engine.TurnOptions;
 import ezmj.model.Tile;
-import ezmj.rules.HandAnalyzer;
 
 /**
  * 一桌牌的行牌流程，不依賴畫面：輪到誰、等誰決定、電腦和代打什麼時候動作、倒數到了怎麼辦。
  * 哪些座位是真人在建構時決定，宣告時可以同時等好幾位真人。
  * 所有呼叫與 Scheduler 排的動作都要在同一條執行緒上，例如 EDT。
+ *
+ * 等宣告時，已經決定的宣告比每一位還沒決定的人能做的都大，就不再等他們：例如電腦要碰、真人只能吃。
+ * 電腦、代打與報聽的人自動做的宣告，要等宣告開始 BOT_CLAIM_MS 之後才算數，真人還在想的時候不會馬上被搶走。
+ *
+ * 報聽：打出牌後已經聽牌，就有報聽的機會，一直到他下一次摸牌、吃碰槓或這局結束。
+ * 真人由 Listener.canListen 通知，再用 declareListening(seat, listenId) 宣告；電腦與代打打完牌就自己決定。
  */
 public final class TableFlow {
 
     private static final int SEATS = 4;
+    /** 自動做的宣告在等宣告開始這麼久之後才算數。 */
+    public static final int BOT_CLAIM_MS = 2_000;
 
     /** 排一個之後才執行的動作，回傳的動作用來取消。 */
     public interface Scheduler {
@@ -51,7 +58,7 @@ public final class TableFlow {
         /** 牌發完了。回傳要等多少毫秒才開始行牌，用來演發牌。 */
         int dealt(Round round);
 
-        /** 開局的摸牌與補花發生在發牌之前，不會通知。 */
+        /** 開局的摸牌與補花發生在發牌之前，不會通知。報聽也從這裡通知，種類是 LISTEN。 */
         void event(RoundEvent event);
 
         /** 局面往下走了一步。 */
@@ -65,13 +72,17 @@ public final class TableFlow {
 
         void askTurn(int seat, int waitId, TurnOptions options);
 
+        /** 這次等宣告要是被別人更大的宣告搶先，就不再等他：之後的 refresh 或 idle 就是過期了。 */
         void askClaim(int seat, int waitId, List<Claim> options);
 
         /** 這次等待還剩幾秒；0 表示不限時。 */
         void secondsLeft(int seconds);
 
-        /** 這個座位剛打牌宣告聽牌。 */
-        void listening(int seat);
+        /**
+         * 這位真人打出牌後聽牌了，可以報聽。listenId 交給 declareListening，
+         * 到他下一次摸牌、吃碰槓或這局結束就過期，過期不另外通知。代打中不會通知，由代打自己決定。
+         */
+        void canListen(int seat, int listenId);
 
         void thinkingFinished(int seat);
 
@@ -86,19 +97,27 @@ public final class TableFlow {
     private final Scheduler scheduler;
     private final Listener table;
     private final boolean[] autoPlay = new boolean[SEATS];
-    /** 聽牌模式等的牌；沒有列出的座位表示沒有鎖定手牌。 */
-    private final Map<Integer, List<Tile>> listeningWaits = new HashMap<>();
     private final ThinkTimer[] thinking = new ThinkTimer[SEATS];
     /** 這次等待還沒決定的座位。 */
     private final Set<Integer> waiting = new HashSet<>();
+    /** 每個座位目前報聽機會的編號，沒有機會時不一定是 0，要看 Round.canDeclareListening。 */
+    private final int[] listenIds = new int[SEATS];
 
     private Round round;
+    /** 真人這次的宣告，決定了就算數。 */
     private Map<Integer, Claim> pendingClaims;
+    /** 電腦、代打與報聽的人自動做的宣告，automaticCounts 之後才算數。 */
+    private Map<Integer, Claim> automaticClaims;
+    private boolean automaticCounts;
     /** 每次等待加一，分得出決定是不是這次等待的。 */
     private int waitId;
+    private int lastListenId;
+    /** 剛打出牌的座位，下一次 advance 時看他能不能報聽。 */
+    private int justDiscarded = -1;
     private int secondsLeft;
     private Runnable cancelStep = () -> { };
     private Runnable cancelCountdown = () -> { };
+    private Runnable cancelAutomatic = () -> { };
     /** 正在開局。這時的補花與摸牌都在發牌之前，不個別通知。 */
     private boolean starting;
     private boolean stopped;
@@ -117,7 +136,7 @@ public final class TableFlow {
     }
 
     public void startRound() {
-        listeningWaits.clear();
+        justDiscarded = -1;
         round = session.newRound(table::log);
         round.setListener(this::onRoundEvent);
         table.roundOpened(round);
@@ -132,13 +151,20 @@ public final class TableFlow {
         }
     }
 
-    /** 接回存檔的一局。聽牌的狀態要先用 setListening 放好。 */
+    /** 接回存檔的一局。誰報聽了、誰還有報聽的機會都在 Round 裡，還有機會的真人會再收到 canListen。 */
     public void resume(Round saved) {
+        justDiscarded = -1;
         round = saved;
         round.setLog(table::log);
         round.setListener(this::onRoundEvent);
         table.roundOpened(round);
         table.log("接續上次的牌局");
+        for (int seat : people) {
+            if (round.canDeclareListening(seat) && !autoPlay[seat]) {
+                listenIds[seat] = ++lastListenId;
+                table.canListen(seat, listenIds[seat]);
+            }
+        }
         advance();
     }
 
@@ -156,12 +182,15 @@ public final class TableFlow {
         return autoPlay[seat];
     }
 
+    /** 報聽的人等的牌，沒有報聽是 null。 */
     public List<Tile> listeningWaits(int seat) {
-        return listeningWaits.get(seat);
+        return round == null ? null : round.listeningWaits(seat);
     }
 
-    public void setListening(int seat, List<Tile> waits) {
-        listeningWaits.put(seat, waits);
+    /** 這位真人目前報聽機會的編號，沒有機會是 0。重連時用來補送 canListen。 */
+    public int listenOffer(int seat) {
+        return round != null && round.canDeclareListening(seat) && people.contains(seat) && !autoPlay[seat]
+                ? listenIds[seat] : 0;
     }
 
     public ThinkTimer thinking(int seat) {
@@ -181,6 +210,9 @@ public final class TableFlow {
         }
         thinking[seat].cancel();
         table.checkpoint();
+        if (round != null && round.canDeclareListening(seat) && proxy.declareListening(round, seat)) {
+            declareListening(seat, listenIds[seat]);
+        }
         if (!waiting.contains(seat)) {
             return;
         }
@@ -188,12 +220,7 @@ public final class TableFlow {
             advance();
             return;
         }
-        decideAutomatically(seat, round.claimOptions(seat));
-        waiting.remove(seat);
-        if (waiting.isEmpty()) {
-            endWait();
-            resolveClaimsAfterDelay();
-        }
+        stopWaitingFor(seat);
     }
 
     /** 從頭計時目前的等待；等待時間設定改變時也會呼叫。 */
@@ -218,7 +245,7 @@ public final class TableFlow {
         }
     }
 
-    /** 打出這張牌並鎖定手牌，之後不能再吃碰槓。 */
+    /** 舊的做法：打出這張牌並立刻報聽。新的畫面打完牌才看能不能報聽，這個留給還沒更新的連線客戶端。 */
     public void declareListening(int seat, int id, Tile tile) {
         if (!isWaiting(seat, id)) {
             return;
@@ -227,9 +254,33 @@ public final class TableFlow {
             throw new IllegalArgumentException("座位 " + seat + " 打 " + tile + " 不會聽牌");
         }
         round.discard(seat, tile);
-        listeningWaits.put(seat, HandAnalyzer.waits(round.player(seat).concealed(), round.player(seat).melds()));
-        table.listening(seat);
+        round.declareListening(seat);
         advance();
+    }
+
+    /**
+     * 報聽。listenId 是 canListen 給的編號，過期了（已經摸牌、吃碰槓或這局結束）就忽略。
+     * 正在等他宣告的話，改成自動決定：能胡就胡，其他都放棄；已經決定要吃碰槓的也取消。
+     */
+    public void declareListening(int seat, int listenId) {
+        if (round == null || listenId != listenIds[seat] || !round.canDeclareListening(seat)) {
+            return;
+        }
+        round.declareListening(seat);
+        table.refresh(round);
+        if (pendingClaims == null) {
+            return;
+        }
+        for (Map<Integer, Claim> claims : List.of(pendingClaims, automaticClaims)) {
+            Claim decided = claims.get(seat);
+            if (decided != null && decided.type() != Claim.Type.WIN) {
+                claims.remove(seat);
+            }
+        }
+        if (waiting.contains(seat)) {
+            thinking[seat].cancel();
+            stopWaitingFor(seat);
+        }
     }
 
     public void declareSelfWin(int seat, int id) {
@@ -252,7 +303,7 @@ public final class TableFlow {
         advance();
     }
 
-    /** 對這張牌的決定，null 表示過。等的人都決定了就立刻處理。 */
+    /** 對這張牌的決定，null 表示過。等的人都決定了就立刻處理，還沒決定的人都比不過已經決定的也是。 */
     public void answerClaim(int seat, int id, Claim claim) {
         if (!isWaiting(seat, id)) {
             return;
@@ -268,10 +319,15 @@ public final class TableFlow {
         waiting.remove(seat);
         if (waiting.isEmpty()) {
             resolveClaims();
+        } else {
+            resolveIfDecided();
         }
     }
 
     private void onRoundEvent(RoundEvent event) {
+        if (event.type() == RoundEvent.Type.DISCARD) {
+            justDiscarded = event.seat();
+        }
         if (!starting || (event.type() != RoundEvent.Type.DRAW && event.type() != RoundEvent.Type.FLOWER)) {
             table.event(event);
         }
@@ -282,6 +338,7 @@ public final class TableFlow {
         if (stopped) {
             return;
         }
+        offerListening();
         finishThinkingIfDone();
         table.refresh(round);
         switch (round.phase()) {
@@ -294,6 +351,24 @@ public final class TableFlow {
             default:
                 beginClaims();
                 break;
+        }
+    }
+
+    /** 剛打出牌、已經聽牌的人：電腦與代打自己決定要不要報聽，真人就通知他可以報。 */
+    private void offerListening() {
+        int seat = justDiscarded;
+        justDiscarded = -1;
+        if (seat < 0 || !round.canDeclareListening(seat)) {
+            return;
+        }
+        listenIds[seat] = ++lastListenId;
+        boolean person = people.contains(seat);
+        if (!person || autoPlay[seat]) {
+            if ((person ? proxy : bot).declareListening(round, seat)) {
+                round.declareListening(seat);
+            }
+        } else {
+            table.canListen(seat, listenIds[seat]);
         }
     }
 
@@ -318,15 +393,15 @@ public final class TableFlow {
     private void beginTurn() {
         int seat = round.current();
         TurnOptions options = round.turnOptions(seat);
-        if (!people.contains(seat)) {
+        if (round.isListening(seat)) {
+            table.idle(seat);
+            schedule(pacing.turnDelayMs(), () -> playListeningTurn(seat, options));
+        } else if (!people.contains(seat)) {
             table.idle(seat);
             schedule(pacing.turnDelayMs(), () -> {
                 bot.playTurn(round, seat, options);
                 advance();
             });
-        } else if (listeningWaits.get(seat) != null) {
-            table.idle(seat);
-            schedule(pacing.turnDelayMs(), () -> playListeningTurn(seat, options));
         } else if (autoPlay[seat]) {
             table.idle(seat);
             schedule(pacing.turnDelayMs(), () -> playProxyTurn(seat, options));
@@ -339,7 +414,7 @@ public final class TableFlow {
         }
     }
 
-    /** 聽牌模式：摸到胡的牌就自摸，其餘摸到什麼打什麼。 */
+    /** 報聽之後：摸到胡的牌就自摸，其餘摸到什麼打什麼。電腦報聽也一樣。 */
     private void playListeningTurn(int seat, TurnOptions options) {
         if (options.canSelfWin()) {
             round.declareSelfWin(seat);
@@ -359,6 +434,8 @@ public final class TableFlow {
 
     private void beginClaims() {
         pendingClaims = new HashMap<>();
+        automaticClaims = new HashMap<>();
+        automaticCounts = false;
         Map<Integer, List<Claim>> asks = new HashMap<>();
         for (int seat = 0; seat < SEATS; seat++) {
             List<Claim> options = round.claimOptions(seat);
@@ -368,9 +445,9 @@ public final class TableFlow {
             if (!people.contains(seat)) {
                 Claim claim = bot.chooseClaim(round, seat, options);
                 if (claim != null) {
-                    pendingClaims.put(seat, claim);
+                    automaticClaims.put(seat, claim);
                 }
-            } else if (listeningWaits.get(seat) != null || autoPlay[seat]) {
+            } else if (round.isListening(seat) || autoPlay[seat]) {
                 decideAutomatically(seat, options);
             } else {
                 asks.put(seat, options);
@@ -389,16 +466,73 @@ public final class TableFlow {
             table.askClaim(ask.getKey(), waitId, ask.getValue());
         }
         restartCountdown();
+        if (!automaticClaims.isEmpty()) {
+            int id = waitId;
+            cancelAutomatic = scheduler.after(BOT_CLAIM_MS, () -> {
+                if (!stopped && id == waitId && !waiting.isEmpty()) {
+                    automaticCounts = true;
+                    resolveIfDecided();
+                }
+            });
+        }
     }
 
-    /** 聽牌模式只胡不吃碰槓；代打就照電腦的判斷。 */
+    /** 報聽的人只胡不吃碰槓；代打就照電腦的判斷。 */
     private void decideAutomatically(int seat, List<Claim> options) {
-        Claim claim = listeningWaits.get(seat) == null
-                ? proxy.chooseClaim(round, seat, options)
-                : options.stream().filter(option -> option.type() == Claim.Type.WIN).findFirst().orElse(null);
+        Claim claim = round.isListening(seat)
+                ? options.stream().filter(option -> option.type() == Claim.Type.WIN).findFirst().orElse(null)
+                : proxy.chooseClaim(round, seat, options);
         if (claim != null) {
-            pendingClaims.put(seat, claim);
+            automaticClaims.put(seat, claim);
         }
+    }
+
+    /** 等宣告時這位真人改成自動決定，例如打開代打或報聽。 */
+    private void stopWaitingFor(int seat) {
+        decideAutomatically(seat, round.claimOptions(seat));
+        waiting.remove(seat);
+        if (waiting.isEmpty()) {
+            endWait();
+            resolveClaimsAfterDelay();
+        } else {
+            resolveIfDecided();
+        }
+    }
+
+    /**
+     * 已經決定的宣告比每一位還沒決定的人能做的都大，就不再等他們，直接處理。
+     * 大小只看種類：胡 > 槓、碰 > 吃；同樣是胡就照舊等，不管誰比較近。
+     */
+    private void resolveIfDecided() {
+        if (waiting.isEmpty() || round.phase() != Round.Phase.CLAIMS) {
+            return;
+        }
+        int best = Integer.MAX_VALUE;
+        for (Claim claim : pendingClaims.values()) {
+            best = Math.min(best, rank(claim));
+        }
+        if (automaticCounts) {
+            for (Claim claim : automaticClaims.values()) {
+                best = Math.min(best, rank(claim));
+            }
+        }
+        for (int seat : waiting) {
+            for (Claim option : round.claimOptions(seat)) {
+                if (rank(option) <= best) {
+                    return;
+                }
+            }
+        }
+        // 被搶先的人沒有做決定，這次不算一次思考
+        for (int seat : waiting) {
+            thinking[seat].cancel();
+        }
+        resolveClaims();
+    }
+
+    /** 越小越大。槓和碰一樣大，因為不會有兩家同時能碰或槓同一張牌。 */
+    private static int rank(Claim claim) {
+        return claim.type() == Claim.Type.KONG ? Claim.Type.PONG.ordinal() : claim.type().ordinal();
     }
 
     private void resolveClaimsAfterDelay() {
@@ -406,9 +540,13 @@ public final class TableFlow {
         schedule(pacing.claimDelayMs(), this::resolveClaims);
     }
 
+    /** 自動的宣告最後一定算數，不管過了多久。 */
     private void resolveClaims() {
-        round.resolveClaims(pendingClaims);
+        Map<Integer, Claim> decisions = new HashMap<>(automaticClaims);
+        decisions.putAll(pendingClaims);
         pendingClaims = null;
+        automaticClaims = null;
+        round.resolveClaims(decisions);
         advance();
     }
 
@@ -425,6 +563,8 @@ public final class TableFlow {
         waiting.clear();
         cancelCountdown.run();
         cancelCountdown = () -> { };
+        cancelAutomatic.run();
+        cancelAutomatic = () -> { };
     }
 
     private void tickCountdown() {

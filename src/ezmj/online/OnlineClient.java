@@ -178,8 +178,19 @@ public final class OnlineClient {
         send(Fields.object("type", "discard", "waitId", waitId, "tile", tile.code()));
     }
 
+    /** 舊的報聽：打出這張並報聽。新的畫面打完牌才報，用 declareListen；這個留給還在用的程式。 */
     public void listen(int waitId, Tile tile) {
         send(Fields.object("type", "listen", "waitId", waitId, "tile", tile.code()));
+    }
+
+    /** 報聽，listenId 是服務器 canListen 給的編號，過期了服務器會忽略。 */
+    public void declareListen(int listenId) {
+        send(Fields.object("type", "declareListen", "listenId", listenId));
+    }
+
+    /** 房間裡的聊天，要先在房間裡。服務器會轉給房間裡每一位連著的真人，也包括自己。 */
+    public void chat(String text) {
+        send(Fields.object("type", "chat", "text", text));
     }
 
     public void selfWin(int waitId) {

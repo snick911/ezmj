@@ -14,4 +14,7 @@ public interface Bot {
 
     /** 對別人打出的牌要宣告什麼；回傳 null 表示不宣告。options 不為空才會被呼叫。 */
     Claim chooseClaim(Round round, int seat, List<Claim> options);
+
+    /** 剛打出牌、已經聽牌了，要不要報聽。round.canDeclareListening(seat) 成立時才會被呼叫，宣告由呼叫的人做。 */
+    boolean declareListening(Round round, int seat);
 }

@@ -34,6 +34,9 @@ public interface RoundView {
 
     int seatWind(int seat);
 
+    /** 這個座位報聽了。報聽是公開的，全桌都看得到。 */
+    boolean isListening(int seat);
+
     int liveTiles();
 
     RoundResult result();
