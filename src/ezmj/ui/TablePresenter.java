@@ -94,20 +94,33 @@ final class TablePresenter {
         table.discard(promptId, tile);
     }
 
-    /** 演發牌，回傳要演多久。 */
+    /**
+     * 先擲骰子再從牌牆發牌，回傳要演多久。骰子停下來之前提示寫「擲骰子…」，之後寫「發牌中…」，
+     * 這段時間裡提示被換掉了就不再改回來。
+     */
     int showDeal() {
         view.refresh(table.game(), table.round());
-        showIdle("發牌中…");
+        showIdle("擲骰子…");
+        String diceHint = promptHint;
         view.animateDeal();
+        after(TableCanvas.DICE_MS, () -> {
+            if (!stopped && diceHint.equals(promptHint)) {
+                showIdle("發牌中…");
+            }
+        });
         if (settings.soundEnabled()) {
+            for (int bounce : TableCanvas.DICE_BOUNCE_MS) {
+                playSound(SoundEffects.Cue.DEAL, bounce);
+            }
             for (int packet = 0; packet < TableCanvas.DEAL_PACKETS; packet++) {
-                playSound(SoundEffects.Cue.DEAL, packet * TableCanvas.DEAL_INTERVAL_MS + TableCanvas.DEAL_FLIGHT_MS);
+                playSound(SoundEffects.Cue.DEAL,
+                        TableCanvas.DICE_MS + packet * TableCanvas.DEAL_INTERVAL_MS + TableCanvas.DEAL_FLIGHT_MS);
             }
             if (anyFlowerExposed()) {
-                playSound(SoundEffects.Cue.FLOWER, TableCanvas.DEAL_MS);
+                playSound(SoundEffects.Cue.FLOWER, TableCanvas.DICE_MS + TableCanvas.DEAL_MS);
             }
         }
-        return TableCanvas.DEAL_MS;
+        return TableCanvas.DICE_MS + TableCanvas.DEAL_MS;
     }
 
     private boolean anyFlowerExposed() {

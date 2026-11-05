@@ -16,6 +16,7 @@ import ezmj.engine.GameView;
 import ezmj.engine.Round;
 import ezmj.engine.RoundEvent;
 import ezmj.engine.RoundView;
+import ezmj.engine.WallRing;
 import ezmj.model.AppSettings;
 import ezmj.model.Tile;
 import ezmj.online.OnlineClient;
@@ -313,7 +314,6 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
                 openTable(info);
             }
             game.applyRoom(info);
-            syncChat();
             profile = profile.withGame(client.token(), info.code());
             saveProfile();
             if (roundBound) {
@@ -339,6 +339,8 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
         view = new TablePanel(presenter::humanDiscard, this::confirmLeave, null, () -> host.showHistory(game));
         presenter.attach(view);
         view.showRoomCode(info.code());
+        // 連線的牌桌都有聊天，跟電腦打的一人房間也有，只是沒有人回
+        view.setChat(client::chat);
         host.showTable(view);
         pendingEvents.clear();
         finishedState = null;
@@ -377,14 +379,6 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
         view.appendChat(chat.name(), chat.text(), chat.seat() == 0);
     }
 
-    /** 桌上有兩位以上真人才能聊天，只有自己一位真人時就沒有聊天，紀錄照舊展開。 */
-    private void syncChat() {
-        if (view != null && room != null) {
-            long humans = room.seats().stream().filter(RoomInfo.Seat::human).count();
-            view.setChat(humans >= 2 ? client::chat : null);
-        }
-    }
-
     private void leaveRoom() {
         if (client.isConnected()) {
             client.leave();
@@ -414,7 +408,7 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
         lastRoundEnd = null;
         waiting = false;
         game.applyRoundStart(message);
-        view.bindRound(game);
+        view.bindRound(game, game.dice());
         roundBound = true;
         dealPending = true;
     }
@@ -439,6 +433,7 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
         waiting = false;
         if (dealPending) {
             dealPending = false;
+            view.appendLog(WallRing.announce(game, game.dice()));
             if (settings.animationEnabled()) {
                 presenter.showDeal();
             } else {
@@ -458,10 +453,10 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
         return events;
     }
 
-    /** 重連回來時沒有 roundStart，第一份局面才接上牌桌。 */
+    /** 重連回來時沒有 roundStart，第一份局面才接上牌桌。骰子用 state 的資料算，和別家看到的一樣。 */
     private void bindRoundOnce() {
         if (!roundBound) {
-            view.bindRound(game);
+            view.bindRound(game, game.dice());
             roundBound = true;
         }
     }

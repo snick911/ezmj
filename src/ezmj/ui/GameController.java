@@ -3,6 +3,7 @@ package ezmj.ui;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Random;
 import java.util.Set;
 
 import ezmj.bot.Bot;
@@ -14,7 +15,9 @@ import ezmj.engine.Round;
 import ezmj.engine.RoundEvent;
 import ezmj.engine.Settlement;
 import ezmj.engine.TurnOptions;
+import ezmj.engine.WallRing;
 import ezmj.model.AppSettings;
+import ezmj.model.Dice;
 import ezmj.model.Tile;
 import ezmj.table.TableFlow;
 
@@ -37,8 +40,11 @@ public final class GameController implements TableFlow.Listener, TablePresenter.
     private final RoundEndHandler roundEndHandler;
     private final AppSettings settings;
     private final Runnable checkpoint;
+    private final Random diceRandom = new Random();
     private TablePanel view;
     private boolean usedAutoPlay;
+    /** 正在接回存檔的一局，這局的骰子不寫進紀錄。 */
+    private boolean resuming;
 
     /**
      * proxy 是電腦代打時替真人決定的電腦。settings 隨時會被選單改變，每次要用時才讀。
@@ -122,7 +128,9 @@ public final class GameController implements TableFlow.Listener, TablePresenter.
             startRound();
             return;
         }
+        resuming = true;
         flow.resume(saved.round());
+        resuming = false;
     }
 
     /** 存下目前的牌局，事件之間的狀態都是完整的，隨時可以存。 */
@@ -199,12 +207,20 @@ public final class GameController implements TableFlow.Listener, TablePresenter.
         view.appendLog(message);
     }
 
+    /**
+     * 每局開門的骰子另外擲，不動牌局的亂數，同一個種子打出來的牌才一樣。擲骰子在發牌之前，所以紀錄寫在補花前面。
+     * 接回存檔時骰子沒有存，重新擲一次，只是牌牆開門的位置可能和存檔前不同。
+     */
     @Override
     public void roundOpened(Round round) {
-        view.bindRound(round);
+        Dice dice = Dice.roll(diceRandom);
+        view.bindRound(round, dice);
+        if (!resuming) {
+            view.appendLog(WallRing.announce(round, dice));
+        }
     }
 
-    /** 發牌動畫演完才開始行牌，這段時間誰都不能動作。 */
+    /** 骰子與發牌的動畫演完才開始行牌，這段時間誰都不能動作。 */
     @Override
     public int dealt(Round round) {
         if (!settings.animationEnabled() || round.phase() == Round.Phase.FINISHED) {

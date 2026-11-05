@@ -17,6 +17,7 @@ import ezmj.engine.RoundResult;
 import ezmj.engine.RoundView;
 import ezmj.engine.Settlement;
 import ezmj.engine.TurnOptions;
+import ezmj.model.Dice;
 import ezmj.model.GameRecord;
 import ezmj.model.Gender;
 import ezmj.model.Meld;
@@ -115,6 +116,15 @@ public final class OnlineGame implements GameView, RoundView {
         }
         int wind = Fields.integer(message, "handWind");
         return wind >= 1 && wind <= SEATS ? wind : 0;
+    }
+
+    /**
+     * 這局開門的骰子。服務器沒有送，用全桌都看得到的資料算：房號、莊家的服務器座位、圈風、局風與連莊數，
+     * 每家算出來都一樣；斷線接回時沒有 roundStart，用 state 的也一樣。
+     */
+    public Dice dice() {
+        String code = room == null ? "" : room.code();
+        return Dice.of(code + "/" + Math.floorMod(dealer + mySeat, SEATS) + "/" + roundWind + "/" + handWind + "/" + streak);
     }
 
     public void applyRoundStart(Map<String, Object> message) {

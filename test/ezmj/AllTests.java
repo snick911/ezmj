@@ -25,6 +25,7 @@ public final class AllTests {
         BotTest.run();
         TableFlowTest.run();
         OnlineTest.run();
+        WallRingTest.run();
         System.exit(T.report() == 0 ? 0 : 1);
     }
 }

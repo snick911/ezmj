@@ -14,6 +14,7 @@ import java.awt.RenderingHints;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.geom.Ellipse2D;
+import java.awt.geom.Path2D;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -36,6 +37,7 @@ import javax.swing.text.AbstractDocument;
 import ezmj.engine.GameView;
 import ezmj.engine.RoundEvent;
 import ezmj.engine.RoundView;
+import ezmj.model.Dice;
 import ezmj.model.Player;
 import ezmj.model.Tile;
 
@@ -62,7 +64,8 @@ public final class TablePanel extends JPanel {
     private final JScrollPane logScroll = new JScrollPane(logArea);
     /** 紀錄收起來時只顯示最新一則。 */
     private final JLabel latestLog = new JLabel(" ");
-    private final JButton logToggle = Theme.button("收合", Theme.PANEL_LIGHT);
+    private final JButton logToggle = Theme.button("", Theme.PANEL_LIGHT);
+    private final ChevronIcon logToggleIcon = new ChevronIcon();
     private final JPanel chatBox = new JPanel();
     private final JTextArea chatArea = new JTextArea();
     private final JTextField chatField = new JTextField();
@@ -73,7 +76,7 @@ public final class TablePanel extends JPanel {
     /** 吃碰槓後要打牌，提示一閃一閃。 */
     private final Timer promptBlink = new Timer(PROMPT_BLINK_MS, e -> blinkHint());
     private boolean blinkOn;
-    private boolean logExpanded = true;
+    private boolean logExpanded;
     /** 聊天送出的地方；沒有聊天時是 null。 */
     private Consumer<String> chatSender;
 
@@ -86,6 +89,7 @@ public final class TablePanel extends JPanel {
         add(buildSidebar(onLeave, onToggleAutoPlay, onShowHistory), BorderLayout.EAST);
         syncSizes();
         showThinkTime(0, 0);
+        setLogExpanded(false);
     }
 
     /** 真人的平均思考時間；還沒有紀錄時 count 是 0。 */
@@ -181,7 +185,7 @@ public final class TablePanel extends JPanel {
         return side;
     }
 
-    /** 「紀錄」一行：收起來時顯示最新一則，右邊的按鈕展開或收合，點這一行也可以。 */
+    /** 「紀錄」一行：收起來時顯示最新一則，右邊的箭頭展開或收合，點這一行也可以。 */
     private JPanel buildLogHeader() {
         JLabel title = new JLabel("紀錄");
         title.setFont(Theme.font(Font.BOLD, 13f));
@@ -189,8 +193,8 @@ public final class TablePanel extends JPanel {
         latestLog.setFont(Theme.font(Font.PLAIN, 13f));
         latestLog.setForeground(Theme.TEXT);
         latestLog.setMinimumSize(new Dimension(0, 0));
-        logToggle.setFont(Theme.font(Font.PLAIN, 12f));
-        logToggle.setBorder(BorderFactory.createEmptyBorder(2, 8, 2, 8));
+        logToggle.setIcon(logToggleIcon);
+        logToggle.setBorder(BorderFactory.createEmptyBorder(4, 7, 4, 7));
         logToggle.addActionListener(e -> setLogExpanded(!logExpanded));
         JPanel header = new JPanel(new BorderLayout(8, 0)) {
             @Override
@@ -263,28 +267,25 @@ public final class TablePanel extends JPanel {
         area.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
     }
 
-    /** 收起來時只留「紀錄」那一行，空出來的地方給聊天。 */
+    /** 紀錄一律預設收起來，只留「紀錄」那一行，空出來的地方給聊天。箭頭朝下是展開，朝上是收合。 */
     void setLogExpanded(boolean expanded) {
         logExpanded = expanded;
         logScroll.setVisible(expanded);
         latestLog.setVisible(!expanded);
-        logToggle.setText(expanded ? "收合" : "展開");
+        logToggleIcon.up = expanded;
+        String action = expanded ? "收合紀錄" : "展開紀錄";
+        logToggle.setToolTipText(action);
+        logToggle.getAccessibleContext().setAccessibleName(action);
+        logToggle.repaint();
         sidebar.revalidate();
         sidebar.repaint();
     }
 
-    /**
-     * 有聊天時 sender 不是 null：顯示聊天，紀錄預設收起來。沒有聊天就藏起來，紀錄照舊展開。
-     * 只有連線、而且桌上有兩位以上真人時才有聊天。
-     */
+    /** 連線的牌桌都有聊天，跟電腦打的一人房間也有，sender 是送出的地方。單機沒有聊天，傳 null 就藏起來。 */
     void setChat(Consumer<String> sender) {
-        boolean wasOn = chatSender != null;
         chatSender = sender;
-        if ((sender != null) == wasOn) {
-            return;
-        }
         chatBox.setVisible(sender != null);
-        setLogExpanded(sender == null);
+        sidebar.revalidate();
     }
 
     /** 文字來自網路，用 JTextArea 顯示，不會被當成 HTML。 */
@@ -371,6 +372,41 @@ public final class TablePanel extends JPanel {
         }
     }
 
+    /** 紀錄收合按鈕上的箭頭：一個 V 字，up 時朝上。大小跟著字體大小設定。 */
+    static final class ChevronIcon implements Icon {
+        private static final int SIZE = 14;
+        boolean up;
+
+        @Override
+        public int getIconWidth() {
+            return Theme.scaled(SIZE);
+        }
+
+        @Override
+        public int getIconHeight() {
+            return Theme.scaled(SIZE);
+        }
+
+        @Override
+        public void paintIcon(Component c, Graphics graphics, int x, int y) {
+            Graphics2D g = (Graphics2D) graphics.create();
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            double size = getIconWidth();
+            double half = size * .32;
+            double rise = size * .18 * (up ? -1 : 1);
+            double cx = x + size / 2;
+            double cy = y + size / 2;
+            g.setColor(Theme.TEXT);
+            g.setStroke(new BasicStroke((float) Math.max(1.5, size * .14), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            Path2D.Double path = new Path2D.Double();
+            path.moveTo(cx - half, cy - rise);
+            path.lineTo(cx, cy + rise);
+            path.lineTo(cx + half, cy - rise);
+            g.draw(path);
+            g.dispose();
+        }
+    }
+
     private static JPanel leftAligned(JLabel label) {
         JPanel row = new JPanel(new BorderLayout()) {
             @Override
@@ -384,11 +420,12 @@ public final class TablePanel extends JPanel {
         return row;
     }
 
-    void bindRound(RoundView round) {
+    /** 換一局。dice 是這局開門的骰子，牌桌照它畫牌牆。 */
+    void bindRound(RoundView round, Dice dice) {
         logArea.setText("");
         latestLog.setText(" ");
         setDiscardPrompt(false);
-        canvas.setRound(round);
+        canvas.setRound(round, dice);
     }
 
     /**

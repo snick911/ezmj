@@ -38,7 +38,9 @@ import ezmj.engine.Claim;
 import ezmj.engine.Round;
 import ezmj.engine.RoundEvent;
 import ezmj.engine.RoundView;
+import ezmj.engine.WallRing;
 import ezmj.model.BotLevel;
+import ezmj.model.Dice;
 import ezmj.model.GameSpeed;
 import ezmj.model.Gender;
 import ezmj.model.Meld;
@@ -730,6 +732,23 @@ final class OnlineTest {
             game.applyRoom(RoomInfo.parse(parse(ROOM_PLAYING.replace("\"connected\":false", "\"connected\":true"))));
             eq("小美", game.player(1).name(), "回來了");
             eq(9, game.player(1).concealed().size(), "牌還在");
+        });
+        test("局面：開門的骰子全桌一樣，斷線接回只有 state 也一樣", () -> {
+            String start = "{\"type\":\"roundStart\",\"number\":7,\"dealer\":0,\"roundWind\":1,\"streak\":1,\"dealMs\":3000}";
+            OnlineGame game = playing();
+            OnlineGame other = new OnlineGame();
+            other.applyRoom(RoomInfo.parse(parse(ROOM_PLAYING.replace("\"yourSeat\":2", "\"yourSeat\":0"))));
+            other.applyRoundStart(parse(start));
+            eq(game.dice(), other.dice(), "坐在別的位置看到的一樣");
+            eq(Dice.of("ABC234/0/1/0/1"), game.dice(), "房號、莊家的服務器座位、圈風、局風、連莊");
+            eq("小明 擲出 1、3、1，共 5 點，從小明的牌牆開門", WallRing.announce(game, game.dice()),
+                    "5 點數回莊家自己；網頁版的 AllTests 也比對這一行");
+            OnlineGame resumed = new OnlineGame();
+            resumed.applyRoom(RoomInfo.parse(parse(ROOM_PLAYING)));
+            resumed.applyState(parse(state("TURN", 1, "\"drawn\":null")), List.of());
+            eq(game.dice(), resumed.dice(), "斷線接回");
+            other.applyRoundStart(parse(start.replace("\"dealer\":0", "\"dealer\":1").replace("\"streak\":1", "\"streak\":0")));
+            eq(Dice.of("ABC234/1/1/0/0"), other.dice(), "換莊");
         });
         test("局面：看不懂的牌要拒絕", () -> {
             OnlineGame game = playing();
