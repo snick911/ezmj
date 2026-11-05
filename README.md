@@ -264,3 +264,22 @@ java -cp build\classes;build\test-classes ezmj.ui.OnlineTrial <服務器的 clas
 ```
 java -cp build\classes;build\test-classes ezmj.Tournament 4000
 ```
+
+## 授權
+
+Copyright © 2026 snick911
+
+雙重授權，依用途選一種：
+
+- **[AGPL-3.0](LICENSE)**（`AGPL-3.0-only`）：任何人都可以使用、修改、散布，包括商業用途，但修改過的版本要用同樣的授權公開完整原始碼。修改後架成網站或服務給別人用，也要讓使用者拿得到原始碼。
+- **商業授權**：要用在不公開原始碼的產品或服務，請到 [GitHub Issues](https://github.com/snick911/ezmj/issues) 開一則標題寫「商業授權」的 issue，另外談條件。
+
+用到這份原始碼的 [`ezmjService`](https://github.com/snick911/ezmjService) 與 [`ezmj_web`](https://github.com/snick911/ezmj_web) 是同樣的授權。
+
+開始畫面的版號旁有著作權與授權，選單「說明」→「關於」有完整的聲明與原始碼的連結，內容在 `HelpDialog.aboutPage`。AGPL 規定原版的畫面有顯示這些，改過的版本也要顯示，不要拿掉。
+
+可攜版與安裝程式內附的 Java 執行環境不是這個專案寫的，授權是 GPL-2.0 with Classpath Exception，說明在安裝資料夾的 `runtime\legal`。
+
+打包時 `LICENSE` 會放進 jar 的 `META-INF\LICENSE`，以及可攜版與安裝程式的 `LICENSE.txt`。
+
+要送 PR 請先看 [CONTRIBUTING.md](CONTRIBUTING.md)。

@@ -120,7 +120,9 @@ public final class StartPanel extends JPanel {
         card.add(resumeInfo, c);
         setResume(null);
 
-        JLabel version = new JLabel("版本 " + AppVersion.get(), SwingConstants.CENTER);
+        // 完整的授權聲明在「說明」→「關於」
+        JLabel version = new JLabel("版本 " + AppVersion.get() + "　" + HelpDialog.COPYRIGHT
+                + "　依 AGPL-3.0 授權，不提供任何擔保", SwingConstants.CENTER);
         version.setFont(Theme.font(Font.PLAIN, 13f));
         version.setForeground(Theme.MUTED);
         c.gridy++;

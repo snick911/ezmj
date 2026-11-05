@@ -24,6 +24,7 @@ function Invoke-Tool {
 }
 
 $version = (Select-String -Path 'src\ezmj\version.properties' -Pattern '^version=(.+)$').Matches[0].Groups[1].Value.Trim()
+$copyright = 'Copyright (C) 2026 snick911'
 Write-Host "== EZMJ $version =="
 
 if (-not (Select-String -Path 'CHANGELOG.md' -Pattern "^## $([regex]::Escape($version))( |$)" -Quiet)) {
@@ -61,6 +62,8 @@ Write-Host '== Jar =='
 $jarName = "ezmj-$version.jar"
 $manifest = 'build\MANIFEST.MF'
 "Implementation-Title: EZMJ`r`nImplementation-Version: $version`r`n" | Set-Content -Encoding Ascii $manifest
+New-Item -ItemType Directory -Force "$classes\META-INF" | Out-Null
+Copy-Item 'LICENSE' "$classes\META-INF\LICENSE"
 Invoke-Tool jar @('--create', '--file', "dist\$jarName", '--manifest', $manifest, '--main-class', 'ezmj.Main', '-C', $classes, '.')
 
 Write-Host '== Windows app =='
@@ -72,6 +75,7 @@ Invoke-Tool jpackage @(
     '--name', 'EZMJ',
     '--app-version', $version,
     '--vendor', 'EZMJ',
+    '--copyright', $copyright,
     '--description', 'Taiwan 16-tile Mahjong',
     '--input', $input_,
     '--main-jar', $jarName,
@@ -81,6 +85,8 @@ Invoke-Tool jpackage @(
     '--jlink-options', '--strip-native-commands --strip-debug --no-man-pages --no-header-files --compress=2',
     '--dest', 'build\image'
 )
+# The portable app and the installer are both made from this folder, so the license sits next to EZMJ.exe.
+Copy-Item 'LICENSE' 'build\image\EZMJ\LICENSE.txt'
 
 $portableName = "EZMJ-$version-windows-portable"
 Copy-Item -Recurse 'build\image\EZMJ' "dist\$portableName"
@@ -97,6 +103,7 @@ if ((Get-Command candle -ErrorAction SilentlyContinue) -and (Get-Command light -
         '--name', 'EZMJ',
         '--app-version', $version,
         '--vendor', 'EZMJ',
+        '--copyright', $copyright,
         '--description', 'Taiwan 16-tile Mahjong',
         '--app-image', 'build\image\EZMJ',
         '--win-menu',

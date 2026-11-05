@@ -209,6 +209,8 @@ public final class MainFrame extends JFrame {
         JMenu help = topMenu("說明");
         help.add(menuItem("基本規則", helpDialog::showRules));
         help.add(menuItem("台數計算", helpDialog::showScoring));
+        help.addSeparator();
+        help.add(menuItem("關於", helpDialog::showAbout));
 
         JMenuBar bar = new JMenuBar();
         bar.setBackground(Theme.PANEL);

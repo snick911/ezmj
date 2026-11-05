@@ -2,6 +2,7 @@ package ezmj.ui;
 
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Desktop;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
@@ -10,7 +11,9 @@ import java.awt.Graphics2D;
 import java.awt.Image;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
+import java.io.IOException;
 import java.net.MalformedURLException;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -26,7 +29,9 @@ import javax.swing.JEditorPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.SwingUtilities;
+import javax.swing.event.HyperlinkEvent;
 
+import ezmj.AppVersion;
 import ezmj.engine.Achievement;
 import ezmj.engine.AchievementBook;
 import ezmj.engine.PlayerStats;
@@ -44,6 +49,11 @@ import ezmj.table.TableFlow;
 
 /** 說明與榮譽榜的視窗。不擋住牌桌，可以邊看邊打；一局結果跳出時也還能捲動。 */
 final class HelpDialog extends JDialog {
+
+    static final String COPYRIGHT = "© 2026 snick911";
+    private static final String SOURCE_URL = "https://github.com/snick911/ezmj";
+    private static final String LICENSE_URL = SOURCE_URL + "/blob/main/LICENSE";
+    private static final String ISSUES_URL = SOURCE_URL + "/issues";
 
     private static final int RULE_TILE_W = 30;
     private static final int EXAMPLE_TILE_W = 24;
@@ -71,6 +81,11 @@ final class HelpDialog extends JDialog {
         page.setBackground(Theme.PANEL);
         page.setForeground(Theme.TEXT);
         page.setBorder(BorderFactory.createEmptyBorder(10, 22, 16, 22));
+        page.addHyperlinkListener(event -> {
+            if (event.getEventType() == HyperlinkEvent.EventType.ACTIVATED && event.getURL() != null) {
+                openInBrowser(event.getURL());
+            }
+        });
 
         scroll.setBorder(null);
         scroll.getVerticalScrollBar().setUnitIncrement(24);
@@ -100,6 +115,48 @@ final class HelpDialog extends JDialog {
     void showScoring() {
         currentPage = this::showScoring;
         showPage("台數計算", scoringIntro() + scoreTables());
+    }
+
+    void showAbout() {
+        currentPage = this::showAbout;
+        showPage("關於", aboutPage());
+    }
+
+    /**
+     * AGPL 第 5 條的「適當的法律聲明」：著作權、不提供擔保、可以照這個授權散布，以及去哪裡看授權條款。
+     * 原版的畫面有顯示，改過的版本就要照樣顯示，不要拿掉。
+     */
+    private static String aboutPage() {
+        return "<h2>EZMJ 台灣十六張麻將 " + AppVersion.get() + "</h2>"
+                + "<p>Copyright " + COPYRIGHT + "</p>"
+                + "<p>這個程式是自由軟體：你可以依照自由軟體基金會發布的 GNU Affero 通用公眾授權條款第 3 版（AGPL-3.0）使用、修改與散布。</p>"
+                + "<p>這個程式不提供任何擔保，連適售性或特定用途的適用性都沒有。詳細內容請看授權條款，以英文原文為準。</p>"
+                + "<p>授權條款的全文附在程式裡：免安裝版與安裝程式在程式資料夾的 LICENSE.txt，jar 在 META-INF/LICENSE。"
+                + "網路上也看得到：" + link(LICENSE_URL) + "</p>"
+                + "<p>原始碼：" + link(SOURCE_URL) + "</p>"
+                + "<p class=\"note\">散布修改過的版本，或架成服務給別人用，都要用同樣的授權公開完整的原始碼，這段聲明也要留著。</p>"
+                + "<h2>商業授權</h2>"
+                + "<p>不想公開原始碼的商業用途，可以向作者取得商業授權，請到 GitHub Issues 開一則標題寫「商業授權」的 issue："
+                + link(ISSUES_URL) + "</p>"
+                + "<h2>其他部分的授權</h2>"
+                + "<p>免安裝版與安裝程式內附的 Java 執行環境不是這個專案寫的，授權是 GPL-2.0 with Classpath Exception，"
+                + "說明在程式資料夾的 runtime\\legal。</p>";
+    }
+
+    /** 網址直接顯示出來，開不了瀏覽器時也能自己複製。 */
+    private static String link(String url) {
+        return "<a href=\"" + url + "\">" + url + "</a>";
+    }
+
+    /** 開不了就算了，網址就寫在頁面上。 */
+    private static void openInBrowser(URL url) {
+        try {
+            if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+                Desktop.getDesktop().browse(url.toURI());
+            }
+        } catch (IOException | URISyntaxException | UnsupportedOperationException | SecurityException e) {
+            // 網址就寫在頁面上
+        }
     }
 
     void showHonorRoll(HonorRoll roll, HonorRoll.Category category) {
@@ -460,6 +517,7 @@ final class HelpDialog extends JDialog {
         return "h2 { color: " + gold + "; font-size: " + Theme.scaled(20) + "pt; margin-top: 16px; margin-bottom: 4px; }"
                 + "h3 { color: " + gold + "; font-size: " + Theme.scaled(16) + "pt; margin-top: 14px; margin-bottom: 2px; }"
                 + "p { margin-top: 4px; margin-bottom: 6px; }"
+                + "a { color: " + gold + "; }"
                 + "ul { margin-top: 2px; margin-bottom: 6px; margin-left: 22px; }"
                 + "li { margin-bottom: 3px; }"
                 + "td { vertical-align: top; }"
