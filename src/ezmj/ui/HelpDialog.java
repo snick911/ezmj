@@ -51,9 +51,8 @@ import ezmj.table.TableFlow;
 final class HelpDialog extends JDialog {
 
     static final String COPYRIGHT = "© 2026 snick911";
-    private static final String SOURCE_URL = "https://github.com/snick911/ezmj";
-    private static final String LICENSE_URL = SOURCE_URL + "/blob/main/LICENSE";
-    private static final String ISSUES_URL = SOURCE_URL + "/issues";
+    private static final String LICENSE_URL = "https://www.gnu.org/licenses/agpl-3.0.html";
+    private static final String ISSUES_URL = "https://github.com/snick911/ezmj/issues";
 
     private static final int RULE_TILE_W = 30;
     private static final int EXAMPLE_TILE_W = 24;
@@ -124,7 +123,8 @@ final class HelpDialog extends JDialog {
 
     /**
      * AGPL 第 5 條的「適當的法律聲明」：著作權、不提供擔保、可以照這個授權散布，以及去哪裡看授權條款。
-     * 原版的畫面有顯示，改過的版本就要照樣顯示，不要拿掉。
+     * 原版的畫面有顯示，改過的版本就要照樣顯示，不要拿掉。原始碼的網址是作者決定不放的，
+     * 散布改過的版本時，照 AGPL 要提供它自己的原始碼。
      */
     private static String aboutPage() {
         return "<h2>EZMJ 台灣十六張麻將 " + AppVersion.get() + "</h2>"
@@ -133,7 +133,6 @@ final class HelpDialog extends JDialog {
                 + "<p>這個程式不提供任何擔保，連適售性或特定用途的適用性都沒有。詳細內容請看授權條款，以英文原文為準。</p>"
                 + "<p>授權條款的全文附在程式裡：免安裝版與安裝程式在程式資料夾的 LICENSE.txt，jar 在 META-INF/LICENSE。"
                 + "網路上也看得到：" + link(LICENSE_URL) + "</p>"
-                + "<p>原始碼：" + link(SOURCE_URL) + "</p>"
                 + "<p class=\"note\">散布修改過的版本，或架成服務給別人用，都要用同樣的授權公開完整的原始碼，這段聲明也要留著。</p>"
                 + "<h2>商業授權</h2>"
                 + "<p>不想公開原始碼的商業用途，可以向作者取得商業授權，請到 GitHub Issues 開一則標題寫「商業授權」的 issue："

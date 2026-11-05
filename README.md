@@ -276,7 +276,7 @@ Copyright © 2026 snick911
 
 用到這份原始碼的 [`ezmjService`](https://github.com/snick911/ezmjService) 與 [`ezmj_web`](https://github.com/snick911/ezmj_web) 是同樣的授權。
 
-開始畫面的版號旁有著作權與授權，選單「說明」→「關於」有完整的聲明與原始碼的連結，內容在 `HelpDialog.aboutPage`。AGPL 規定原版的畫面有顯示這些，改過的版本也要顯示，不要拿掉。
+開始畫面的版號旁有著作權與授權，選單「說明」→「關於」有完整的聲明，內容在 `HelpDialog.aboutPage`。AGPL 規定原版的畫面有顯示這些，改過的版本也要顯示，不要拿掉。授權條款連到 gnu.org；畫面上不放原始碼的網址，這是作者的選擇，不是 AGPL 的要求。
 
 可攜版與安裝程式內附的 Java 執行環境不是這個專案寫的，授權是 GPL-2.0 with Classpath Exception，說明在安裝資料夾的 `runtime\legal`。
 
