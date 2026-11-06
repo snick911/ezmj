@@ -1,8 +1,6 @@
 package ezmj.engine;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.EnumMap;
 import java.util.List;
@@ -11,6 +9,7 @@ import java.util.Properties;
 
 import ezmj.model.BotLevel;
 import ezmj.model.PropertyFiles;
+import ezmj.model.PropertyStore;
 
 /**
  * 真人玩家的長期統計，每局累計。一份總計，再依同桌有哪些電腦等級各一份：
@@ -20,6 +19,8 @@ public final class PlayerStats {
 
     private static final int HUMAN_SEAT = 0;
     private static final int SEATS = 4;
+    /** 檔案的格式版本，見 PropertyFiles.FORMAT_KEY。 */
+    private static final int FORMAT = 1;
     private static final String TOTAL_PREFIX = "total.";
     private static final String LEVEL_PREFIX = "level.";
 
@@ -205,12 +206,18 @@ public final class PlayerStats {
         return place;
     }
 
+    /** 明碼的文字檔，測試用；遊戲裡的紀錄用 Records 封存。 */
     public static PlayerStats load(Path file) {
+        return load(file, PropertyStore.PLAIN);
+    }
+
+    /** 讀不到或讀不懂就是空的；新增的數字在舊檔裡沒有，從 0 開始累計。 */
+    public static PlayerStats load(Path file, PropertyStore store) {
         PlayerStats stats = new PlayerStats();
-        Properties values = new Properties();
-        try (InputStream in = Files.newInputStream(file)) {
-            values.load(in);
-        } catch (IOException | IllegalArgumentException e) {
+        Properties values;
+        try {
+            values = store.read(file);
+        } catch (IOException e) {
             return stats;
         }
         stats.total.read(values, TOTAL_PREFIX);
@@ -219,9 +226,14 @@ public final class PlayerStats {
     }
 
     public void save(Path file) throws IOException {
+        save(file, PropertyStore.PLAIN);
+    }
+
+    public void save(Path file, PropertyStore store) throws IOException {
         Properties values = new Properties();
+        values.setProperty(PropertyFiles.FORMAT_KEY, String.valueOf(FORMAT));
         total.write(values, TOTAL_PREFIX);
         byLevel.forEach((level, totals) -> totals.write(values, LEVEL_PREFIX + level.name() + "."));
-        PropertyFiles.store(values, file);
+        store.write(values, file);
     }
 }

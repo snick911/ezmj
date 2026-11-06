@@ -19,6 +19,8 @@ public final class AllTests {
         SettingsTest.run();
         HonorRollTest.run();
         AchievementTest.run();
+        CareerTest.run();
+        SealTest.run();
         SaveTest.run();
         RefereeTest.run();
         SimulationTest.run();

@@ -10,7 +10,6 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.GridLayout;
 import java.awt.Insets;
-import java.awt.RenderingHints;
 import java.util.List;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -26,16 +25,16 @@ import javax.swing.SwingConstants;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 
-import ezmj.AppVersion;
 import ezmj.model.BotLevel;
 import ezmj.model.GameConfig;
-import ezmj.model.Suit;
-import ezmj.model.Tile;
 
-/** 開始畫面：輸入姓名、選擇籌碼本金、底與台、電腦等級，按下按鈕即開始；有存檔時也能繼續上次的牌局，也可以進入連線對戰。 */
+/**
+ * 練習牌局：輸入姓名、選擇籌碼本金、底與台、電腦等級，按下按鈕即開始；有存檔時也能繼續上次的練習牌局。
+ * 每場的籌碼都重新選，成就、統計與榮譽榜和修業檔案分開記。
+ */
 public final class StartPanel extends JPanel {
 
-    private static final int MAX_NAME_LENGTH = 8;
+    static final int MAX_NAME_LENGTH = 8;
     static final Integer[] CHIP_OPTIONS = {10_000, 20_000, 50_000, 100_000, 500_000, 1_000_000, 5_000_000, 10_000_000};
     static final Integer[] BASE_OPTIONS = {50, 100, 300, 500, 1_000, 5_000, 10_000, 50_000, 100_000, 500_000, 1_000_000};
     static final Integer[] TAI_OPTIONS = {10, 20, 50, 100, 200, 5_000, 10_000, 50_000, 100_000, 200_000, 500_000, 1_000_000};
@@ -47,13 +46,13 @@ public final class StartPanel extends JPanel {
     /** 依序是座位 1、2、3，也就是右家、對家、左家。 */
     private final List<JComboBox<BotLevel>> levelBoxes = List.of(combo(BotLevel.values(), BotLevel.NORMAL),
             combo(BotLevel.values(), BotLevel.NORMAL), combo(BotLevel.values(), BotLevel.NORMAL));
-    private final JButton startButton = Theme.button("開始遊戲", Theme.RED);
-    private final JButton resumeButton = Theme.button("繼續上次的牌局", Theme.BUTTON);
-    private final JButton onlineButton = Theme.button("連線對戰", Theme.BUTTON);
+    private final JButton startButton = Theme.button("開始練習牌局", Theme.RED);
+    private final JButton resumeButton = Theme.button("繼續上次的練習牌局", Theme.BUTTON);
+    private final JButton backButton = Theme.button("返回", Theme.PANEL_LIGHT);
     private final JLabel resumeInfo = new JLabel(" ", SwingConstants.CENTER);
     private final JLabel payWarning = warningLabel();
 
-    public StartPanel(Consumer<GameConfig> onStart, Runnable onResume, Runnable onOnline) {
+    public StartPanel(Consumer<GameConfig> onStart, Runnable onResume, Runnable onBack) {
         super(new GridBagLayout());
 
         JPanel card = new JPanel(new GridBagLayout());
@@ -67,14 +66,20 @@ public final class StartPanel extends JPanel {
         c.gridy = 0;
         c.gridwidth = 2;
         c.insets = new Insets(0, 0, 8, 0);
-        card.add(new TileBanner(), c);
+        card.add(new HomePanel.TileBanner(), c);
 
-        JLabel title = new JLabel("台灣十六張麻將", SwingConstants.CENTER);
+        JLabel title = new JLabel("練習牌局", SwingConstants.CENTER);
         title.setFont(Theme.font(Font.BOLD, 34f));
         title.setForeground(Theme.GOLD);
         c.gridy++;
-        c.insets = new Insets(0, 0, 22, 0);
+        c.insets = new Insets(0, 0, 4, 0);
         card.add(title, c);
+        JLabel subtitle = new JLabel("每場自訂籌碼、底台與電腦等級，成就、統計與榮譽榜和修業檔案分開記", SwingConstants.CENTER);
+        subtitle.setFont(Theme.font(Font.PLAIN, 14f));
+        subtitle.setForeground(Theme.MUTED);
+        c.gridy++;
+        c.insets = new Insets(0, 0, 18, 0);
+        card.add(subtitle, c);
 
         styleName();
         addRow(card, c, "姓名（最多 " + MAX_NAME_LENGTH + " 字）", nameField);
@@ -103,13 +108,13 @@ public final class StartPanel extends JPanel {
 
         resumeButton.setFont(Theme.font(Font.BOLD, 17f));
         resumeButton.addActionListener(e -> onResume.run());
-        onlineButton.setFont(Theme.font(Font.BOLD, 17f));
-        onlineButton.addActionListener(e -> onOnline.run());
-        // 排在同一列，視窗最小的時候開始畫面才放得下
+        backButton.setFont(Theme.font(Font.BOLD, 17f));
+        backButton.addActionListener(e -> onBack.run());
+        // 排在同一列，視窗最小的時候畫面才放得下
         JPanel moreButtons = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 0));
         moreButtons.setOpaque(false);
         moreButtons.add(resumeButton);
-        moreButtons.add(onlineButton);
+        moreButtons.add(backButton);
         c.gridy++;
         c.insets = new Insets(10, 0, 0, 0);
         card.add(moreButtons, c);
@@ -119,15 +124,6 @@ public final class StartPanel extends JPanel {
         c.insets = new Insets(4, 0, 0, 0);
         card.add(resumeInfo, c);
         setResume(null);
-
-        // 完整的授權聲明在「說明」→「關於」
-        JLabel version = new JLabel("版本 " + AppVersion.get() + "　" + HelpDialog.COPYRIGHT
-                + "　依 AGPL-3.0 授權，不提供任何擔保", SwingConstants.CENTER);
-        version.setFont(Theme.font(Font.PLAIN, 13f));
-        version.setForeground(Theme.MUTED);
-        c.gridy++;
-        c.insets = new Insets(12, 0, 0, 0);
-        card.add(version, c);
 
         add(card);
 
@@ -167,8 +163,8 @@ public final class StartPanel extends JPanel {
     /** 字體大小改變後，讓開始按鈕跟著調整。 */
     void syncSizes() {
         startButton.setPreferredSize(new Dimension(Theme.scaled(300), Theme.scaled(50)));
-        resumeButton.setPreferredSize(new Dimension(Theme.scaled(190), Theme.scaled(40)));
-        onlineButton.setPreferredSize(new Dimension(Theme.scaled(190), Theme.scaled(40)));
+        resumeButton.setPreferredSize(new Dimension(Theme.scaled(220), Theme.scaled(40)));
+        backButton.setPreferredSize(new Dimension(Theme.scaled(120), Theme.scaled(40)));
     }
 
     private void styleName() {
@@ -244,34 +240,13 @@ public final class StartPanel extends JPanel {
 
     @Override
     protected void paintComponent(Graphics graphics) {
-        Graphics2D g = (Graphics2D) graphics;
-        g.setPaint(new GradientPaint(0, 0, Theme.FELT, 0, getHeight(), Theme.FELT_DARK));
-        g.fillRect(0, 0, getWidth(), getHeight());
+        paintFelt(this, graphics);
     }
 
-    /** 標題上方的裝飾牌。 */
-    private static final class TileBanner extends JComponent {
-        private static final Tile[] TILES = {
-            Tile.of(Suit.WAN, 1), Tile.of(Suit.TONG, 5), Tile.of(Suit.TIAO, 9),
-            Tile.of(Suit.WIND, 1), Tile.of(Suit.DRAGON, 1), Tile.of(Suit.DRAGON, 2),
-        };
-
-        TileBanner() {
-            setPreferredSize(new Dimension(300, 66));
-        }
-
-        @Override
-        protected void paintComponent(Graphics graphics) {
-            Graphics2D g = (Graphics2D) graphics.create();
-            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-            double w = 42;
-            double x = (getWidth() - w * TILES.length - 4 * (TILES.length - 1)) / 2;
-            for (Tile tile : TILES) {
-                TilePainter.paintFace(g, tile, x, 2, w, 58);
-                x += w + 4;
-            }
-            g.dispose();
-        }
+    /** 開始畫面、練習牌局與修業模式共用的綠色漸層背景。 */
+    static void paintFelt(JComponent panel, Graphics graphics) {
+        Graphics2D g = (Graphics2D) graphics;
+        g.setPaint(new GradientPaint(0, 0, Theme.FELT, 0, panel.getHeight(), Theme.FELT_DARK));
+        g.fillRect(0, 0, panel.getWidth(), panel.getHeight());
     }
 }

@@ -1,8 +1,6 @@
 package ezmj.engine;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -16,15 +14,18 @@ import ezmj.model.Gender;
 import ezmj.model.Meld;
 import ezmj.model.Personality;
 import ezmj.model.Player;
-import ezmj.model.PropertyFiles;
+import ezmj.model.PropertyStore;
 import ezmj.model.Tile;
 import ezmj.model.Wall;
 import ezmj.rules.ScoreItem;
 import ezmj.rules.ScoreResult;
 
 /**
- * 牌局存檔：只有一份，存成文字檔。局與局之間存的話沒有 round，接回來就開下一局。
+ * 牌局存檔：局與局之間存的話沒有 round，接回來就開下一局。
  * 牌牆順序也存在裡面，所以重開不會換到別的牌。讀不懂或張數不對就丟 IOException，不會接回壞掉的牌局。
+ * <p>
+ * 擴充的規則：新增的項目讀的時候要有預設值（像 round.listenChances），舊的存檔才接得回來；
+ * 項目的意思變了才把 VERSION 加一，讀的地方照檔案的版本換算。比 VERSION 新的存檔是新版程式寫的，不接回。
  */
 public final class GameSave {
 
@@ -42,9 +43,15 @@ public final class GameSave {
     private GameSave() {
     }
 
-    /** round 是 null 或已經結束，都當作局與局之間。 */
+    /** 明碼的文字檔，測試用；遊戲裡的存檔用 save(Path, PropertyStore, ...) 封存。 */
     public static void save(Path file, long seed, GameSession session, Round round, boolean usedAutoPlay,
                             ThinkTimer thinking) throws IOException {
+        save(file, PropertyStore.PLAIN, seed, session, round, usedAutoPlay, thinking);
+    }
+
+    /** round 是 null 或已經結束，都當作局與局之間。 */
+    public static void save(Path file, PropertyStore store, long seed, GameSession session, Round round,
+                            boolean usedAutoPlay, ThinkTimer thinking) throws IOException {
         Properties values = new Properties();
         values.setProperty("version", String.valueOf(VERSION));
         values.setProperty("seed", String.valueOf(seed));
@@ -55,16 +62,16 @@ public final class GameSave {
         if (round != null && round.phase() != Round.Phase.FINISHED) {
             writeRound(values, round);
         }
-        PropertyFiles.store(values, file);
+        store.write(values, file);
     }
 
+    /** 明碼的文字檔，測試用。 */
     public static Loaded load(Path file) throws IOException {
-        Properties values = new Properties();
-        try (InputStream in = Files.newInputStream(file)) {
-            values.load(in);
-        } catch (IllegalArgumentException e) {
-            throw new IOException("存檔內容不正確", e);
-        }
+        return load(file, PropertyStore.PLAIN);
+    }
+
+    public static Loaded load(Path file, PropertyStore store) throws IOException {
+        Properties values = store.read(file);
         try {
             return read(values);
         } catch (RuntimeException e) {
@@ -145,8 +152,12 @@ public final class GameSave {
     }
 
     private static Loaded read(Properties values) throws IOException {
-        if (integer(values, "version") != VERSION) {
-            throw new IOException("存檔版本不符");
+        int version = integer(values, "version");
+        if (version > VERSION) {
+            throw new IOException("存檔是新版程式寫的，版本 " + version);
+        }
+        if (version < 1) {
+            throw new IOException("存檔版本不正確：" + version);
         }
         long seed = Long.parseLong(text(values, "seed"));
         List<BotLevel> levels = new ArrayList<>();

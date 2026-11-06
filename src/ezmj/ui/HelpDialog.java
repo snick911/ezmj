@@ -32,6 +32,8 @@ import javax.swing.SwingUtilities;
 import javax.swing.event.HyperlinkEvent;
 
 import ezmj.AppVersion;
+import ezmj.career.CareerProfile;
+import ezmj.career.Challenge;
 import ezmj.engine.Achievement;
 import ezmj.engine.AchievementBook;
 import ezmj.engine.PlayerStats;
@@ -158,20 +160,37 @@ final class HelpDialog extends JDialog {
         }
     }
 
-    void showHonorRoll(HonorRoll roll, HonorRoll.Category category) {
-        currentPage = () -> showHonorRoll(roll, category);
-        showPage("榮譽榜：" + category.label(), honorPage(roll, category));
+    /** owner 是這套紀錄屬於誰，例如「練習牌局」或「修業：阿明」，寫在標題與頁首。 */
+    void showHonorRoll(HonorRoll roll, HonorRoll.Category category, String owner) {
+        currentPage = () -> showHonorRoll(roll, category, owner);
+        showPage("榮譽榜：" + category.label() + "（" + owner + "）", ownerLine(owner) + honorPage(roll, category));
     }
 
     /** group 是 null 時顯示全部分類。 */
-    void showAchievements(AchievementBook book, Achievement.Group group) {
-        currentPage = () -> showAchievements(book, group);
-        showPage("成就" + (group == null ? "" : "：" + group.label()), achievementPage(book, group));
+    void showAchievements(AchievementBook book, Achievement.Group group, String owner) {
+        currentPage = () -> showAchievements(book, group, owner);
+        showPage("成就" + (group == null ? "" : "：" + group.label()) + "（" + owner + "）",
+                ownerLine(owner) + achievementPage(book, group));
     }
 
-    void showStats(PlayerStats stats) {
-        currentPage = () -> showStats(stats);
-        showPage("我的統計", statsPage(stats));
+    /** career 是修業檔案，練習牌局傳 null。 */
+    void showStats(PlayerStats stats, String owner, CareerProfile career) {
+        currentPage = () -> showStats(stats, owner, career);
+        showPage("我的統計（" + owner + "）", ownerLine(owner) + (career == null ? "" : careerSection(career))
+                + statsPage(stats));
+    }
+
+    private static String ownerLine(String owner) {
+        return "<p class=\"note\">這是「" + escape(owner) + "」的紀錄。練習牌局與每個修業檔案各記各的。</p>";
+    }
+
+    private static String careerSection(CareerProfile career) {
+        StringBuilder html = new StringBuilder("<h2>修業檔案</h2><table width=\"100%\" cellspacing=\"0\" cellpadding=\"5\">");
+        statRow(html, "帳上籌碼", career.bankroll() + "（起始 " + career.startingChips() + "，最高 " + career.peak() + "）");
+        statRow(html, "破產", career.bankruptcies() + " 次");
+        statRow(html, "挑戰過關", career.clearedCount() + " / " + Challenge.values().length + " 關");
+        statRow(html, "建立日期", escape(career.created()));
+        return html.append("</table>").toString();
     }
 
     private static String statsPage(PlayerStats stats) {
@@ -207,7 +226,7 @@ final class HelpDialog extends JDialog {
         }
         return html.append("</table><p class=\"note\">同桌有兩種等級時，兩邊都會算，所以局數加起來會超過總計。"
                 + "平均台數不含莊家台。開了電腦代打之後，這場剩下的局不列入。"
-                + "累計輸贏把不同底台的牌局直接加總。</p>").toString();
+                + "累計輸贏把不同底台的牌局直接加總。修業模式的挑戰關卡每局照算，但不算場數與名次。</p>").toString();
     }
 
     private static void statRow(StringBuilder html, String title, String value) {
@@ -227,7 +246,8 @@ final class HelpDialog extends JDialog {
             }
         }
         return html.append("<p class=\"note\">都是看你自己的表現。開了電腦代打之後，這場剩下的局與整場類成就都不列入；"
-                + "在那之前自己打完的局仍然算數，中途離開的牌局也一樣。</p>").toString();
+                + "在那之前自己打完的局仍然算數，中途離開的牌局也一樣。"
+                + "修業模式的挑戰關卡每局照算，整場類的成就與「打完幾場」不算。</p>").toString();
     }
 
     private static void appendAchievementGroup(StringBuilder html, AchievementBook book, Achievement.Group group) {
@@ -291,7 +311,7 @@ final class HelpDialog extends JDialog {
                     .append("</tr>");
         }
         return html.append("</table><p class=\"note\">胡牌數包含自摸。贏錢是結束時的籌碼減去本金。"
-                + "每個類別只列數值大於 0 的成績，數值相同時先達成的排前面。</p>").toString();
+                + "每個類別只列數值大於 0 的成績，數值相同時先達成的排前面。修業模式的挑戰關卡不列入。</p>").toString();
     }
 
     private static String honorCell(String text, boolean highlighted) {
@@ -380,7 +400,32 @@ final class HelpDialog extends JDialog {
                 + "也算在牌型台數裡。電腦也會報聽：初學者不報，其他等級看手牌與局勢決定。</p>"
                 + "<h2>電腦代打</h2>"
                 + "<p>牌桌右側的「電腦代打」按鈕可以隨時開關，打開後由職業等級的電腦替你決定。"
-                + "用過電腦代打的牌局不列入榮譽榜。連線對戰不能使用電腦代打。</p>";
+                + "用過電腦代打的牌局不列入榮譽榜。連線對戰與修業模式的挑戰關卡不能使用電腦代打。</p>"
+                + careerRules();
+    }
+
+    /** 修業模式的規則與關卡表，關卡直接從 Challenge 列出來。 */
+    private static String careerRules() {
+        StringBuilder html = new StringBuilder("<h2>修業模式</h2>"
+                + "<p>建立檔案時選好起始籌碼，之後一般對戰帶帳上的籌碼上桌打四圈，每局結算完就入帳，輸贏不會重來。"
+                + "帳上不到 " + CareerProfile.RELIEF_BELOW + " 時可以領救濟金補到 " + CareerProfile.RELIEF_TO
+                + "，會記一次破產。每個檔案的成就、統計與榮譽榜各自記錄，和練習牌局也分開。</p>"
+                + "<p>挑戰關卡要依序過關，每關的對手、圈數、籌碼與底台都固定，不從帳上扣籌碼；第一次過關有獎金。"
+                + "任務一確定成功或失敗，這場就在那一局結束。挑戰的每一局照算成就與統計，但不算整場類的成就與榮譽榜。</p>"
+                + "<table width=\"100%\" cellspacing=\"0\" cellpadding=\"5\"><tr class=\"head\">");
+        for (String title : new String[] {"關", "名稱", "任務", "牌桌", "獎金"}) {
+            html.append("<td class=\"cell\">").append(title).append("</td>");
+        }
+        html.append("</tr>");
+        for (Challenge challenge : Challenge.values()) {
+            html.append("<tr>").append(honorCell(String.valueOf(challenge.number()), false))
+                    .append(honorCell("<b>" + challenge.title() + "</b>", false))
+                    .append(honorCell(challenge.goalText(), false))
+                    .append(colorCell(challenge.setup(), Theme.MUTED))
+                    .append(honorCell(String.valueOf(challenge.reward()), false))
+                    .append("</tr>");
+        }
+        return html.append("</table>").toString();
     }
 
     /** 手上的牌，加上紅框的那張，等於亮出來的面子。 */

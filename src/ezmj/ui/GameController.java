@@ -1,12 +1,12 @@
 package ezmj.ui;
 
 import java.io.IOException;
-import java.nio.file.Path;
 import java.util.List;
 import java.util.Random;
 import java.util.Set;
 
 import ezmj.bot.Bot;
+import ezmj.career.Records;
 import ezmj.engine.Claim;
 import ezmj.engine.GameSave;
 import ezmj.engine.GameSession;
@@ -133,9 +133,9 @@ public final class GameController implements TableFlow.Listener, TablePresenter.
         resuming = false;
     }
 
-    /** 存下目前的牌局，事件之間的狀態都是完整的，隨時可以存。 */
-    void save(Path file, long seed) throws IOException {
-        GameSave.save(file, seed, session, round(), usedAutoPlay, flow.thinking(HUMAN_SEAT));
+    /** 存下目前的牌局，事件之間的狀態都是完整的，隨時可以存。存在那套紀錄的資料夾，封存起來。 */
+    void save(Records records, long seed) throws IOException {
+        records.saveGame(seed, session, round(), usedAutoPlay, flow.thinking(HUMAN_SEAT));
     }
 
     public void stop() {

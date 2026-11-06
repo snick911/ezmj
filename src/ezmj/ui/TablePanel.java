@@ -58,6 +58,17 @@ public final class TablePanel extends JPanel {
     private final JLabel roundInfo = new JLabel(" ");
     private final JLabel stakesInfo = new JLabel(" ");
     private final JLabel thinkInfo = new JLabel(" ");
+    /** 挑戰關卡的任務，平常藏起來。 */
+    private final JPanel missionBox = new JPanel() {
+        @Override
+        public Dimension getMaximumSize() {
+            return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+        }
+    };
+    private final JLabel missionTitle = new JLabel(" ");
+    private final JLabel missionGoal = new JLabel(" ");
+    private final JLabel missionProgress = new JLabel(" ");
+    private String missionGoalText;
     /** 每家一列，欄位依序是門風、玩家、籌碼。 */
     private final JLabel[][] scoreCells = new JLabel[4][];
     private final JTextArea logArea = new JTextArea();
@@ -113,6 +124,53 @@ public final class TablePanel extends JPanel {
     void syncSizes() {
         actionBar.setPreferredSize(new Dimension(0, Theme.scaled(84)));
         sidebar.setPreferredSize(new Dimension(Theme.scaled(262), 0));
+        wrapMissionGoal();
+    }
+
+    /** 挑戰關卡的任務與進度，顯示在平均思考那一行下面。title 是 null 時藏起來。文字都是程式自己的。 */
+    void showMission(String title, String goal, String progress) {
+        missionBox.setVisible(title != null);
+        if (title != null) {
+            missionTitle.setText(title);
+            missionGoalText = goal;
+            wrapMissionGoal();
+            missionProgress.setText(progress);
+        }
+        sidebar.revalidate();
+        sidebar.repaint();
+    }
+
+    /** 任務說明照側欄的寬度折行：側欄扣掉兩邊各 14 與任務框兩邊各 8，再留一點餘裕。 */
+    private void wrapMissionGoal() {
+        if (missionGoalText != null) {
+            missionGoal.setText(HomePanel.wrapHtml(missionGoalText, Theme.scaled(262) - 48));
+        }
+    }
+
+    /** 下面的間距放在框外面，藏起來時連間距一起不見，其他牌桌的排版不變。 */
+    private JPanel buildMissionBox() {
+        JPanel inner = new JPanel();
+        inner.setLayout(new BoxLayout(inner, BoxLayout.Y_AXIS));
+        inner.setBackground(Theme.PANEL_LIGHT);
+        inner.setBorder(BorderFactory.createEmptyBorder(6, 8, 8, 8));
+        missionTitle.setFont(Theme.font(Font.BOLD, 14f));
+        missionTitle.setForeground(Theme.GOLD);
+        missionGoal.setFont(Theme.font(Font.PLAIN, 13f));
+        missionGoal.setForeground(Theme.TEXT);
+        missionProgress.setFont(Theme.font(Font.BOLD, 13f));
+        missionProgress.setForeground(Theme.GOLD);
+        inner.add(missionTitle);
+        inner.add(Box.createVerticalStrut(3));
+        inner.add(missionGoal);
+        inner.add(Box.createVerticalStrut(3));
+        inner.add(missionProgress);
+        missionBox.setLayout(new BorderLayout());
+        missionBox.setOpaque(false);
+        missionBox.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
+        missionBox.setAlignmentX(LEFT_ALIGNMENT);
+        missionBox.add(inner, BorderLayout.CENTER);
+        missionBox.setVisible(false);
+        return missionBox;
     }
 
     private JPanel buildActionBar() {
@@ -154,6 +212,7 @@ public final class TablePanel extends JPanel {
         thinkInfo.setToolTipText("從摸牌或可以吃碰槓胡開始，到打出牌或決定過為止的平均時間");
         side.add(leftAligned(thinkInfo));
         side.add(Box.createVerticalStrut(8));
+        side.add(buildMissionBox());
 
         side.add(buildLogHeader());
         side.add(Box.createVerticalStrut(4));

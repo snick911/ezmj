@@ -303,7 +303,9 @@ public final class OnlineTrial {
                 if (!card.isVisible()) {
                     continue;
                 }
-                if (card instanceof StartPanel) {
+                if (card instanceof HomePanel) {
+                    onHome((HomePanel) card);
+                } else if (card instanceof StartPanel) {
                     onStart((StartPanel) card);
                 } else if (card instanceof OnlinePanel) {
                     onForm((OnlinePanel) card);
@@ -343,7 +345,7 @@ public final class OnlineTrial {
             if (dialog.getTitle().equals("離開牌局")) {
                 JButton discard = buttons.stream().filter(b -> b.getText().equals("不存檔離開")).findFirst().orElse(buttons.get(0));
                 click(discard);
-            } else if (dialog.getTitle().equals("開始遊戲")) {
+            } else if (dialog.getTitle().equals("練習牌局")) {
                 click(buttons.get(0));
             } else {
                 shot("message");
@@ -351,12 +353,20 @@ public final class OnlineTrial {
             }
         }
 
+        /** 開始畫面：單機進練習牌局，其他都進連線對戰。 */
+        private void onHome(HomePanel panel) {
+            if (leaving || (role.equals("local") && results > 0)) {
+                finish();
+            }
+            clickText(panel, role.equals("local") ? "練習牌局" : "連線對戰");
+        }
+
         private void onStart(StartPanel panel) {
             if (leaving) {
                 finish();
             }
             if (!role.equals("local")) {
-                clickText(panel, "連線對戰");
+                clickText(panel, "返回");
                 return;
             }
             if (results > 0) {
@@ -367,7 +377,7 @@ public final class OnlineTrial {
                 filledForm = true;
                 fields.get(0).setText("單機");
                 log("開始單機牌局");
-                clickText(panel, "開始遊戲");
+                clickText(panel, "開始練習牌局");
             }
         }
 
@@ -743,7 +753,7 @@ public final class OnlineTrial {
             sawFinal = true;
             log("整場結束：" + all(dialog, JLabel.class).get(0).getText());
             shotOf(dialog, "final-dialog");
-            clickText(dialog, role.equals("local") ? "回到開始畫面" : "回到房間");
+            clickText(dialog, role.equals("local") ? "回到練習牌局" : "回到房間");
         }
 
         private List<JButton> actionButtons(TablePanel table) {

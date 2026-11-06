@@ -1,8 +1,6 @@
 package ezmj.engine;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -11,11 +9,14 @@ import java.util.Map;
 import java.util.Properties;
 
 import ezmj.model.PropertyFiles;
+import ezmj.model.PropertyStore;
 
 /** 玩家達成的成就與累計次數。存成文字檔，讀不懂的項目會略過，不影響其他紀錄。 */
 public final class AchievementBook {
 
     private static final int HUMAN_SEAT = 0;
+    /** 檔案的格式版本，見 PropertyFiles.FORMAT_KEY。 */
+    private static final int FORMAT = 1;
     private static final String UNLOCKED_PREFIX = "unlocked.";
     private static final String COUNT_PREFIX = "count.";
 
@@ -76,12 +77,21 @@ public final class AchievementBook {
         return counts.getOrDefault(counter, 0);
     }
 
+    /** 明碼的文字檔，測試用；遊戲裡的紀錄用 Records 封存。 */
     public static AchievementBook load(Path file) {
+        return load(file, PropertyStore.PLAIN);
+    }
+
+    /**
+     * 讀不到或讀不懂就是空的。成就與次數都用名稱存，新增的成就在舊檔裡就是還沒達成，
+     * 檔案裡有這個版本不認得的名稱就略過，所以 Achievement 的名稱不要改。
+     */
+    public static AchievementBook load(Path file, PropertyStore store) {
         AchievementBook book = new AchievementBook();
-        Properties values = new Properties();
-        try (InputStream in = Files.newInputStream(file)) {
-            values.load(in);
-        } catch (IOException | IllegalArgumentException e) {
+        Properties values;
+        try {
+            values = store.read(file);
+        } catch (IOException e) {
             return book;
         }
         for (Achievement achievement : Achievement.values()) {
@@ -104,9 +114,14 @@ public final class AchievementBook {
     }
 
     public void save(Path file) throws IOException {
+        save(file, PropertyStore.PLAIN);
+    }
+
+    public void save(Path file, PropertyStore store) throws IOException {
         Properties values = new Properties();
+        values.setProperty(PropertyFiles.FORMAT_KEY, String.valueOf(FORMAT));
         unlocked.forEach((achievement, date) -> values.setProperty(UNLOCKED_PREFIX + achievement.name(), date));
         counts.forEach((counter, count) -> values.setProperty(COUNT_PREFIX + counter.name(), String.valueOf(count)));
-        PropertyFiles.store(values, file);
+        store.write(values, file);
     }
 }

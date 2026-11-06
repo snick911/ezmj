@@ -27,6 +27,11 @@ final class FinalDialog extends JDialog {
 
     /** note 是表格下方要告訴玩家的話，沒有就傳空字串。closeLabel 是關閉按鈕的文字。 */
     FinalDialog(Frame owner, GameView game, String note, List<Achievement> earned, String closeLabel) {
+        this(owner, game, null, note, earned, closeLabel);
+    }
+
+    /** headline 是 null 時照結束原因寫，例如「四圈打完，牌局結束」。note 可以用換行分成幾行。 */
+    FinalDialog(Frame owner, GameView game, String headline, String note, List<Achievement> earned, String closeLabel) {
         super(owner, "牌局結束", true);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
 
@@ -38,7 +43,7 @@ final class FinalDialog extends JDialog {
         Player[] ranking = {game.player(0), game.player(1), game.player(2), game.player(3)};
         Arrays.sort(ranking, Comparator.comparingInt(Player::chips).reversed());
 
-        content.add(ResultDialog.line(headline(ranking), Font.BOLD, 24f, Theme.GOLD));
+        content.add(ResultDialog.line(headline == null ? headline(ranking) : headline, Font.BOLD, 24f, Theme.GOLD));
         content.add(Box.createVerticalStrut(6));
         content.add(ResultDialog.line("共打 " + game.roundsPlayed() + " 局，流局 " + game.drawnGames() + " 次",
                 Font.PLAIN, 14f, Theme.MUTED));
@@ -48,7 +53,9 @@ final class FinalDialog extends JDialog {
         content.add(ResultDialog.line("胡牌次數包含自摸", Font.PLAIN, 14f, Theme.MUTED));
         if (!note.isEmpty()) {
             content.add(Box.createVerticalStrut(8));
-            content.add(ResultDialog.line(note, Font.BOLD, 16f, Theme.GOLD));
+            for (String line : note.split("\n")) {
+                content.add(ResultDialog.line(line, Font.BOLD, 16f, Theme.GOLD));
+            }
         }
         ResultDialog.addEarned(content, earned);
         content.add(Box.createVerticalStrut(16));

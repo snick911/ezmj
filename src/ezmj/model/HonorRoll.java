@@ -1,8 +1,6 @@
 package ezmj.model;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -17,6 +15,8 @@ import java.util.stream.Collectors;
 public final class HonorRoll {
 
     public static final int SIZE = 10;
+    /** 檔案的格式版本，見 PropertyFiles.FORMAT_KEY。 */
+    private static final int FORMAT = 1;
 
     public enum Category {
         WINS("胡牌數", GameRecord::wins),
@@ -86,12 +86,18 @@ public final class HonorRoll {
         return index + 1;
     }
 
+    /** 明碼的文字檔。ezmjService 把服務器的榮譽榜經過這裡轉成文字，所以一直是明碼；本機的用 Records 封存。 */
     public static HonorRoll load(Path file) {
+        return load(file, PropertyStore.PLAIN);
+    }
+
+    /** 讀不到或讀不懂就是空的，壞掉的那筆略過。 */
+    public static HonorRoll load(Path file, PropertyStore store) {
         HonorRoll roll = new HonorRoll();
-        Properties values = new Properties();
-        try (InputStream in = Files.newInputStream(file)) {
-            values.load(in);
-        } catch (IOException | IllegalArgumentException e) {
+        Properties values;
+        try {
+            values = store.read(file);
+        } catch (IOException e) {
             return roll;
         }
         for (Category category : Category.values()) {
@@ -134,9 +140,14 @@ public final class HonorRoll {
         return levels.size() == 1 ? Collections.nCopies(3, levels.get(0)) : levels;
     }
 
-    /** 先寫到暫存檔再換過去，存到一半當機也不會弄壞原本的紀錄。 */
+    /** 明碼的文字檔，見 load(Path)。先寫到暫存檔再換過去，存到一半當機也不會弄壞原本的紀錄。 */
     public void save(Path file) throws IOException {
+        save(file, PropertyStore.PLAIN);
+    }
+
+    public void save(Path file, PropertyStore store) throws IOException {
         Properties values = new Properties();
+        values.setProperty(PropertyFiles.FORMAT_KEY, String.valueOf(FORMAT));
         for (Category category : Category.values()) {
             List<GameRecord> list = records.get(category);
             for (int i = 0; i < list.size(); i++) {
@@ -154,6 +165,6 @@ public final class HonorRoll {
                 values.setProperty(prefix + "taiPay", String.valueOf(record.taiPay()));
             }
         }
-        PropertyFiles.store(values, file);
+        store.write(values, file);
     }
 }

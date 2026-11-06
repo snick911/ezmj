@@ -37,12 +37,14 @@ import ezmj.AppVersion;
 import ezmj.bot.Bot;
 import ezmj.bot.ComputerBot;
 import ezmj.bot.SeatedBots;
+import ezmj.career.CareerProfile;
+import ezmj.career.CareerSlot;
+import ezmj.career.Challenge;
+import ezmj.career.Records;
 import ezmj.engine.Achievement;
-import ezmj.engine.AchievementBook;
 import ezmj.engine.GameSave;
 import ezmj.engine.GameSession;
 import ezmj.engine.GameView;
-import ezmj.engine.PlayerStats;
 import ezmj.engine.Round;
 import ezmj.engine.Settlement;
 import ezmj.model.AppSettings;
@@ -58,31 +60,103 @@ import ezmj.model.Tile;
 import ezmj.online.OnlineProfile;
 import ezmj.online.RoomSettings;
 
-/** 主視窗：以 CardLayout 切換開始畫面與牌桌。 */
+/** 主視窗：以 CardLayout 切換開始畫面、練習牌局、修業模式、連線對戰與牌桌。 */
 public final class MainFrame extends JFrame {
 
+    private static final String CARD_HOME = "home";
     private static final String CARD_START = "start";
+    private static final String CARD_CAREER = "career";
+    private static final String CARD_CAREER_HUB = "careerHub";
     private static final String CARD_TABLE = "table";
     private static final String CARD_ONLINE = "online";
     private static final String CARD_ROOM = "room";
     private static final int DRAWN_RESULT_SECONDS = 10;
     private static final int RESULT_SECONDS = 60;
-    private static final Path SETTINGS_FILE = Path.of(System.getProperty("user.home"), ".ezmj", "settings.properties");
-    private static final Path HONOR_FILE = Path.of(System.getProperty("user.home"), ".ezmj", "honor.properties");
-    private static final Path ACHIEVEMENT_FILE = Path.of(System.getProperty("user.home"), ".ezmj", "achievements.properties");
-    private static final Path STATS_FILE = Path.of(System.getProperty("user.home"), ".ezmj", "stats.properties");
-    private static final Path SAVE_FILE = Path.of(System.getProperty("user.home"), ".ezmj", "save.properties");
-    private static final Path VOICE_DIR =Path.of(System.getProperty("user.home"), ".ezmj", "voice");
-    private static final Path ONLINE_FILE = Path.of(System.getProperty("user.home"), ".ezmj", "online.properties");
+    private static final Path HOME_DIR = Path.of(System.getProperty("user.home"), ".ezmj");
+    private static final Path SETTINGS_FILE = HOME_DIR.resolve("settings.properties");
+    private static final Path VOICE_DIR = HOME_DIR.resolve("voice");
+    private static final Path ONLINE_FILE = HOME_DIR.resolve("online.properties");
+
+    /** 牌桌上這場是哪一種：練習牌局、修業的一般對戰或挑戰關卡。 */
+    private enum Mode {
+        PRACTICE, GENERAL, CHALLENGE
+    }
 
     // 要在建立任何畫面之前讀取，字型才會一開始就是設定的大小
     private final AppSettings settings = loadSettings();
-    private final HonorRoll honorRoll = HonorRoll.load(HONOR_FILE);
-    private final AchievementBook achievements = AchievementBook.load(ACHIEVEMENT_FILE);
-    private final PlayerStats stats = PlayerStats.load(STATS_FILE);
+    /** 練習牌局的成就、統計、榮譽榜與存檔，直接放在 .ezmj，和以前一樣。 */
+    private final Records practice = Records.openHome(HOME_DIR);
     private final CardLayout cards = new CardLayout();
     private final JPanel root = new JPanel(cards);
-    private final StartPanel startPanel = new StartPanel(this::startGame, this::resumeGame, () -> showOnlineForm(null));
+    private final HomePanel homePanel = new HomePanel(this::showCareerList, this::showPractice, () -> showOnlineForm(null));
+    private final StartPanel startPanel = new StartPanel(this::startGame, this::resumeGame, this::showHome);
+    private final CareerListPanel careerList = new CareerListPanel(new CareerListPanel.Actions() {
+        @Override
+        public void enter(CareerSlot slot) {
+            enterCareer(slot);
+        }
+
+        @Override
+        public void create(CareerSlot slot, CareerProfile profile) {
+            createCareer(slot, profile);
+        }
+
+        @Override
+        public void delete(CareerSlot slot) {
+            deleteCareer(slot);
+        }
+
+        @Override
+        public void back() {
+            showHome();
+        }
+    });
+    private final CareerHubPanel careerHub = new CareerHubPanel(new CareerHubPanel.Actions() {
+        @Override
+        public void startGeneral(int basePay, int taiPay, List<BotLevel> levels) {
+            startCareerGeneral(basePay, taiPay, levels);
+        }
+
+        @Override
+        public void startChallenge(Challenge challenge) {
+            startCareerChallenge(challenge);
+        }
+
+        @Override
+        public void resume() {
+            resumeCareer();
+        }
+
+        @Override
+        public void abandon() {
+            confirmAbandonCareer();
+        }
+
+        @Override
+        public void takeRelief() {
+            confirmRelief();
+        }
+
+        @Override
+        public void showAchievements() {
+            helpDialog.showAchievements(careerRecords.achievements(), null, recordsOwner());
+        }
+
+        @Override
+        public void showStats() {
+            helpDialog.showStats(careerRecords.stats(), recordsOwner(), career);
+        }
+
+        @Override
+        public void showHonorRoll() {
+            helpDialog.showHonorRoll(careerRecords.honorRoll(), HonorRoll.Category.values()[0], recordsOwner());
+        }
+
+        @Override
+        public void back() {
+            showCareerList();
+        }
+    });
     private final OnlinePanel onlinePanel = new OnlinePanel(new OnlinePanel.Actions() {
         @Override
         public void create(String name, RoomSettings roomSettings) {
@@ -102,8 +176,7 @@ public final class MainFrame extends JFrame {
         @Override
         public void back() {
             leaveOnline();
-            cards.show(root, CARD_START);
-            startPanel.focusName();
+            showHome();
         }
     });
     private final HelpDialog helpDialog = new HelpDialog(this);
@@ -116,9 +189,18 @@ public final class MainFrame extends JFrame {
     private boolean achievementSaveWarned;
     private boolean statsSaveWarned;
     private boolean gameSaveWarned;
+    private boolean careerSaveWarned;
+    /** 練習牌局有沒有存檔。 */
     private boolean hasSavedGame;
     /** 這場牌局的亂數種子，出錯時用來重現。 */
     private long gameSeed;
+    private Mode mode = Mode.PRACTICE;
+    /** 這場已經結束，結果視窗還沒看完。挑戰關卡的任務一確定就結束，不一定打完四圈。 */
+    private boolean gameOver;
+    /** 進入的修業檔案；在開始畫面、練習牌局或檔案列表時都是 null。練習牌局時一定是 null。 */
+    private CareerSlot careerSlot;
+    private CareerProfile career;
+    private Records careerRecords;
 
     public MainFrame() {
         super("台灣十六張麻將 v" + AppVersion.get());
@@ -132,7 +214,10 @@ public final class MainFrame extends JFrame {
         ErrorReporter.setContext(this::describeGame);
         ErrorReporter.setUiHandler(this::recoverFromError);
         setIconImages(List.of(TilePainter.appIcon(32), TilePainter.appIcon(64)));
+        root.add(homePanel, CARD_HOME);
         root.add(startPanel, CARD_START);
+        root.add(careerList, CARD_CAREER);
+        root.add(careerHub, CARD_CAREER_HUB);
         root.add(onlinePanel, CARD_ONLINE);
         setContentPane(root);
         setJMenuBar(buildMenuBar());
@@ -192,19 +277,23 @@ public final class MainFrame extends JFrame {
         preferences.add(buildPlayerVoiceMenu());
         preferences.add(checkItem("動畫", settings.animationEnabled(), this::changeAnimation));
 
+        // 進入修業檔案時看那個檔案的紀錄，其他時候看練習牌局的
         JMenu honor = topMenu("榮譽榜");
         for (HonorRoll.Category category : HonorRoll.Category.values()) {
-            honor.add(menuItem(category.label(), () -> helpDialog.showHonorRoll(honorRoll, category)));
+            honor.add(menuItem(category.label(),
+                    () -> helpDialog.showHonorRoll(records().honorRoll(), category, recordsOwner())));
         }
 
         JMenu achievementMenu = topMenu("成就");
-        achievementMenu.add(menuItem("全部成就", () -> helpDialog.showAchievements(achievements, null)));
+        achievementMenu.add(menuItem("全部成就",
+                () -> helpDialog.showAchievements(records().achievements(), null, recordsOwner())));
         for (Achievement.Group group : Achievement.Group.values()) {
-            achievementMenu.add(menuItem(group.label(), () -> helpDialog.showAchievements(achievements, group)));
+            achievementMenu.add(menuItem(group.label(),
+                    () -> helpDialog.showAchievements(records().achievements(), group, recordsOwner())));
         }
 
         JMenu statsMenu = topMenu("統計");
-        statsMenu.add(menuItem("我的統計", () -> helpDialog.showStats(stats)));
+        statsMenu.add(menuItem("我的統計", () -> helpDialog.showStats(records().stats(), recordsOwner(), career)));
 
         JMenu help = topMenu("說明");
         help.add(menuItem("基本規則", helpDialog::showRules));
@@ -437,7 +526,9 @@ public final class MainFrame extends JFrame {
         settings.setFontPercent(percent);
         saveSettings();
         Theme.setFontPercent(percent, getRootPane(), helpDialog);
+        homePanel.syncSizes();
         startPanel.syncSizes();
+        careerHub.syncSizes();
         if (tablePanel != null) {
             tablePanel.syncSizes();
         }
@@ -479,31 +570,49 @@ public final class MainFrame extends JFrame {
         }
     }
 
-    /** 開始一場新牌局。存檔只有一份，開新局會蓋掉，先問一聲。 */
+    private void showHome() {
+        leaveCareer();
+        cards.show(root, CARD_HOME);
+        homePanel.focusFirst();
+    }
+
+    private void showPractice() {
+        leaveCareer();
+        refreshResume();
+        cards.show(root, CARD_START);
+        startPanel.focusName();
+    }
+
+    /** 開始一場練習牌局。存檔只有一份，開新局會蓋掉，先問一聲。 */
     public void startGame(GameConfig config) {
-        if (hasSavedGame && JOptionPane.showConfirmDialog(this, "開新的牌局會蓋掉上次的存檔，確定嗎？", "開始遊戲",
+        if (hasSavedGame && JOptionPane.showConfirmDialog(this, "開新的練習牌局會蓋掉上次的存檔，確定嗎？", "練習牌局",
                 JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) {
             return;
         }
+        leaveCareer();
+        mode = Mode.PRACTICE;
         long seed = new Random().nextLong();
         openTable(new GameSession(config, new Random(seed)), seed).startRound();
     }
 
     private void resumeGame() {
         try {
-            GameSave.Loaded saved = GameSave.load(SAVE_FILE);
+            GameSave.Loaded saved = practice.loadGame();
+            leaveCareer();
+            mode = Mode.PRACTICE;
             openTable(saved.session(), saved.seed()).resume(saved);
         } catch (IOException e) {
             ErrorReporter.note("讀取牌局存檔", e);
-            JOptionPane.showMessageDialog(this, "上次的牌局讀不出來，只能開新的牌局。", "繼續牌局", JOptionPane.WARNING_MESSAGE);
+            JOptionPane.showMessageDialog(this, "上次的練習牌局讀不出來，只能開新的牌局。", "繼續牌局", JOptionPane.WARNING_MESSAGE);
             refreshResume();
         }
     }
 
-    /** 擺好牌桌，還沒開始打。電腦的亂數也由種子決定，這樣整場才重現得出來。 */
+    /** 擺好牌桌，還沒開始打。電腦的亂數也由種子決定，這樣整場才重現得出來。挑戰關卡不能用電腦代打。 */
     private GameController openTable(GameSession session, long seed) {
         GameConfig config = session.config();
         gameSeed = seed;
+        gameOver = false;
         Bot bot = new SeatedBots(config.botLevels(), List.of(session.personality(1), session.personality(2), session.personality(3)),
                 config.basePay(), config.taiPay(), new Random(seed + 1));
         Bot proxy = new ComputerBot(BotLevel.PRO, config.basePay(), config.taiPay(), new Random(seed + 2));
@@ -513,12 +622,200 @@ public final class MainFrame extends JFrame {
         }
         GameController current = controller;
         closeHistory();
-        tablePanel = new TablePanel(tile -> current.humanDiscard(tile), this::confirmLeave, current::toggleAutoPlay,
-                () -> showHistory(session));
+        tablePanel = new TablePanel(tile -> current.humanDiscard(tile), this::confirmLeave,
+                mode == Mode.CHALLENGE ? null : current::toggleAutoPlay, () -> showHistory(session));
         controller.attach(tablePanel);
+        if (mode == Mode.CHALLENGE) {
+            showMission(career.challenge().check(session));
+        }
         root.add(tablePanel, CARD_TABLE);
         cards.show(root, CARD_TABLE);
         return current;
+    }
+
+    private void showMission(Challenge.Check check) {
+        Challenge challenge = career.challenge();
+        tablePanel.showMission("第 " + challenge.number() + " 關　" + challenge.title(), challenge.goalText(),
+                check.progress());
+    }
+
+    /** 練習牌局或修業檔案目前用的那套紀錄，選單上的成就、統計與榮譽榜看這套。 */
+    private Records records() {
+        return career == null ? practice : careerRecords;
+    }
+
+    private String recordsOwner() {
+        return career == null ? "練習牌局" : "修業：" + career.name();
+    }
+
+    /** 這場牌局的那套紀錄，存檔也在裡面。 */
+    private Records tableRecords() {
+        return mode == Mode.PRACTICE ? practice : careerRecords;
+    }
+
+    /** 這場牌局的存檔。 */
+    private Path saveFile() {
+        return tableRecords().saveFile();
+    }
+
+    private void leaveCareer() {
+        careerSlot = null;
+        career = null;
+        careerRecords = null;
+    }
+
+    /** 修業模式的檔案列表。 */
+    private void showCareerList() {
+        leaveCareer();
+        careerList.refresh(CareerSlot.all(HOME_DIR));
+        cards.show(root, CARD_CAREER);
+    }
+
+    private void createCareer(CareerSlot slot, CareerProfile profile) {
+        try {
+            slot.create(profile);
+        } catch (IOException e) {
+            ErrorReporter.note("建立修業檔案", e);
+            JOptionPane.showMessageDialog(this, "檔案無法建立。\n" + e.getMessage(), "修業模式", JOptionPane.WARNING_MESSAGE);
+            careerList.refresh(CareerSlot.all(HOME_DIR));
+            return;
+        }
+        enterCareer(slot);
+    }
+
+    private void deleteCareer(CareerSlot slot) {
+        try {
+            slot.delete();
+        } catch (IOException e) {
+            ErrorReporter.note("刪除修業檔案", e);
+            JOptionPane.showMessageDialog(this, "檔案沒有刪乾淨。\n" + e.getMessage(), "修業模式", JOptionPane.WARNING_MESSAGE);
+        }
+        careerList.refresh(CareerSlot.all(HOME_DIR));
+    }
+
+    private void enterCareer(CareerSlot slot) {
+        CareerProfile profile;
+        try {
+            profile = slot.loadProfile();
+        } catch (IOException e) {
+            ErrorReporter.note("讀取修業檔案", e);
+            JOptionPane.showMessageDialog(this, "這個檔案讀不出來。", "修業模式", JOptionPane.WARNING_MESSAGE);
+            careerList.refresh(CareerSlot.all(HOME_DIR));
+            return;
+        }
+        careerSlot = slot;
+        career = profile;
+        careerRecords = slot.loadRecords();
+        showCareerHub();
+    }
+
+    /** 回到檔案的畫面。沒打完的牌局讀不回來，就當作結束了：一般對戰已經結算的局照算，挑戰算失敗。 */
+    private void showCareerHub() {
+        String pending = null;
+        boolean lost = false;
+        Path file = careerRecords.saveFile();
+        if (career.game() == CareerProfile.Game.NONE) {
+            // 牌局結束後、刪掉存檔前被關掉的話會留下來
+            deleteSavedGame(file);
+        } else {
+            try {
+                GameSession saved = careerRecords.loadGame().session();
+                String what = career.game() == CareerProfile.Game.GENERAL ? "一般對戰"
+                        : "第 " + career.challenge().number() + " 關「" + career.challenge().title() + "」";
+                pending = what + "：" + Tile.windName(saved.roundWind()) + "風圈第 " + (saved.roundsPlayed() + 1)
+                        + " 局，桌上籌碼 " + saved.player(0).chips();
+            } catch (IOException e) {
+                // 剛開打、還沒存過檔就被關掉的話沒有存檔，不用說
+                if (Files.exists(file)) {
+                    ErrorReporter.note("讀取修業牌局存檔", e);
+                    lost = true;
+                }
+                career.endGame();
+                saveCareer();
+            }
+        }
+        careerHub.show(careerSlot, career, pending);
+        cards.show(root, CARD_CAREER_HUB);
+        if (lost) {
+            JOptionPane.showMessageDialog(this, "上次沒打完的牌局讀不出來，只能當作結束了。", "修業模式",
+                    JOptionPane.WARNING_MESSAGE);
+        }
+    }
+
+    /** 檔案每次有變動就存，存不了只提醒一次。 */
+    private void saveCareer() {
+        try {
+            careerSlot.saveProfile(career);
+        } catch (IOException e) {
+            ErrorReporter.note("儲存修業檔案", e);
+            if (!careerSaveWarned) {
+                careerSaveWarned = true;
+                JOptionPane.showMessageDialog(this, "修業檔案無法儲存，籌碼與過關紀錄下次開啟時會不見。\n" + e.getMessage(),
+                        "修業模式", JOptionPane.WARNING_MESSAGE);
+            }
+        }
+    }
+
+    /** 帶帳上的籌碼上桌，三家電腦也帶一樣多。 */
+    private void startCareerGeneral(int basePay, int taiPay, List<BotLevel> levels) {
+        int chips = career.startGeneral();
+        saveCareer();
+        mode = Mode.GENERAL;
+        long seed = new Random().nextLong();
+        GameConfig config = new GameConfig(career.name(), chips, basePay, taiPay, levels);
+        openTable(new GameSession(config, new Random(seed)), seed).startRound();
+    }
+
+    private void startCareerChallenge(Challenge challenge) {
+        career.startChallenge(challenge);
+        saveCareer();
+        mode = Mode.CHALLENGE;
+        long seed = new Random().nextLong();
+        openTable(new GameSession(challenge.config(career.name()), new Random(seed)), seed).startRound();
+    }
+
+    private void resumeCareer() {
+        try {
+            GameSave.Loaded saved = careerRecords.loadGame();
+            mode = career.game() == CareerProfile.Game.GENERAL ? Mode.GENERAL : Mode.CHALLENGE;
+            openTable(saved.session(), saved.seed()).resume(saved);
+        } catch (IOException e) {
+            ErrorReporter.note("讀取修業牌局存檔", e);
+            career.endGame();
+            saveCareer();
+            JOptionPane.showMessageDialog(this, "這場牌局讀不出來，只能當作結束了。", "修業模式", JOptionPane.WARNING_MESSAGE);
+            showCareerHub();
+        }
+    }
+
+    /** 結束這場時會怎樣，問要不要放棄時寫在後面。 */
+    private String endDetail() {
+        return career.game() == CareerProfile.Game.GENERAL ? "結束的話，已經打完的局輸贏照算，打到一半的那局不算。"
+                : "結束的話，這關算失敗，沒有其他損失。";
+    }
+
+    private void confirmAbandonCareer() {
+        if (JOptionPane.showConfirmDialog(this, "要放棄沒打完的牌局嗎？\n" + endDetail(), "放棄這場",
+                JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION) {
+            endCareerGame();
+            showCareerHub();
+        }
+    }
+
+    /** 沒打完就結束：刪掉存檔，檔案上的這場也結束。 */
+    private void endCareerGame() {
+        deleteSavedGame(careerRecords.saveFile());
+        career.endGame();
+        saveCareer();
+    }
+
+    private void confirmRelief() {
+        if (JOptionPane.showConfirmDialog(this, "領救濟金把籌碼補到 " + CareerProfile.RELIEF_TO + "，會記一次破產。確定嗎？",
+                "救濟金", JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION) {
+            career.takeRelief();
+            saveCareer();
+            showCareerHub();
+        }
     }
 
     /** 連線對戰的入口。連線牌局不碰本機的存檔、統計、成就與榮譽榜。 */
@@ -596,13 +893,13 @@ public final class MainFrame extends JFrame {
         };
     }
 
-    /** 開始畫面的繼續按鈕跟著存檔走；讀不懂的存檔就當作沒有，開新局時會蓋掉。 */
+    /** 練習牌局的繼續按鈕跟著存檔走；讀不懂的存檔就當作沒有，開新局時會蓋掉。 */
     private void refreshResume() {
         hasSavedGame = false;
         String summary = null;
-        if (Files.exists(SAVE_FILE)) {
+        if (Files.exists(practice.saveFile())) {
             try {
-                GameSession saved = GameSave.load(SAVE_FILE).session();
+                GameSession saved = practice.loadGame().session();
                 summary = saved.config().playerName() + "：" + Tile.windName(saved.roundWind()) + "風圈，第 "
                         + (saved.roundsPlayed() + 1) + " 局，籌碼 " + saved.player(0).chips();
                 hasSavedGame = true;
@@ -619,7 +916,7 @@ public final class MainFrame extends JFrame {
             return;
         }
         try {
-            controller.save(SAVE_FILE, gameSeed);
+            controller.save(tableRecords(), gameSeed);
         } catch (IOException e) {
             ErrorReporter.note("儲存牌局", e);
             if (!gameSaveWarned) {
@@ -630,9 +927,9 @@ public final class MainFrame extends JFrame {
         }
     }
 
-    private void deleteSavedGame() {
+    private static void deleteSavedGame(Path file) {
         try {
-            Files.deleteIfExists(SAVE_FILE);
+            Files.deleteIfExists(file);
         } catch (IOException e) {
             ErrorReporter.note("刪除牌局存檔", e);
         }
@@ -642,21 +939,27 @@ public final class MainFrame extends JFrame {
         if (online != null) {
             return online.describe();
         }
-        return controller == null ? "不在牌局中" : "種子 " + gameSeed + "，" + controller.describe();
+        return controller == null ? "不在牌局中" : "種子 " + gameSeed + "，" + mode
+                + (mode == Mode.CHALLENGE ? " " + career.challenge() : "") + "，" + controller.describe();
     }
 
     /** 畫面執行緒出錯時牌局的流程已經斷了。回到開始畫面，存檔還是上一次輪到真人時的狀態，可以接著打。 */
     private void recoverFromError() {
         boolean inGame = controller != null;
+        String resumeHint = "";
         if (inGame) {
             returnToStart();
+            if (mode == Mode.PRACTICE && hasSavedGame) {
+                resumeHint = "\n\n牌局存到上一次輪到你的時候，可以按「繼續上次的練習牌局」接著打。";
+            } else if (mode != Mode.PRACTICE && career != null && career.game() != CareerProfile.Game.NONE) {
+                resumeHint = "\n\n牌局存到上一次輪到你的時候，可以按「繼續牌局」接著打。";
+            }
         } else if (online != null) {
             // 連線牌局的 token 還留著，可以從連線對戰接回
             leaveOnline();
-            returnToStart();
+            showHome();
         }
-        JOptionPane.showMessageDialog(this, "遊戲發生錯誤，內容記在：\n" + ErrorReporter.logFile()
-                        + (inGame && hasSavedGame ? "\n\n牌局存到上一次輪到你的時候，可以按「繼續上次的牌局」接著打。" : ""),
+        JOptionPane.showMessageDialog(this, "遊戲發生錯誤，內容記在：\n" + ErrorReporter.logFile() + resumeHint,
                 "錯誤", JOptionPane.ERROR_MESSAGE);
     }
 
@@ -680,51 +983,110 @@ public final class MainFrame extends JFrame {
         }
     }
 
-    /** 結算完先把該存的都存好，這時程式被關掉也不會少記。回傳的動作才跳出結果。 */
+    /** 牌局結束視窗要顯示的東西。headline 是 null 時照結束原因寫。 */
+    private record Ending(String headline, String note) {
+    }
+
+    /**
+     * 結算完先把該存的都存好，這時程式被關掉也不會少記。回傳的動作才跳出結果。
+     * 挑戰關卡的每局照算成就與統計，但不算整場：整場類的成就、場數、名次與榮譽榜只看練習牌局與一般對戰。
+     */
     private Runnable handleRoundEnd(GameSession session, Round round, Settlement settlement, Runnable next) {
         if (historyDialog != null && historyDialog.isDisplayable()) {
             historyDialog.refresh();
         }
-        boolean over = session.isOver();
+        Records records = records();
+        Challenge.Check check = mode == Mode.CHALLENGE ? career.challenge().check(session) : null;
+        boolean over = session.isOver() || (check != null && check.decided());
+        boolean wholeGame = over && mode != Mode.CHALLENGE;
+        gameOver = over;
         List<Achievement> earned = List.of();
         if (!controller.usedAutoPlay()) {
-            earned = achievements.recordRound(session, LocalDate.now().toString());
-            saveAchievements();
-            stats.recordRound(session);
-            if (over) {
-                stats.recordGame(session);
+            earned = records.achievements().recordRound(session, LocalDate.now().toString());
+            saveAchievements(records);
+            records.stats().recordRound(session);
+            if (wholeGame) {
+                records.stats().recordGame(session);
             }
-            saveStats();
+            saveStats(records);
         }
-        String note = over ? recordGame(session) : "";
-        List<Achievement> gameEarned = over ? recordGameAchievements(session) : List.of();
+        String honorNote = wholeGame ? recordGame(records, session) : "";
+        List<Achievement> gameEarned = wholeGame ? recordGameAchievements(records, session) : List.of();
+        Ending ending = new Ending(null, honorNote);
+        if (mode == Mode.GENERAL) {
+            career.settleGeneral(session.player(0).chips());
+            if (over) {
+                career.endGame();
+                ending = new Ending(null, join(generalNote(session), honorNote));
+            }
+            saveCareer();
+        } else if (mode == Mode.CHALLENGE) {
+            showMission(check);
+            if (over) {
+                ending = finishChallenge(check);
+                saveCareer();
+            }
+        }
         if (over) {
-            deleteSavedGame();
+            deleteSavedGame(saveFile());
         } else {
             saveGame();
         }
         List<Achievement> roundEarned = earned;
-        return () -> showRoundEnd(session, round, settlement, roundEarned, over, note, gameEarned, next);
+        Ending shown = ending;
+        return () -> showRoundEnd(session, round, settlement, roundEarned, over, shown, gameEarned, next);
+    }
+
+    private static String join(String first, String second) {
+        return second.isEmpty() ? first : first + "\n" + second;
+    }
+
+    private String generalNote(GameSession session) {
+        String note = "這場輸贏 " + ResultDialog.money(session.record(0, "").winnings()) + "，帳上籌碼 " + career.bankroll();
+        return career.canTakeRelief() ? note + "\n籌碼不多了，回到修業檔案可以領救濟金。" : note;
+    }
+
+    /** 過關就記下來、發獎金；失敗只是這場結束。 */
+    private Ending finishChallenge(Challenge.Check check) {
+        Challenge challenge = career.challenge();
+        String name = "第 " + challenge.number() + " 關「" + challenge.title() + "」";
+        if (check.status() == Challenge.Status.CLEARED) {
+            int reward = career.clearChallenge(challenge, LocalDate.now().toString());
+            String note = reward > 0 ? "獎金 " + reward + " 入帳，帳上籌碼 " + career.bankroll()
+                    : "這關之前就過了，這次沒有獎金。";
+            Challenge[] all = Challenge.values();
+            if (reward > 0 && challenge.ordinal() + 1 < all.length) {
+                Challenge after = all[challenge.ordinal() + 1];
+                note += "\n開放第 " + after.number() + " 關「" + after.title() + "」";
+            } else if (reward > 0) {
+                note += "\n全部關卡都過了，恭喜出師！";
+            }
+            return new Ending("挑戰成功：" + name, note);
+        }
+        career.endGame();
+        return new Ending("挑戰失敗：" + name, check.progress() + "\n回到修業檔案可以再挑戰一次。");
     }
 
     private void showRoundEnd(GameSession session, Round round, Settlement settlement, List<Achievement> earned, boolean over,
-                              String note, List<Achievement> gameEarned, Runnable next) {
-        new ResultDialog(this, session, round, settlement, earned, over ? "查看最終排名" : "下一局",
+                              Ending ending, List<Achievement> gameEarned, Runnable next) {
+        String finalLabel = mode == Mode.CHALLENGE ? "查看挑戰結果" : "查看最終排名";
+        new ResultDialog(this, session, round, settlement, earned, over ? finalLabel : "下一局",
                 round.result().isDrawnGame() ? DRAWN_RESULT_SECONDS : RESULT_SECONDS).setVisible(true);
         if (controller == null) {
             return;
         }
         if (over) {
-            new FinalDialog(this, session, note, gameEarned, "回到開始畫面").setVisible(true);
+            new FinalDialog(this, session, ending.headline(), ending.note(), gameEarned,
+                    mode == Mode.PRACTICE ? "回到練習牌局" : "回到修業檔案").setVisible(true);
             returnToStart();
         } else {
             next.run();
         }
     }
 
-    private void saveStats() {
+    private void saveStats(Records records) {
         try {
-            stats.save(STATS_FILE);
+            records.saveStats();
         } catch (IOException e) {
             if (!statsSaveWarned) {
                 statsSaveWarned = true;
@@ -734,20 +1096,20 @@ public final class MainFrame extends JFrame {
         }
     }
 
-    private List<Achievement> recordGameAchievements(GameSession session) {
+    private List<Achievement> recordGameAchievements(Records records, GameSession session) {
         if (controller.usedAutoPlay()) {
             return List.of();
         }
-        List<Achievement> earned = achievements.recordGame(session, controller.averageThinkSeconds(),
+        List<Achievement> earned = records.achievements().recordGame(session, controller.averageThinkSeconds(),
                 controller.thinkCount(), LocalDate.now().toString());
-        saveAchievements();
+        saveAchievements(records);
         return earned;
     }
 
     /** 每局都會存，存不了只提醒一次，不要每局跳一個視窗。 */
-    private void saveAchievements() {
+    private void saveAchievements(Records records) {
         try {
-            achievements.save(ACHIEVEMENT_FILE);
+            records.saveAchievements();
         } catch (IOException e) {
             if (!achievementSaveWarned) {
                 achievementSaveWarned = true;
@@ -758,15 +1120,15 @@ public final class MainFrame extends JFrame {
     }
 
     /** 牌局打到結束才記錄，中途離開或用過電腦代打都不算。回傳榮譽榜的結果，沒有要說的就是空字串。 */
-    private String recordGame(GameSession session) {
+    private String recordGame(Records records, GameSession session) {
         GameRecord record = session.record(0, LocalDate.now().toString());
         if (controller.usedAutoPlay()) {
             return "這場用過電腦代打，不列入榮譽榜；開代打之後的局也不列入成就。";
         }
-        Map<HonorRoll.Category, Integer> ranks = honorRoll.add(record);
+        Map<HonorRoll.Category, Integer> ranks = records.honorRoll().add(record);
         if (!ranks.isEmpty()) {
             try {
-                honorRoll.save(HONOR_FILE);
+                records.saveHonorRoll();
             } catch (IOException e) {
                 JOptionPane.showMessageDialog(this, "榮譽榜無法儲存，這場成績下次開啟時會不見。\n" + e.getMessage(),
                         "榮譽榜", JOptionPane.WARNING_MESSAGE);
@@ -781,7 +1143,14 @@ public final class MainFrame extends JFrame {
     }
 
     private void confirmLeave() {
-        if (controller.isOver() || askToSave("離開牌局", "要存檔之後再離開嗎？之後可以從開始畫面繼續。", "存檔並離開", "不存檔離開")) {
+        if (gameOver) {
+            returnToStart();
+        } else if (mode == Mode.PRACTICE) {
+            if (askToSave("離開牌局", "要存檔之後再離開嗎？之後可以從練習牌局繼續。", "存檔並離開", "不存檔離開")) {
+                returnToStart();
+            }
+        } else if (askToSave("離開牌局", "要存檔之後再離開嗎？之後可以在修業檔案按「繼續牌局」接著打。\n" + endDetail(),
+                "存檔並離開", "結束這場")) {
             returnToStart();
         }
     }
@@ -790,14 +1159,22 @@ public final class MainFrame extends JFrame {
         if (online != null && !online.confirmExit()) {
             return;
         }
-        if (controller == null || controller.isOver()
-                || askToSave("關閉遊戲", "要存檔之後再關閉嗎？下次可以從開始畫面繼續。", "存檔並關閉", "不存檔關閉")) {
+        boolean leave;
+        if (controller == null || gameOver) {
+            leave = true;
+        } else if (mode == Mode.PRACTICE) {
+            leave = askToSave("關閉遊戲", "要存檔之後再關閉嗎？下次可以從練習牌局繼續。", "存檔並關閉", "不存檔關閉");
+        } else {
+            leave = askToSave("關閉遊戲", "要存檔之後再關閉嗎？下次可以在修業檔案按「繼續牌局」接著打。\n" + endDetail(),
+                    "存檔並關閉", "結束這場並關閉");
+        }
+        if (leave) {
             dispose();
             System.exit(0);
         }
     }
 
-    /** 問要不要存，照選的存好或刪掉；回傳是否真的要離開，按取消就是 false。 */
+    /** 問要不要存，照選的存好或結束這場；回傳是否真的要離開，按取消就是 false。 */
     private boolean askToSave(String title, String message, String saveLabel, String discardLabel) {
         String[] options = {saveLabel, discardLabel, "取消"};
         int answer = JOptionPane.showOptionDialog(this, message, title, JOptionPane.DEFAULT_OPTION,
@@ -805,19 +1182,27 @@ public final class MainFrame extends JFrame {
         if (answer == 0) {
             saveGame();
         } else if (answer == 1) {
-            deleteSavedGame();
+            if (mode == Mode.PRACTICE) {
+                deleteSavedGame(practice.saveFile());
+            } else {
+                endCareerGame();
+            }
         }
         return answer == 0 || answer == 1;
     }
 
+    /** 練習牌局回到練習牌局的畫面，修業模式回到檔案的畫面。 */
     private void returnToStart() {
         closeHistory();
         if (controller != null) {
             controller.stop();
             controller = null;
         }
-        refreshResume();
-        cards.show(root, CARD_START);
-        startPanel.focusName();
+        gameOver = false;
+        if (mode == Mode.PRACTICE || career == null) {
+            showPractice();
+        } else {
+            showCareerHub();
+        }
     }
 }
