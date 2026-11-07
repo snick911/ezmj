@@ -8,11 +8,14 @@ import java.nio.file.StandardCopyOption;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 import javax.sound.sampled.AudioFileFormat;
@@ -32,21 +35,61 @@ import ezmj.model.Tile;
  */
 public final class VoiceLines {
 
+    /** 同一個動作的另一種說法。percent 是單機時喊這句的機率，以百分比算。 */
+    public record Variant(String text, int percent) {
+    }
+
+    /**
+     * 喊的動作。variants 是單機時偶爾換的說法，機率各自算，加起來不能超過 100，剩下的機率念原本的 text。
+     * 連線對戰一律念原本的。說法的語音檔照順序編號，新增說法放在後面，舊的語音檔還對得上。
+     */
     public enum Line {
-        CHOW("吃"), PONG("碰"), KONG("槓"), WIN("胡"), SELF_WIN("自摸"), LISTEN("聽牌"), DRAWN_GAME("流局");
+        CHOW("吃", new Variant("我要吃", 20), new Variant("對不起，吃一下", 10), new Variant("吃啊，上家對我特別優待", 5)),
+        PONG("碰", new Variant("謝啦，碰", 20), new Variant("碰碰碰，我要碰", 10), new Variant("太棒了啦，我要碰", 5)),
+        KONG("槓"), WIN("胡"), SELF_WIN("自摸"), LISTEN("聽牌"), DRAWN_GAME("流局");
 
         private final String text;
+        private final List<Variant> variants;
 
-        Line(String text) {
+        Line(String text, Variant... variants) {
             this.text = text;
+            this.variants = List.of(variants);
+            if (this.variants.stream().mapToInt(Variant::percent).sum() > 100) {
+                throw new IllegalArgumentException(name() + " 的說法機率加起來超過 100");
+            }
         }
 
         public String text() {
             return text;
         }
 
-        private String fileName() {
-            return name().toLowerCase(Locale.ROOT) + ".wav";
+        public List<Variant> variants() {
+            return variants;
+        }
+
+        /**
+         * 照 roll（0 到 99）挑一句：依序落在哪一句的機率範圍就念那句，都沒落到念原本的。
+         * 回傳 0 是原本的，1 起是 variants 的第幾句。
+         */
+        public int pick(int roll) {
+            int bound = 0;
+            for (int i = 0; i < variants.size(); i++) {
+                bound += variants.get(i).percent();
+                if (roll < bound) {
+                    return i + 1;
+                }
+            }
+            return 0;
+        }
+
+        /** 第 choice 句念的字，0 是原本的。 */
+        public String text(int choice) {
+            return choice == 0 ? text : variants.get(choice - 1).text();
+        }
+
+        private String fileName(int choice) {
+            String base = name().toLowerCase(Locale.ROOT);
+            return (choice == 0 ? base : base + "_" + choice) + ".wav";
         }
     }
 
@@ -67,8 +110,16 @@ public final class VoiceLines {
     private static final Map<String, Clip> CLIPS = new ConcurrentHashMap<>();
     /** 產生語音要好幾秒，和播放分開，產生時喊的牌才不會全部排隊等著一起響。 */
     private static final ExecutorService PREPARER = daemonThread("ezmj-voice-prepare");
-    private static final ExecutorService PLAYER = daemonThread("ezmj-voice");
+    private static final ScheduledExecutorService PLAYER = Executors.newSingleThreadScheduledExecutor(task -> {
+        Thread thread = new Thread(task, "ezmj-voice");
+        thread.setDaemon(true);
+        return thread;
+    });
     private static Clip playing;
+    /** 不能被打斷的那句念到什麼時候（System.nanoTime）；沒有時是 0。只在 PLAYER 的執行緒上讀寫。 */
+    private static long protectedUntil;
+    /** 等著前一句念完才念的那句，只留最新的一句。 */
+    private static ScheduledFuture<?> waiting;
     private static int volume = 100;
 
     private VoiceLines() {
@@ -96,7 +147,9 @@ public final class VoiceLines {
     private static Map<String, String> texts() {
         Map<String, String> texts = new LinkedHashMap<>();
         for (Line line : Line.values()) {
-            texts.put(line.fileName(), line.text());
+            for (int choice = 0; choice <= line.variants().size(); choice++) {
+                texts.put(line.fileName(choice), line.text(choice));
+            }
         }
         for (int index = 0; index < Tile.KINDS; index++) {
             Tile tile = Tile.fromIndex(index);
@@ -113,7 +166,10 @@ public final class VoiceLines {
         });
     }
 
-    /** 準備好全部語音，已經準備好就不再重做。做不到時在背景執行緒呼叫 onUnavailable。 */
+    /**
+     * 準備好全部語音，已經準備好就不再重做。缺任何一個語音檔就全部重新產生，所以新增說法之後，
+     * 第一次開啟會在背景重做一次，這段時間不出聲。做不到時在背景執行緒呼叫 onUnavailable。
+     */
     public static void prepare(Path dir, Runnable onUnavailable) {
         PREPARER.execute(() -> {
             // 全部載入成功才會放進 CLIPS，所以有內容就是都好了；重新載入會多佔音訊資源
@@ -128,7 +184,7 @@ public final class VoiceLines {
                 for (Gender gender : Gender.values()) {
                     for (String file : texts().keySet()) {
                         String voice = voiceFile(file, gender);
-                        loaded.put(voice, load(dir.resolve(voice), file.equals(Line.SELF_WIN.fileName())));
+                        loaded.put(voice, load(dir.resolve(voice), file.equals(Line.SELF_WIN.fileName(0))));
                     }
                 }
                 CLIPS.putAll(loaded);
@@ -152,29 +208,60 @@ public final class VoiceLines {
         });
     }
 
+    /** 念原本的說法，連線對戰與試聽用。胡、自摸與流局一定馬上念，換的說法還沒念完也打斷。 */
     public static void play(Line line, Gender gender) {
-        playFile(voiceFile(line.fileName(), gender));
+        boolean urgent = line == Line.WIN || line == Line.SELF_WIN || line == Line.DRAWN_GAME;
+        playFile(voiceFile(line.fileName(0), gender), false, urgent);
+    }
+
+    /**
+     * 單機用：roll 是 0 到 99 的亂數，偶爾換一種說法，見 Line.pick。換的說法比較長，
+     * 吃碰之後馬上要打牌，所以念完之前不讓下一句打斷，見 playFile。
+     */
+    public static void playVaried(Line line, Gender gender, int roll) {
+        int choice = line.pick(roll);
+        playFile(voiceFile(line.fileName(choice), gender), choice != 0, false);
     }
 
     /** 喊出打出的這張牌。花牌不會被打出來，沒有語音。 */
     public static void play(Tile tile, Gender gender) {
-        playFile(voiceFile(tileFile(tile), gender));
+        playFile(voiceFile(tileFile(tile), gender), false, false);
     }
 
-    /** 新的一句會打斷還沒喊完的上一句。語音還沒準備好就不出聲。 */
-    private static void playFile(String file) {
-        PLAYER.execute(() -> {
-            Clip clip = CLIPS.get(file);
-            if (clip == null) {
-                return;
-            }
-            if (playing != null) {
-                playing.stop();
-            }
-            clip.setFramePosition(0);
-            clip.start();
-            playing = clip;
-        });
+    /**
+     * 新的一句會打斷還沒喊完的上一句。protect 的這句念完之前不被打斷：下一句等它念完才念，
+     * 中間又有新的，只留最新的那句，語音才不會越落越後面。urgent 的一句不等，直接打斷。
+     * 語音還沒準備好就不出聲。
+     */
+    private static void playFile(String file, boolean protect, boolean urgent) {
+        PLAYER.execute(() -> start(file, protect, urgent));
+    }
+
+    /** 只在 PLAYER 的執行緒上跑。 */
+    private static void start(String file, boolean protect, boolean urgent) {
+        Clip clip = CLIPS.get(file);
+        if (clip == null) {
+            return;
+        }
+        long now = System.nanoTime();
+        if (waiting != null) {
+            waiting.cancel(false);
+            waiting = null;
+        }
+        if (!urgent && protectedUntil > now) {
+            waiting = PLAYER.schedule(() -> {
+                waiting = null;
+                start(file, protect, urgent);
+            }, protectedUntil - now, TimeUnit.NANOSECONDS);
+            return;
+        }
+        if (playing != null) {
+            playing.stop();
+        }
+        clip.setFramePosition(0);
+        clip.start();
+        playing = clip;
+        protectedUntil = protect ? now + clip.getMicrosecondLength() * 1_000 : 0;
     }
 
     private static boolean allPresent(Path dir) {

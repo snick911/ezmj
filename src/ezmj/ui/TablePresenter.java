@@ -4,6 +4,7 @@ import java.awt.Color;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Random;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -55,6 +56,10 @@ final class TablePresenter {
 
     private final Table table;
     private final AppSettings settings;
+    /** 吃、碰偶爾換一種說法，只有單機開。 */
+    private final boolean variedVoices;
+    /** 挑說法用，和牌局的亂數分開，同一個種子打出來的牌還是一樣。 */
+    private final Random voiceRandom = new Random();
     private TablePanel view;
     private boolean stopped;
     private int secondsLeft;
@@ -72,9 +77,11 @@ final class TablePresenter {
     /** 自己剛吃、碰或槓，接下來要打一張牌，提示要明顯。 */
     private String claimedVerb;
 
-    TablePresenter(Table table, AppSettings settings) {
+    /** variedVoices 為 true 時，吃、碰偶爾換一種說法，見 VoiceLines.Line。 */
+    TablePresenter(Table table, AppSettings settings, boolean variedVoices) {
         this.table = table;
         this.settings = settings;
+        this.variedVoices = variedVoices;
     }
 
     void attach(TablePanel view) {
@@ -254,10 +261,10 @@ final class TablePresenter {
                 VoiceLines.play(event.tile(), gender);
                 break;
             case CHOW:
-                VoiceLines.play(VoiceLines.Line.CHOW, gender);
+                speakClaim(VoiceLines.Line.CHOW, gender);
                 break;
             case PONG:
-                VoiceLines.play(VoiceLines.Line.PONG, gender);
+                speakClaim(VoiceLines.Line.PONG, gender);
                 break;
             case KONG:
             case CONCEALED_KONG:
@@ -278,6 +285,15 @@ final class TablePresenter {
                 break;
             default:
                 break;
+        }
+    }
+
+    /** 吃、碰：單機時偶爾換一種說法，連線照舊念「吃」「碰」。 */
+    private void speakClaim(VoiceLines.Line line, Gender gender) {
+        if (variedVoices) {
+            VoiceLines.playVaried(line, gender, voiceRandom.nextInt(100));
+        } else {
+            VoiceLines.play(line, gender);
         }
     }
 

@@ -335,7 +335,7 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
 
     private void openTable(RoomInfo info) {
         game = new OnlineGame();
-        presenter = new TablePresenter(this, settings);
+        presenter = new TablePresenter(this, settings, false);
         view = new TablePanel(presenter::humanDiscard, this::confirmLeave, null, () -> host.showHistory(game));
         presenter.attach(view);
         view.showRoomCode(info.code());

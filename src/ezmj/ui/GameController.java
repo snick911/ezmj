@@ -56,7 +56,8 @@ public final class GameController implements TableFlow.Listener, TablePresenter.
         this.roundEndHandler = roundEndHandler;
         this.settings = settings;
         this.checkpoint = checkpoint;
-        this.presenter = new TablePresenter(this, settings);
+        // 單機才換說法，連線先照舊
+        this.presenter = new TablePresenter(this, settings, true);
         this.flow = new TableFlow(session, Set.of(HUMAN_SEAT), bot, proxy, new TableFlow.Pacing() {
             @Override
             public int turnDelayMs() {

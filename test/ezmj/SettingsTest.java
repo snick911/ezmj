@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import ezmj.model.AppSettings;
 import ezmj.model.GameSpeed;
@@ -167,6 +168,38 @@ final class SettingsTest {
             eq("三萬", VoiceLines.tileText(Tile.parseAll("3w").get(0)), "數牌");
             eq("東風", VoiceLines.tileText(Tile.parseAll("1z").get(0)), "風牌");
             eq("紅中", VoiceLines.tileText(Tile.parseAll("5z").get(0)), "三元牌");
+        });
+
+        test("語音：吃和碰照機率換說法，剩下的念原本的", () -> {
+            VoiceLines.Line chow = VoiceLines.Line.CHOW;
+            int[] counts = new int[chow.variants().size() + 1];
+            for (int roll = 0; roll < 100; roll++) {
+                counts[chow.pick(roll)]++;
+            }
+            eq(65, counts[0], "吃");
+            eq(20, counts[1], "我要吃");
+            eq(10, counts[2], "對不起，吃一下");
+            eq(5, counts[3], "吃啊，上家對我特別優待");
+            eq("我要吃", chow.text(chow.pick(0)), "最前面的是我要吃");
+            eq("吃", chow.text(chow.pick(99)), "最後面的是原本的");
+
+            VoiceLines.Line pong = VoiceLines.Line.PONG;
+            eq(List.of("謝啦，碰", "碰碰碰，我要碰", "太棒了啦，我要碰"),
+                    pong.variants().stream().map(VoiceLines.Variant::text).collect(Collectors.toList()), "碰的說法");
+            eq(List.of(20, 10, 5),
+                    pong.variants().stream().map(VoiceLines.Variant::percent).collect(Collectors.toList()), "碰的機率");
+            eq("碰", pong.text(pong.pick(35)), "35 以上念原本的");
+
+            Set<String> all = new HashSet<>();
+            for (VoiceLines.Line line : VoiceLines.Line.values()) {
+                eq(0, line.pick(99), line + " 最後一個一定是原本的");
+                for (int choice = 0; choice <= line.variants().size(); choice++) {
+                    String text = line.text(choice);
+                    check(!text.contains("'") && !text.contains("\""), "語音產生的指令放不進引號：" + text);
+                    check(all.add(text), "說法重複：" + text);
+                }
+            }
+            eq(0, VoiceLines.Line.KONG.variants().size(), "槓沒有換說法");
         });
 
         test("語音：興奮的聲音音調更高、更短、更大聲", () -> {
