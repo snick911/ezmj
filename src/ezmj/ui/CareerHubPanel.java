@@ -10,6 +10,8 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.awt.Rectangle;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -58,8 +60,10 @@ final class CareerHubPanel extends JPanel {
         void back();
     }
 
-    /** 關卡說明的寬度：列表扣掉捲軸、狀態、按鈕與邊框之後剩下的。 */
+    /** 還不知道列表多寬時，關卡說明先用這個寬度。 */
     private static final int GOAL_WIDTH = 330;
+    /** 每一關左邊「已過關」那一欄的寬度。 */
+    private static final int STATE_WIDTH = 56;
 
     private final Actions actions;
     private final JLabel title = label(" ", Font.BOLD, 28f, Theme.GOLD);
@@ -82,6 +86,8 @@ final class CareerHubPanel extends JPanel {
     private final JScrollPane challengeScroll = new JScrollPane(challengeRows,
             JScrollPane.VERTICAL_SCROLLBAR_ALWAYS, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
     private CareerProfile profile;
+    /** 挑戰列表目前的寬度，還沒排版時是 0。 */
+    private int rowsWidth;
 
     CareerHubPanel(Actions actions) {
         super(new GridBagLayout());
@@ -101,16 +107,38 @@ final class CareerHubPanel extends JPanel {
         c.insets = new Insets(0, 0, 12, 0);
         card.add(header(), c);
 
+        // 左欄照自己的高度靠上，右邊的挑戰列表吃掉剩下的高度，關卡多的時候在裡面捲
         c.gridy = 1;
         c.gridwidth = 1;
+        c.weighty = 1;
         c.fill = GridBagConstraints.NONE;
         c.anchor = GridBagConstraints.NORTH;
         c.insets = new Insets(0, 0, 0, 30);
         card.add(leftColumn(), c);
         c.gridx = 1;
+        c.weightx = 1;
+        c.fill = GridBagConstraints.BOTH;
         c.insets = new Insets(0, 0, 0, 0);
         card.add(rightColumn(), c);
-        add(card);
+
+        // 卡片撐滿視窗的高度：字體放大或視窗小時，列表跟著變矮，不會因為放不下被擠成一條線
+        GridBagConstraints outer = new GridBagConstraints();
+        outer.fill = GridBagConstraints.VERTICAL;
+        outer.weighty = 1;
+        outer.insets = new Insets(12, 12, 12, 12);
+        add(card, outer);
+
+        // 列表變寬變窄時，關卡說明照新的寬度重新折行
+        challengeScroll.getViewport().addComponentListener(new ComponentAdapter() {
+            @Override
+            public void componentResized(ComponentEvent e) {
+                int width = challengeScroll.getViewport().getWidth();
+                if (profile != null && width > 0 && width != rowsWidth) {
+                    rowsWidth = width;
+                    fillChallenges(false);
+                }
+            }
+        });
 
         for (JComboBox<Integer> box : List.of(baseBox, taiBox)) {
             box.addActionListener(e -> syncGeneral());
@@ -227,7 +255,7 @@ final class CareerHubPanel extends JPanel {
         pendingInfo.setText(pendingSummary == null ? " " : pendingSummary);
         reliefBox.setVisible(shown.canTakeRelief());
         syncGeneral();
-        fillChallenges();
+        fillChallenges(true);
         revalidate();
         repaint();
     }
@@ -253,8 +281,10 @@ final class CareerHubPanel extends JPanel {
         generalButton.setEnabled(profile.game() == CareerProfile.Game.NONE && chips > 0 && fit);
     }
 
-    private void fillChallenges() {
+    /** 重新排挑戰列表。scrollToCurrent 時捲到第一個還沒過的關；只是視窗變寬變窄就不捲。 */
+    private void fillChallenges(boolean scrollToCurrent) {
         challengeTitle.setText("挑戰關卡　已過 " + profile.clearedCount() + " / " + Challenge.values().length);
+        int goalPixels = goalPixels();
         challengeRows.removeAll();
         GridBagConstraints c = new GridBagConstraints();
         c.gridx = 0;
@@ -272,7 +302,7 @@ final class CareerHubPanel extends JPanel {
                 challengeRows.add(heading, c);
                 c.gridy++;
             }
-            JComponent row = challengeRow(challenge);
+            JComponent row = challengeRow(challenge, goalPixels);
             if (focus == null && !profile.isCleared(challenge)) {
                 focus = row;
             }
@@ -288,14 +318,29 @@ final class CareerHubPanel extends JPanel {
         challengeRows.revalidate();
         challengeRows.repaint();
         JComponent target = focus;
-        SwingUtilities.invokeLater(() -> {
-            if (target != null) {
-                challengeRows.scrollRectToVisible(target.getBounds());
-            }
-        });
+        if (scrollToCurrent) {
+            SwingUtilities.invokeLater(() -> {
+                if (target != null) {
+                    challengeRows.scrollRectToVisible(target.getBounds());
+                }
+            });
+        }
     }
 
-    private JComponent challengeRow(Challenge challenge) {
+    /**
+     * 關卡說明折行的寬度：列表的寬度扣掉兩邊的間距與邊框、左邊的狀態、中間的空隙與右邊的按鈕。
+     * 列表還沒排版時先用 GOAL_WIDTH。
+     */
+    private int goalPixels() {
+        if (rowsWidth <= 0) {
+            return Theme.scaled(GOAL_WIDTH);
+        }
+        int button = CareerListPanel.small("再挑戰", Theme.BUTTON, () -> { }).getPreferredSize().width;
+        int fixed = 6 + 6 + 10 + 10 + Theme.scaled(STATE_WIDTH) + 12 + 12 + button + 8;
+        return Math.max(Theme.scaled(140), rowsWidth - fixed);
+    }
+
+    private JComponent challengeRow(Challenge challenge, int goalPixels) {
         boolean cleared = profile.isCleared(challenge);
         boolean unlocked = profile.isUnlocked(challenge);
         boolean playing = profile.game() == CareerProfile.Game.CHALLENGE && profile.challenge() == challenge;
@@ -312,12 +357,14 @@ final class CareerHubPanel extends JPanel {
         JLabel goal = new JLabel();
         goal.setFont(Theme.font(Font.PLAIN, 14f));
         goal.setForeground(unlocked ? Theme.TEXT : Theme.MUTED);
-        text.add(HomePanel.wrapped(goal, challenge.goalText(), GOAL_WIDTH), line);
+        goal.setText(HomePanel.wrapHtml(challenge.goalText(), goalPixels));
+        text.add(goal, line);
         String reward = cleared ? "（" + HomePanel.escape(profile.clearedDate(challenge)) + " 過關，獎金已領）" : "";
         JLabel setup = new JLabel();
         setup.setFont(Theme.font(Font.PLAIN, 13f));
         setup.setForeground(Theme.MUTED);
-        text.add(HomePanel.wrapped(setup, challenge.setup() + "・獎金 " + challenge.reward() + reward, GOAL_WIDTH), line);
+        setup.setText(HomePanel.wrapHtml(challenge.setup() + "・獎金 " + challenge.reward() + reward, goalPixels));
+        text.add(setup, line);
 
         boolean enabled = unlocked && profile.game() == CareerProfile.Game.NONE;
         Color color = !enabled ? Theme.PANEL : cleared ? Theme.BUTTON : Theme.RED;
@@ -336,7 +383,7 @@ final class CareerHubPanel extends JPanel {
         cell.anchor = GridBagConstraints.WEST;
         cell.insets = new Insets(0, 0, 0, 12);
         JLabel stateLabel = label(state, Font.BOLD, 14f, stateColor);
-        stateLabel.setPreferredSize(new Dimension(Theme.scaled(56), stateLabel.getPreferredSize().height));
+        stateLabel.setPreferredSize(new Dimension(Theme.scaled(STATE_WIDTH), stateLabel.getPreferredSize().height));
         row.add(stateLabel, cell);
         cell.weightx = 1;
         cell.fill = GridBagConstraints.HORIZONTAL;
@@ -351,10 +398,12 @@ final class CareerHubPanel extends JPanel {
 
     /** 字體大小改變後，讓挑戰列表與按鈕跟著調整。 */
     void syncSizes() {
-        challengeScroll.setPreferredSize(new Dimension(Theme.scaled(560), Theme.scaled(450)));
+        // 高度只是起點，視窗多出來的高度都給列表；放不下時最矮到最小值，不會被擠成一條線
+        challengeScroll.setPreferredSize(new Dimension(Theme.scaled(560), Theme.scaled(300)));
+        challengeScroll.setMinimumSize(new Dimension(Theme.scaled(400), Theme.scaled(150)));
         generalButton.setPreferredSize(new Dimension(Theme.scaled(260), Theme.scaled(46)));
         if (profile != null) {
-            fillChallenges();
+            fillChallenges(false);
         }
     }
 
