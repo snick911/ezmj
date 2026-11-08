@@ -31,7 +31,9 @@ import javax.sound.sampled.Clip;
 import javax.sound.sampled.LineUnavailableException;
 import javax.sound.sampled.UnsupportedAudioFileException;
 
+import ezmj.model.BambooCall;
 import ezmj.model.Gender;
+import ezmj.model.Suit;
 import ezmj.model.Tile;
 import ezmj.model.VoiceStyle;
 
@@ -70,8 +72,14 @@ public final class VoiceLines {
         }
     }
 
-    /** 一句要念的話：字與每個字的高低。 */
-    public record Phrase(String text, String levels) {
+    /**
+     * 一句要念的話：字與每個字的高低。gentle 的句子不加快、音量最多加 GENTLE_VOLUME，音高照樣調：
+     * 女聲的「條」加快又加大聲之後會糊掉，聽起來像「支」，這樣就清楚了。
+     */
+    public record Phrase(String text, String levels, boolean gentle) {
+        public Phrase(String text, String levels) {
+            this(text, levels, false);
+        }
     }
 
     /** 排著要念的一句。droppable 的是牌名，有新的一句進來就不念了。 */
@@ -84,6 +92,10 @@ public final class VoiceLines {
     private static final int GENERATE_TIMEOUT_SECONDS = 90;
     /** 每個風格資料夾裡記著產生時的指紋，見 signature。 */
     private static final String SIGNATURE_FILE = "signature.txt";
+    /** gentle 的句子音量最多加這麼多百分比。 */
+    private static final int GENTLE_VOLUME = 20;
+    private static final String SSML_HEAD =
+            "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='zh-TW'>";
 
     private static final String[] DRAGON_TEXTS = {"紅中", "發財", "白板"};
     /** 喊牌都是兩個字，後面那個字（萬、筒、風、中…）拉高。 */
@@ -115,21 +127,25 @@ public final class VoiceLines {
     private VoiceLines() {
     }
 
-    /**
-     * 喊牌時的講法。風牌和三元牌單念一個字聽不清楚，用牌桌上的叫法。條子喊「索」：女聲把「條」拉高加快之後
-     * 糊成一團，聽起來像別的字，「索」怎麼調都清楚。畫面上照舊寫「條」。
-     */
+    /** 喊牌時的講法。風牌和三元牌單念一個字聽不清楚，用牌桌上的叫法。條子喊「X條」。 */
     public static String tileText(Tile tile) {
+        return tileText(tile, BambooCall.TIAO);
+    }
+
+    /** 條子照 call 喊「X條」或「X索」，其他牌不受影響。 */
+    public static String tileText(Tile tile, BambooCall call) {
         switch (tile.suit()) {
             case WIND:   return tile.label() + "風";
             case DRAGON: return DRAGON_TEXTS[tile.rank() - 1];
-            case TIAO:   return tile.label().substring(0, 1) + "索";
+            case TIAO:   return tile.label().substring(0, 1) + call.word();
             default:     return tile.label();
         }
     }
 
-    private static String tileFile(Tile tile) {
-        return "tile_" + tile.index() + ".wav";
+    /** 條子喊「X索」的另外存一個檔，其他照舊。 */
+    private static String tileFile(Tile tile, BambooCall call) {
+        boolean suo = tile.suit() == Suit.TIAO && call == BambooCall.SUO;
+        return "tile_" + tile.index() + (suo ? "_suo" : "") + ".wav";
     }
 
     /** 女聲直接用基本檔名，男聲多一個前綴。 */
@@ -145,17 +161,23 @@ public final class VoiceLines {
         }
         for (int index = 0; index < Tile.KINDS; index++) {
             Tile tile = Tile.fromIndex(index);
-            phrases.put(tileFile(tile), new Phrase(tileText(tile), TILE_LEVELS));
+            boolean bamboo = tile.suit() == Suit.TIAO;
+            phrases.put(tileFile(tile, BambooCall.TIAO), new Phrase(tileText(tile, BambooCall.TIAO), TILE_LEVELS, bamboo));
+            if (bamboo) {
+                phrases.put(tileFile(tile, BambooCall.SUO), new Phrase(tileText(tile, BambooCall.SUO), TILE_LEVELS));
+            }
         }
         return phrases;
     }
 
     /**
-     * 一句話在這個風格下的 SSML 內容：每個字包一層 prosody，音高照它的高低；逗號不調。
-     * 外面的 speak 與語速、音量由產生語音的腳本包上去。屬性用單引號，腳本裡不能有雙引號。
+     * 一句話在這個風格下的 SSML 內容，speak 裡面的部分：外層是語速與音量，裡面每個字包一層 prosody，
+     * 音高照它的高低；逗號不調。屬性用單引號，腳本裡不能有雙引號。
      */
     public static String ssmlBody(Phrase phrase, VoiceStyle style) {
-        StringBuilder body = new StringBuilder();
+        int rate = phrase.gentle() ? 0 : style.rate();
+        int loudness = phrase.gentle() ? Math.min(style.volume(), GENTLE_VOLUME) : style.volume();
+        StringBuilder body = new StringBuilder("<prosody rate='+" + rate + "%' volume='+" + loudness + "%'>");
         String text = phrase.text();
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
@@ -169,7 +191,7 @@ public final class VoiceLines {
         if (style.exclaim()) {
             body.append('！');
         }
-        return body.toString();
+        return body.append("</prosody>").toString();
     }
 
     private static ExecutorService daemonThread(String name) {
@@ -231,7 +253,7 @@ public final class VoiceLines {
      * 下次開啟會整個風格重新產生，不會繼續用舊的語音檔。
      */
     public static String signature(VoiceStyle style) {
-        StringBuilder all = new StringBuilder(ssmlHead(style));
+        StringBuilder all = new StringBuilder(SSML_HEAD);
         phrases().forEach((file, phrase) -> all.append('\n').append(file).append('=').append(ssmlBody(phrase, style)));
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(all.toString().getBytes(StandardCharsets.UTF_8));
@@ -289,9 +311,12 @@ public final class VoiceLines {
         playFile(voiceFile(line.fileName(), gender), false);
     }
 
-    /** 喊出打出的這張牌。花牌不會被打出來，沒有語音。輪不到念之前又有新的一句，這張就不念了。 */
-    public static void play(Tile tile, Gender gender) {
-        playFile(voiceFile(tileFile(tile), gender), true);
+    /**
+     * 喊出打出的這張牌，條子照 call 喊「X條」或「X索」。花牌不會被打出來，沒有語音。
+     * 輪不到念之前又有新的一句，這張就不念了。
+     */
+    public static void play(Tile tile, Gender gender, BambooCall call) {
+        playFile(voiceFile(tileFile(tile, call), gender), true);
     }
 
     /**
@@ -401,18 +426,12 @@ public final class VoiceLines {
     /**
      * 優先用台灣語音，其次任何中文語音。先寫暫存檔再改名，中斷時不會留下不完整的語音檔。
      * 舊介面通常只有女聲，男聲要走 Windows 新版的語音介面；這部分失敗就略過，之後由女聲壓低音調代替。
-     * 兩邊都念 SSML：每句的內容在 $p，外面包上 speak 與這個風格的語速、音量。
+     * 兩邊都念 SSML：每句的內容在 $p（含語速、音量與逐字的音高），外面包上 speak。
      * 這段腳本會直接放進命令列，不能有雙引號；命令列有長度上限，每句的內容只列一次。
      */
-    /** 每句外面包的 speak 與這個風格的語速、音量。 */
-    private static String ssmlHead(VoiceStyle style) {
-        return "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='zh-TW'>"
-                + "<prosody rate='+" + style.rate() + "%' volume='+" + style.volume() + "%'>";
-    }
-
     private static String script(Path dir, VoiceStyle style) {
-        StringBuilder script = new StringBuilder("$h = " + quoted(ssmlHead(style)) + ";"
-                + "$e = " + quoted("</prosody></speak>") + ";"
+        StringBuilder script = new StringBuilder("$h = " + quoted(SSML_HEAD) + ";"
+                + "$e = " + quoted("</speak>") + ";"
                 + "$p = @(");
         StringBuilder list = new StringBuilder();
         phrases().forEach((file, phrase) -> {

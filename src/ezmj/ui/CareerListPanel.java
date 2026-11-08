@@ -120,7 +120,8 @@ final class CareerListPanel extends JPanel {
         } else {
             try {
                 CareerProfile profile = slot.loadProfile();
-                JLabel name = new JLabel(profile.name() + "　籌碼 " + profile.bankroll());
+                String title = profile.title() == null ? "" : "【" + profile.title().label() + "】";
+                JLabel name = new JLabel(profile.name() + title + "　籌碼 " + profile.bankroll());
                 name.setFont(Theme.font(Font.BOLD, 17f));
                 name.setForeground(Theme.TEXT);
                 text.add(name, line);
@@ -178,7 +179,8 @@ final class CareerListPanel extends JPanel {
         JTextField nameField = new JTextField(12);
         nameField.setFont(Theme.font(Font.PLAIN, 16f));
         ((AbstractDocument) nameField.getDocument()).setDocumentFilter(new LengthLimit(CareerProfile.MAX_NAME_LENGTH));
-        JComboBox<Integer> chipBox = StartPanel.combo(StartPanel.CHIP_OPTIONS, 20_000);
+        JComboBox<Integer> chipBox = StartPanel.combo(CareerProfile.STARTING_CHIPS.toArray(new Integer[0]),
+                CareerProfile.DEFAULT_STARTING_CHIPS);
         Object[] message = {
             "名字（最多 " + CareerProfile.MAX_NAME_LENGTH + " 字）", nameField,
             "起始籌碼（建立之後就不能改）", chipBox,

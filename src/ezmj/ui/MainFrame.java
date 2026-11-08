@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.text.ParseException;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -39,6 +40,7 @@ import ezmj.bot.ComputerBot;
 import ezmj.bot.SeatedBots;
 import ezmj.career.CareerProfile;
 import ezmj.career.CareerSlot;
+import ezmj.career.CareerTitle;
 import ezmj.career.Challenge;
 import ezmj.career.Records;
 import ezmj.engine.Achievement;
@@ -48,6 +50,7 @@ import ezmj.engine.GameView;
 import ezmj.engine.Round;
 import ezmj.engine.Settlement;
 import ezmj.model.AppSettings;
+import ezmj.model.BambooCall;
 import ezmj.model.BotLevel;
 import ezmj.model.GameConfig;
 import ezmj.model.GameRecord;
@@ -198,6 +201,8 @@ public final class MainFrame extends JFrame {
     private Mode mode = Mode.PRACTICE;
     /** 這場已經結束，結果視窗還沒看完。挑戰關卡的任務一確定就結束，不一定打完四圈。 */
     private boolean gameOver;
+    /** 這場拿到的修業稱號，牌局結束時一起告訴玩家。 */
+    private final List<CareerTitle> titlesEarned = new ArrayList<>();
     /** 進入的修業檔案；在開始畫面、練習牌局或檔案列表時都是 null。練習牌局時一定是 null。 */
     private CareerSlot careerSlot;
     private CareerProfile career;
@@ -439,7 +444,28 @@ public final class MainFrame extends JFrame {
             group.add(item);
             menu.add(item);
         }
+        // 條子的喊法：別人照名字各喊各的，自己的在這裡選
+        menu.addSeparator();
+        ButtonGroup calls = new ButtonGroup();
+        for (BambooCall call : BambooCall.values()) {
+            String suffix = call == BambooCall.DEFAULT ? "（預設）" : "";
+            JRadioButtonMenuItem item = new JRadioButtonMenuItem("條子喊「X" + call.word() + "」" + suffix,
+                    call == settings.bambooCall());
+            item.setFont(Theme.font(Font.PLAIN, 15f));
+            item.addActionListener(e -> changeBambooCall(call));
+            calls.add(item);
+            menu.add(item);
+        }
         return menu;
+    }
+
+    /** 選了就用自己的聲音喊一聲「三條」或「三索」，聽聽看。 */
+    private void changeBambooCall(BambooCall call) {
+        settings.setBambooCall(call);
+        saveSettings();
+        if (settings.voiceEnabled()) {
+            VoiceLines.play(Tile.parseAll("3s").get(0), settings.playerGender(), call);
+        }
     }
 
     private JMenu buildVoiceStyleMenu() {
@@ -644,6 +670,7 @@ public final class MainFrame extends JFrame {
         GameConfig config = session.config();
         gameSeed = seed;
         gameOver = false;
+        titlesEarned.clear();
         Bot bot = new SeatedBots(config.botLevels(), List.of(session.personality(1), session.personality(2), session.personality(3)),
                 config.basePay(), config.taiPay(), new Random(seed + 1));
         Bot proxy = new ComputerBot(BotLevel.PRO, config.basePay(), config.taiPay(), new Random(seed + 2));
@@ -787,9 +814,9 @@ public final class MainFrame extends JFrame {
         }
     }
 
-    /** 帶帳上的籌碼上桌，三家電腦也帶一樣多。 */
+    /** 帶帳上的籌碼上桌，三家電腦也帶一樣多。底台是檔案畫面照帳上籌碼列出來的，一定選得了。 */
     private void startCareerGeneral(int basePay, int taiPay, List<BotLevel> levels) {
-        int chips = career.startGeneral();
+        int chips = career.startGeneral(basePay, taiPay);
         saveCareer();
         mode = Mode.GENERAL;
         long seed = new Random().nextLong();
@@ -1044,6 +1071,7 @@ public final class MainFrame extends JFrame {
         String honorNote = wholeGame ? recordGame(records, session) : "";
         List<Achievement> gameEarned = wholeGame ? recordGameAchievements(records, session) : List.of();
         Ending ending = new Ending(null, honorNote);
+        CareerTitle titleBefore = mode == Mode.PRACTICE ? null : career.title();
         if (mode == Mode.GENERAL) {
             career.settleGeneral(session.player(0).chips());
             if (over) {
@@ -1058,6 +1086,13 @@ public final class MainFrame extends JFrame {
                 saveCareer();
             }
         }
+        if (mode != Mode.PRACTICE && career.title() != titleBefore) {
+            titlesEarned.add(career.title());
+        }
+        if (over && !titlesEarned.isEmpty()) {
+            ending = new Ending(ending.headline(), join(ending.note(), "獲得稱號："
+                    + titlesEarned.stream().map(title -> "「" + title.label() + "」").collect(Collectors.joining("、"))));
+        }
         if (over) {
             deleteSavedGame(saveFile());
         } else {
@@ -1069,6 +1104,9 @@ public final class MainFrame extends JFrame {
     }
 
     private static String join(String first, String second) {
+        if (first.isEmpty()) {
+            return second;
+        }
         return second.isEmpty() ? first : first + "\n" + second;
     }
 

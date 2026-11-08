@@ -18,6 +18,7 @@ import java.util.stream.Collectors;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
+import javax.swing.DefaultComboBoxModel;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
@@ -29,6 +30,7 @@ import javax.swing.SwingUtilities;
 
 import ezmj.career.CareerProfile;
 import ezmj.career.CareerSlot;
+import ezmj.career.CareerTitle;
 import ezmj.career.Challenge;
 import ezmj.model.BotLevel;
 import ezmj.model.GameConfig;
@@ -73,8 +75,12 @@ final class CareerHubPanel extends JPanel {
     private final JPanel pendingBox = box();
     private final JLabel pendingInfo = label(" ", Font.PLAIN, 15f, Theme.TEXT);
     private final JPanel reliefBox = box();
-    private final JComboBox<Integer> baseBox = StartPanel.combo(StartPanel.BASE_OPTIONS, 100);
-    private final JComboBox<Integer> taiBox = StartPanel.combo(StartPanel.TAI_OPTIONS, 20);
+    private final JLabel titleNote = label(" ", Font.BOLD, 14f, Theme.GOLD);
+    /** 選項跟著帳上的籌碼變，見 fillStakes。 */
+    private final JComboBox<Integer> baseBox = StartPanel.combo(new Integer[] {100}, 100);
+    private final JComboBox<Integer> taiBox = StartPanel.combo(new Integer[] {20}, 20);
+    /** 正在換底台的選項，這時候的選取事件不算數。 */
+    private boolean filling;
     /** 依序是座位 1、2、3，也就是右家、對家、左家。 */
     private final List<JComboBox<BotLevel>> levelBoxes = List.of(StartPanel.combo(BotLevel.values(), BotLevel.NORMAL),
             StartPanel.combo(BotLevel.values(), BotLevel.NORMAL), StartPanel.combo(BotLevel.values(), BotLevel.NORMAL));
@@ -184,6 +190,7 @@ final class CareerHubPanel extends JPanel {
         addWide(left, c, label("帳上籌碼", Font.PLAIN, 14f, Theme.MUTED), 0);
         addWide(left, c, bankroll, 0);
         addWide(left, c, bankrollNote, 2);
+        addWide(left, c, titleNote, 2);
 
         pendingBox.add(sectionLabel("沒打完的牌局"));
         pendingBox.add(pendingInfo);
@@ -200,8 +207,7 @@ final class CareerHubPanel extends JPanel {
         JLabel reliefText = new JLabel();
         reliefText.setFont(Theme.font(Font.PLAIN, 14f));
         reliefText.setForeground(Theme.TEXT);
-        reliefBox.add(HomePanel.wrapped(reliefText, "籌碼不到 " + CareerProfile.RELIEF_BELOW + "，可以領救濟金補到 "
-                + CareerProfile.RELIEF_TO + "，會記一次破產。", 400));
+        reliefBox.add(HomePanel.wrapped(reliefText, "補到 " + CareerProfile.RELIEF_TO + "，記一次破產。", 400));
         JPanel reliefButtons = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 4));
         reliefButtons.setOpaque(false);
         reliefButtons.add(CareerListPanel.small("領救濟金", Theme.RED, actions::takeRelief));
@@ -213,7 +219,8 @@ final class CareerHubPanel extends JPanel {
         JLabel generalText = new JLabel();
         generalText.setFont(Theme.font(Font.PLAIN, 14f));
         generalText.setForeground(Theme.MUTED);
-        addWide(left, c, HomePanel.wrapped(generalText, "打四圈，帶帳上的籌碼上桌，每局結算完就入帳；三家電腦也帶一樣多。",
+        addWide(left, c, HomePanel.wrapped(generalText, "打四圈，帶帳上的籌碼上桌，每局結算完就入帳。"
+                + "底最多帳上的 1/" + CareerProfile.BASE_SHARE + "、每台最多 1/" + CareerProfile.TAI_SHARE + "。",
                 400), 2);
         StartPanel.addRow(left, c, "底", baseBox);
         StartPanel.addRow(left, c, "每台", taiBox);
@@ -251,29 +258,69 @@ final class CareerHubPanel extends JPanel {
         bankroll.setText(String.valueOf(shown.bankroll()));
         bankrollNote.setText("起始 " + shown.startingChips() + "・最高 " + shown.peak() + "・破產 "
                 + shown.bankruptcies() + " 次");
+        titleNote.setText(titleText(shown));
         pendingBox.setVisible(pendingSummary != null);
         pendingInfo.setText(pendingSummary == null ? " " : pendingSummary);
         reliefBox.setVisible(shown.canTakeRelief());
+        fillStakes();
         syncGeneral();
         fillChallenges(true);
         revalidate();
         repaint();
     }
 
+    /** 例如「稱號：百萬雀士・下一個「麻將大亨」要帳上到 5000000」。 */
+    static String titleText(CareerProfile shown) {
+        CareerTitle current = shown.title();
+        CareerTitle next = shown.nextTitle();
+        String now = current == null ? "還沒有稱號" : "稱號：" + current.label();
+        return next == null ? now + "・全部到手" : now + "・帳上到 " + next.threshold() + " 得到「" + next.label() + "」";
+    }
+
+    /**
+     * 底與每台只列帳上的籌碼選得了的：底最多帳上的 1/10、每台最多 1/20。原本選的還能選就留著，
+     * 不能選就換成能選的裡面最接近 100／20 的。
+     */
+    private void fillStakes() {
+        refill(baseBox, profile.baseOptions(), 100);
+        refill(taiBox, profile.taiOptions(), 20);
+    }
+
+    private void refill(JComboBox<Integer> box, List<Integer> options, int preferred) {
+        Integer previous = (Integer) box.getSelectedItem();
+        filling = true;
+        box.setModel(new DefaultComboBoxModel<>(options.toArray(new Integer[0])));
+        if (options.contains(previous)) {
+            box.setSelectedItem(previous);
+        } else if (!options.isEmpty()) {
+            Integer pick = options.get(0);
+            for (Integer option : options) {
+                if (option <= preferred) {
+                    pick = option;
+                }
+            }
+            box.setSelectedItem(pick);
+        }
+        filling = false;
+    }
+
     private void syncGeneral() {
-        if (profile == null) {
+        if (profile == null || filling) {
             return;
         }
         int chips = profile.tableChips();
         tableNote.setText(chips > 0 ? "帶上桌 " + chips + (chips < profile.bankroll() ? "，其餘留在帳上" : "") : " ");
-        boolean fit = GameConfig.paysFit(chips, (Integer) baseBox.getSelectedItem(), (Integer) taiBox.getSelectedItem());
+        Integer basePay = (Integer) baseBox.getSelectedItem();
+        Integer taiPay = (Integer) taiBox.getSelectedItem();
+        boolean fit = basePay != null && taiPay != null && profile.stakesAllowed(basePay, taiPay)
+                && GameConfig.paysFit(chips, basePay, taiPay);
         String warning;
         if (profile.game() != CareerProfile.Game.NONE) {
             warning = "先把沒打完的牌局打完或放棄";
-        } else if (chips <= 0) {
-            warning = "籌碼輸光了，領救濟金才能再打";
+        } else if (profile.baseOptions().isEmpty() || profile.taiOptions().isEmpty()) {
+            warning = "籌碼不到 " + CareerProfile.RELIEF_BELOW + "，連最小的桌都上不了，領救濟金才能再打";
         } else if (!fit) {
-            warning = "底和每台不能大於帶上桌的籌碼";
+            warning = "這個底台現在選不了";
         } else {
             warning = " ";
         }

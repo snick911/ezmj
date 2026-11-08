@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Set;
 
 import ezmj.model.AppSettings;
+import ezmj.model.BambooCall;
 import ezmj.model.GameSpeed;
 import ezmj.model.Gender;
 import ezmj.model.MusicTrack;
@@ -170,8 +171,31 @@ final class SettingsTest {
             eq("三萬", VoiceLines.tileText(Tile.parseAll("3w").get(0)), "數牌");
             eq("東風", VoiceLines.tileText(Tile.parseAll("1z").get(0)), "風牌");
             eq("紅中", VoiceLines.tileText(Tile.parseAll("5z").get(0)), "三元牌");
-            eq("三索", VoiceLines.tileText(Tile.parseAll("3s").get(0)), "條子喊索，拉高加快之後還聽得清楚");
-            eq("三條", Tile.parseAll("3s").get(0).label(), "畫面上照舊寫條");
+            Tile bamboo = Tile.parseAll("3s").get(0);
+            eq("三條", VoiceLines.tileText(bamboo, BambooCall.TIAO), "條子喊條");
+            eq("三索", VoiceLines.tileText(bamboo, BambooCall.SUO), "條子喊索");
+            eq("三萬", VoiceLines.tileText(Tile.parseAll("3w").get(0), BambooCall.SUO), "別的牌不受影響");
+            eq("三條", bamboo.label(), "畫面上照舊寫條");
+            long suoFiles = VoiceLines.phrases().values().stream().filter(p -> p.text().endsWith("索")).count();
+            eq(9L, suoFiles, "一條到九條都另外有喊索的語音");
+            check(VoiceLines.phrases().values().stream().filter(p -> p.text().endsWith("條")).allMatch(VoiceLines.Phrase::gentle),
+                    "喊條的不加快、不太大聲，女聲才聽得清楚");
+        });
+
+        test("條子的喊法：自己的照設定，別人照名字，同一個名字每次都一樣", () -> {
+            eq(BambooCall.TIAO, new AppSettings().bambooCall(), "預設喊條");
+            eq(BambooCall.TIAO, loadText("bambooCall=ROBOT\n").bambooCall(), "不認得");
+            Path file = Files.createTempDirectory("ezmj-settings").resolve("settings.properties");
+            AppSettings settings = new AppSettings();
+            settings.setBambooCall(BambooCall.SUO);
+            settings.save(file);
+            eq(BambooCall.SUO, AppSettings.load(file).bambooCall(), "讀回來");
+            eq(BambooCall.forName("阿土"), BambooCall.forName("阿土"), "同一個名字");
+            Set<BambooCall> calls = new HashSet<>();
+            for (String name : List.of("陳小明", "林雅婷", "黃阿土", "張淑芬", "李國強", "王美玲", "吳志明", "劉佳穎")) {
+                calls.add(BambooCall.forName(name));
+            }
+            eq(2, calls.size(), "有人喊條、有人喊索");
         });
 
         test("語音：說法或風格改了指紋就變，舊的語音檔會重新產生", () -> {
@@ -205,19 +229,21 @@ final class SettingsTest {
                 for (VoiceStyle style : VoiceStyle.values()) {
                     String body = VoiceLines.ssmlBody(phrase, style);
                     check(!body.contains("\""), "產生語音的指令放不進雙引號：" + body);
-                    eq(phrase.text().length(), body.split("<prosody ").length - 1, entry.getKey() + " 每個字一層");
+                    eq(phrase.text().length() + 1, body.split("<prosody ").length - 1, entry.getKey() + " 外面一層，每個字一層");
                 }
             }
             VoiceLines.Phrase zimo = new VoiceLines.Phrase("自摸", "48");
-            eq("<prosody pitch='+65%'>自</prosody><prosody pitch='+105%'>摸</prosody>！",
-                    VoiceLines.ssmlBody(zimo, VoiceStyle.HYPE), "熱血：拉高、重點字更高、加驚嘆號");
-            eq("<prosody pitch='+15%'>自</prosody><prosody pitch='+15%'>摸</prosody>",
+            eq("<prosody rate='+25%' volume='+40%'><prosody pitch='+65%'>自</prosody><prosody pitch='+105%'>摸</prosody>！</prosody>",
+                    VoiceLines.ssmlBody(zimo, VoiceStyle.HYPE), "熱血：加快加大聲、拉高、重點字更高、加驚嘆號");
+            eq("<prosody rate='+20%' volume='+30%'><prosody pitch='+15%'>自</prosody><prosody pitch='+15%'>摸</prosody></prosody>",
                     VoiceLines.ssmlBody(zimo, VoiceStyle.BRISK), "輕快：整句一樣高");
-            eq("<prosody pitch='+34%'>自</prosody><prosody pitch='+58%'>摸</prosody>",
+            eq("<prosody rate='+15%' volume='+30%'><prosody pitch='+34%'>自</prosody><prosody pitch='+58%'>摸</prosody></prosody>",
                     VoiceLines.ssmlBody(zimo, VoiceStyle.LIVELY), "抑揚：逐字有高低");
-            eq("<prosody pitch='+45%'>吃</prosody>，<prosody pitch='+25%'>碰</prosody>",
-                    VoiceLines.ssmlBody(new VoiceLines.Phrase("吃，碰", "200"), VoiceStyle.HYPE).replace("！", ""),
-                    "逗號不調");
+            eq("<prosody rate='+0%' volume='+20%'><prosody pitch='+55%'>三</prosody><prosody pitch='+75%'>條</prosody>！</prosody>",
+                    VoiceLines.ssmlBody(new VoiceLines.Phrase("三條", "35", true), VoiceStyle.HYPE),
+                    "條：音高照調，但不加快、音量最多加 20%");
+            check(VoiceLines.ssmlBody(new VoiceLines.Phrase("吃，碰", "200"), VoiceStyle.HYPE)
+                    .contains("<prosody pitch='+45%'>吃</prosody>，<prosody pitch='+25%'>碰</prosody>"), "逗號不調");
         });
 
         test("語音：沒有男聲時，女聲壓低後音調更低、更長", () -> {

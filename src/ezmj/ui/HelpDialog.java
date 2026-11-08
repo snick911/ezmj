@@ -33,6 +33,7 @@ import javax.swing.event.HyperlinkEvent;
 
 import ezmj.AppVersion;
 import ezmj.career.CareerProfile;
+import ezmj.career.CareerTitle;
 import ezmj.career.Challenge;
 import ezmj.engine.Achievement;
 import ezmj.engine.AchievementBook;
@@ -187,6 +188,7 @@ final class HelpDialog extends JDialog {
     private static String careerSection(CareerProfile career) {
         StringBuilder html = new StringBuilder("<h2>修業檔案</h2><table width=\"100%\" cellspacing=\"0\" cellpadding=\"5\">");
         statRow(html, "帳上籌碼", career.bankroll() + "（起始 " + career.startingChips() + "，最高 " + career.peak() + "）");
+        statRow(html, "稱號", escape(CareerHubPanel.titleText(career)));
         statRow(html, "破產", career.bankruptcies() + " 次");
         statRow(html, "挑戰過關", career.clearedCount() + " / " + Challenge.values().length + " 關");
         statRow(html, "建立日期", escape(career.created()));
@@ -404,12 +406,25 @@ final class HelpDialog extends JDialog {
                 + careerRules();
     }
 
+    /** 稱號的門檻，直接從 CareerTitle 列出來。 */
+    private static String careerTitles() {
+        StringBuilder html = new StringBuilder("<p>帳上的籌碼曾經到過這些數目就得到稱號，之後輸掉也不會拿走：");
+        for (CareerTitle title : CareerTitle.values()) {
+            html.append(title.ordinal() == 0 ? "" : "、").append(title.threshold()).append("「")
+                    .append(title.label()).append("」");
+        }
+        return html.append("。</p>").toString();
+    }
+
     /** 修業模式的規則與關卡表，關卡直接從 Challenge 列出來。 */
     private static String careerRules() {
         StringBuilder html = new StringBuilder("<h2>修業模式</h2>"
                 + "<p>建立檔案時選好起始籌碼，之後一般對戰帶帳上的籌碼上桌打四圈，每局結算完就入帳，輸贏不會重來。"
-                + "帳上不到 " + CareerProfile.RELIEF_BELOW + " 時可以領救濟金補到 " + CareerProfile.RELIEF_TO
-                + "，會記一次破產。每個檔案的成就、統計與榮譽榜各自記錄，和練習牌局也分開。</p>"
+                + "籌碼越多能選的底台越大：底最多帳上的 1/" + CareerProfile.BASE_SHARE + "、每台最多 1/"
+                + CareerProfile.TAI_SHARE + "。"
+                + "帳上不到 " + CareerProfile.RELIEF_BELOW + "（連最小的底都選不了）時可以領救濟金補到 "
+                + CareerProfile.RELIEF_TO + "，會記一次破產。每個檔案的成就、統計與榮譽榜各自記錄，和練習牌局也分開。</p>"
+                + careerTitles()
                 + "<p>挑戰關卡要依序過關，每關的對手、圈數、籌碼與底台都固定，不從帳上扣籌碼；第一次過關有獎金。"
                 + "任務一確定成功或失敗，這場就在那一局結束。挑戰的每一局照算成就與統計，但不算整場類的成就與榮譽榜。</p>"
                 + "<table width=\"100%\" cellspacing=\"0\" cellpadding=\"5\"><tr class=\"head\">");

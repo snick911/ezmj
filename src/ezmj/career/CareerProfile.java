@@ -3,8 +3,10 @@ package ezmj.career;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.EnumMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.stream.Collectors;
 
 import ezmj.model.PropertyFiles;
 import ezmj.model.PropertyStore;
@@ -18,10 +20,22 @@ public final class CareerProfile {
 
     /** 帶上桌的籌碼最多這麼多，其餘留在帳上。四家加起來還放得進 int。 */
     public static final int MAX_TABLE_CHIPS = 100_000_000;
-    /** 帳上的籌碼不到這麼多，而且沒有打到一半的牌局，就可以領救濟金。 */
-    public static final int RELIEF_BELOW = 1_000;
-    /** 救濟金補到這麼多。 */
-    public static final int RELIEF_TO = 10_000;
+    /** 建立檔案時可以選的起始籌碼。 */
+    public static final List<Integer> STARTING_CHIPS = List.of(1_000, 20_000, 100_000);
+    public static final int DEFAULT_STARTING_CHIPS = 20_000;
+    /** 一般對戰可以選的底與每台；實際能選哪些看帳上的籌碼，見 baseOptions 與 taiOptions。 */
+    public static final List<Integer> BASE_OPTIONS = List.of(50, 100, 300, 500, 1_000, 2_000, 5_000, 10_000, 20_000,
+            50_000, 100_000, 200_000);
+    public static final List<Integer> TAI_OPTIONS = List.of(10, 20, 50, 100, 200, 500, 1_000, 2_000, 5_000, 10_000,
+            20_000, 50_000, 100_000);
+    /** 底最多是帳上的幾分之一。 */
+    public static final int BASE_SHARE = 10;
+    /** 每台最多是帳上的幾分之一。 */
+    public static final int TAI_SHARE = 20;
+    /** 帳上的籌碼連最小的底都選不了，而且沒有打到一半的牌局，就可以領救濟金。 */
+    public static final int RELIEF_BELOW = BASE_OPTIONS.get(0) * BASE_SHARE;
+    /** 救濟金補到這麼多，和最小的起始籌碼一樣，不會比新開一個檔案還多。 */
+    public static final int RELIEF_TO = STARTING_CHIPS.get(0);
     public static final int MAX_NAME_LENGTH = 8;
     /** 檔案的格式版本，見 PropertyFiles.FORMAT_KEY。 */
     private static final int FORMAT = 1;
@@ -79,6 +93,16 @@ public final class CareerProfile {
         return peak;
     }
 
+    /** 帳上曾經到過的最高稱號；之後輸掉也不會拿走。還沒有是 null。 */
+    public CareerTitle title() {
+        return CareerTitle.of(peak);
+    }
+
+    /** 下一個稱號；全部都拿到了是 null。 */
+    public CareerTitle nextTitle() {
+        return CareerTitle.next(peak);
+    }
+
     public int bankruptcies() {
         return bankruptcies;
     }
@@ -102,9 +126,27 @@ public final class CareerProfile {
         return (int) Math.max(0, Math.min(bankroll, MAX_TABLE_CHIPS));
     }
 
-    /** 開一場一般對戰，回傳帶上桌的籌碼。 */
-    public int startGeneral() {
+    /** 帳上的籌碼選得了的底，由小到大；連最小的都選不了時是空的。 */
+    public List<Integer> baseOptions() {
+        return BASE_OPTIONS.stream().filter(base -> (long) base * BASE_SHARE <= bankroll).collect(Collectors.toList());
+    }
+
+    /** 帳上的籌碼選得了的每台，由小到大。 */
+    public List<Integer> taiOptions() {
+        return TAI_OPTIONS.stream().filter(tai -> (long) tai * TAI_SHARE <= bankroll).collect(Collectors.toList());
+    }
+
+    /** 籌碼越多能選的底台越大：底最多帳上的 1/10、每台最多 1/20，而且要是選項裡有的。 */
+    public boolean stakesAllowed(int basePay, int taiPay) {
+        return baseOptions().contains(basePay) && taiOptions().contains(taiPay);
+    }
+
+    /** 開一場一般對戰，回傳帶上桌的籌碼。底台要是帳上的籌碼選得了的。 */
+    public int startGeneral(int basePay, int taiPay) {
         requireNoGame();
+        if (!stakesAllowed(basePay, taiPay)) {
+            throw new IllegalArgumentException("籌碼 " + bankroll + " 選不了底 " + basePay + "、每台 " + taiPay);
+        }
         int table = tableChips();
         reserve = bankroll - table;
         game = Game.GENERAL;

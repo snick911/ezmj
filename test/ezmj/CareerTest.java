@@ -16,6 +16,7 @@ import java.util.Set;
 
 import ezmj.career.CareerProfile;
 import ezmj.career.CareerSlot;
+import ezmj.career.CareerTitle;
 import ezmj.career.Challenge;
 import ezmj.career.Records;
 import ezmj.engine.Achievement;
@@ -115,7 +116,7 @@ final class CareerTest {
 
         test("一般對戰：每局結算照桌上的籌碼改帳，重複結算同一局不會多算", () -> {
             CareerProfile profile = profile(20_000);
-            eq(20_000, profile.startGeneral(), "全部帶上桌");
+            eq(20_000, profile.startGeneral(100, 20), "全部帶上桌");
             profile.settleGeneral(21_500);
             eq(21_500L, profile.bankroll(), "贏了");
             profile.settleGeneral(21_500);
@@ -123,7 +124,7 @@ final class CareerTest {
             profile.settleGeneral(-300);
             eq(-300L, profile.bankroll(), "輸光可以是負的");
             eq(21_500L, profile.peak(), "最高");
-            fails(IllegalStateException.class, profile::startGeneral, "打到一半不能再開");
+            fails(IllegalStateException.class, () -> profile.startGeneral(50, 10), "打到一半不能再開");
             profile.endGame();
             eq(CareerProfile.Game.NONE, profile.game(), "結束");
             fails(IllegalStateException.class, () -> profile.settleGeneral(100), "沒在打就不能結算");
@@ -132,13 +133,13 @@ final class CareerTest {
         test("一般對戰：帶上桌最多一億，其餘留在帳上", () -> {
             CareerProfile rich = profile(10_000_000);
             for (int i = 0; i < 12; i++) {
-                rich.startGeneral();
+                rich.startGeneral(100, 20);
                 rich.settleGeneral(rich.tableChips() * 2);
                 rich.endGame();
             }
             check(rich.bankroll() > CareerProfile.MAX_TABLE_CHIPS, "滾到一億以上 " + rich.bankroll());
             long before = rich.bankroll();
-            eq(CareerProfile.MAX_TABLE_CHIPS, rich.startGeneral(), "上桌一億");
+            eq(CareerProfile.MAX_TABLE_CHIPS, rich.startGeneral(200_000, 100_000), "上桌一億");
             rich.settleGeneral(CareerProfile.MAX_TABLE_CHIPS - 5_000);
             eq(before - 5_000, rich.bankroll(), "只扣桌上輸的");
         });
@@ -146,7 +147,12 @@ final class CareerTest {
         test("救濟金：籌碼不到門檻、沒有打到一半的牌局才能領，記一次破產", () -> {
             CareerProfile profile = profile(10_000);
             check(!profile.canTakeRelief(), "還有錢");
-            profile.startGeneral();
+            profile.startGeneral(100, 20);
+            profile.settleGeneral(CareerProfile.RELIEF_BELOW);
+            profile.endGame();
+            check(!profile.canTakeRelief(), "剛好上得了最小的桌");
+            check(profile.stakesAllowed(50, 10), "最小的桌");
+            profile.startGeneral(50, 10);
             profile.settleGeneral(CareerProfile.RELIEF_BELOW - 1);
             check(!profile.canTakeRelief(), "牌局打到一半");
             profile.endGame();
@@ -155,6 +161,55 @@ final class CareerTest {
             eq((long) CareerProfile.RELIEF_TO, profile.bankroll(), "補到");
             eq(1, profile.bankruptcies(), "破產次數");
             fails(IllegalStateException.class, profile::takeRelief, "補完就不能再領");
+            check(CareerProfile.RELIEF_TO <= CareerProfile.STARTING_CHIPS.get(0), "救濟金不比最小的起始籌碼多");
+            check(!profile.baseOptions().isEmpty(), "領完上得了桌");
+        });
+
+        test("起始籌碼有 1000、20000、100000 三種", () -> {
+            eq(List.of(1_000, 20_000, 100_000), CareerProfile.STARTING_CHIPS, "選項");
+            check(CareerProfile.STARTING_CHIPS.contains(CareerProfile.DEFAULT_STARTING_CHIPS), "預設在選項裡");
+            CareerProfile small = profile(1_000);
+            eq(List.of(50, 100), small.baseOptions(), "1000 能選的底");
+            eq(List.of(10, 20, 50), small.taiOptions(), "1000 能選的每台");
+        });
+
+        test("底台照帳上籌碼開放：底最多 1/10、每台最多 1/20，最大底 200000、每台 100000", () -> {
+            CareerProfile profile = profile(100_000);
+            eq(10_000, profile.baseOptions().get(profile.baseOptions().size() - 1), "10 萬：底最多 1 萬");
+            eq(5_000, profile.taiOptions().get(profile.taiOptions().size() - 1), "10 萬：每台最多 5000");
+            check(profile.stakesAllowed(10_000, 5_000), "剛好可以");
+            check(!profile.stakesAllowed(20_000, 5_000), "底太大");
+            check(!profile.stakesAllowed(10_000, 10_000), "每台太大");
+            check(!profile.stakesAllowed(150, 20), "不是選項的數字");
+            fails(IllegalArgumentException.class, () -> profile.startGeneral(20_000, 5_000), "選不了的底台不能開打");
+            eq(CareerProfile.Game.NONE, profile.game(), "沒開成");
+            CareerProfile rich = profile(10_000_000);
+            eq(200_000, rich.baseOptions().get(rich.baseOptions().size() - 1), "最大底");
+            eq(100_000, rich.taiOptions().get(rich.taiOptions().size() - 1), "最大每台");
+            CareerProfile broke = profile(1_000);
+            broke.startGeneral(50, 10);
+            broke.settleGeneral(CareerProfile.RELIEF_BELOW - 1);
+            broke.endGame();
+            check(broke.baseOptions().isEmpty(), "連最小的底都選不了");
+        });
+
+        test("稱號：帳上到過 20 萬、100 萬、500 萬、2000 萬、1 億，輸掉也不會拿走", () -> {
+            check(CareerTitle.of(199_999) == null, "還沒有");
+            eq(CareerTitle.RISING, CareerTitle.of(200_000), "20 萬");
+            eq(CareerTitle.MILLION, CareerTitle.of(1_000_000), "100 萬");
+            eq(CareerTitle.TYCOON, CareerTitle.of(5_000_000), "500 萬");
+            eq(CareerTitle.MAGNATE, CareerTitle.of(20_000_000), "2000 萬");
+            eq(CareerTitle.LEGEND, CareerTitle.of(100_000_000), "1 億");
+            eq(CareerTitle.RISING, CareerTitle.next(0), "第一個");
+            check(CareerTitle.next(100_000_000) == null, "全部到手");
+            CareerProfile profile = profile(100_000);
+            check(profile.title() == null, "10 萬還沒有");
+            profile.startGeneral(100, 20);
+            profile.settleGeneral(1_200_000);
+            eq(CareerTitle.MILLION, profile.title(), "贏到 120 萬");
+            eq(CareerTitle.TYCOON, profile.nextTitle(), "下一個");
+            profile.settleGeneral(5_000);
+            eq(CareerTitle.MILLION, profile.title(), "輸回去也還在");
         });
 
         test("關卡依序開放，第一次過關才有獎金", () -> {
@@ -177,7 +232,7 @@ final class CareerTest {
             Path file = dir.resolve("profile.properties");
             CareerProfile profile = new CareerProfile("小美<b>", 50_000, DATE);
             clearUpTo(profile, Challenge.CLEAN_CIRCLE);
-            profile.startGeneral();
+            profile.startGeneral(100, 20);
             profile.settleGeneral(48_000);
             profile.save(file);
             CareerProfile loaded = CareerProfile.load(file);

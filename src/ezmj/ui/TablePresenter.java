@@ -15,6 +15,7 @@ import ezmj.engine.RoundEvent;
 import ezmj.engine.RoundView;
 import ezmj.engine.TurnOptions;
 import ezmj.model.AppSettings;
+import ezmj.model.BambooCall;
 import ezmj.model.Gender;
 import ezmj.model.Tile;
 
@@ -246,12 +247,17 @@ final class TablePresenter {
         return seat == SELF_SEAT ? settings.playerGender() : table.round().player(seat).gender();
     }
 
+    /** 這個座位的條子喊「X條」還是「X索」。自己看環境設定，其他人照名字，同一個人每次都一樣。 */
+    private BambooCall bambooCallOf(int seat) {
+        return seat == SELF_SEAT ? settings.bambooCall() : BambooCall.forName(table.round().player(seat).name());
+    }
+
     /** 喊牌和大字同時出現，打牌時喊出打的是什麼牌。用出聲那一家的聲音；流局沒有特定的人，用女聲。 */
     private void speak(RoundEvent event) {
         Gender gender = event.seat() < 0 ? Gender.FEMALE : voiceOf(event.seat());
         switch (event.type()) {
             case DISCARD:
-                VoiceLines.play(event.tile(), gender);
+                VoiceLines.play(event.tile(), gender, bambooCallOf(event.seat()));
                 break;
             case CHOW:
                 VoiceLines.play(VoiceLines.Line.CHOW, gender);

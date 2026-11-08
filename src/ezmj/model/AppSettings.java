@@ -34,6 +34,7 @@ public final class AppSettings {
     private static final String KEY_VOICE_VOLUME = "voiceVolume";
     private static final String KEY_PLAYER_GENDER = "playerGender";
     private static final String KEY_VOICE_STYLE = "voiceStyle";
+    private static final String KEY_BAMBOO_CALL = "bambooCall";
     private static final String KEY_SPEED = "gameSpeed";
 
     private int fontPercent = DEFAULT_FONT_PERCENT;
@@ -49,6 +50,7 @@ public final class AppSettings {
     private int voiceVolume = DEFAULT_VOICE_VOLUME;
     private Gender playerGender = Gender.FEMALE;
     private VoiceStyle voiceStyle = VoiceStyle.DEFAULT;
+    private BambooCall bambooCall = BambooCall.DEFAULT;
     private GameSpeed gameSpeed = GameSpeed.NORMAL;
 
     public static AppSettings load(Path file) {
@@ -72,6 +74,7 @@ public final class AppSettings {
         settings.setVoiceVolume(intValue(values, KEY_VOICE_VOLUME, DEFAULT_VOICE_VOLUME));
         settings.setPlayerGender(Gender.fromKey(values.getProperty(KEY_PLAYER_GENDER, "").trim()));
         settings.setVoiceStyle(VoiceStyle.fromKey(values.getProperty(KEY_VOICE_STYLE, "").trim()));
+        settings.setBambooCall(BambooCall.fromKey(values.getProperty(KEY_BAMBOO_CALL, "").trim()));
         settings.setGameSpeed(GameSpeed.fromKey(values.getProperty(KEY_SPEED, "").trim()));
         return settings;
     }
@@ -99,6 +102,7 @@ public final class AppSettings {
         values.setProperty(KEY_VOICE_VOLUME, String.valueOf(voiceVolume));
         values.setProperty(KEY_PLAYER_GENDER, playerGender.name());
         values.setProperty(KEY_VOICE_STYLE, voiceStyle.name());
+        values.setProperty(KEY_BAMBOO_CALL, bambooCall.name());
         values.setProperty(KEY_SPEED, gameSpeed.name());
         PropertyFiles.store(values, file);
     }
@@ -220,5 +224,14 @@ public final class AppSettings {
 
     public void setVoiceStyle(VoiceStyle style) {
         voiceStyle = style;
+    }
+
+    /** 自己喊條子用「X條」還是「X索」。 */
+    public BambooCall bambooCall() {
+        return bambooCall;
+    }
+
+    public void setBambooCall(BambooCall call) {
+        bambooCall = call;
     }
 }
