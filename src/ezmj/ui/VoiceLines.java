@@ -2,20 +2,18 @@ package ezmj.ui;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 import javax.sound.sampled.AudioFileFormat;
@@ -28,80 +26,55 @@ import javax.sound.sampled.UnsupportedAudioFileException;
 
 import ezmj.model.Gender;
 import ezmj.model.Tile;
+import ezmj.model.VoiceStyle;
 
 /**
  * 喊牌語音：用 Windows 內建的中文語音合成，第一次需要時產生語音檔，之後直接讀檔。
  * 程式本身不帶任何語音檔。沒有中文語音或不是 Windows 時，就回報無法使用，遊戲其他部分不受影響。
+ * <p>
+ * 內建語音念起來很平，所以用 SSML 照 VoiceStyle 調高音調、加快、加大聲，每個字再照它的高低（0 到 9）
+ * 各自提高，重點字拉高，聽起來才有起伏。每種風格的語音檔存在自己的資料夾，換回來不用重做。
  */
 public final class VoiceLines {
 
-    /** 同一個動作的另一種說法。percent 是單機時喊這句的機率，以百分比算。 */
-    public record Variant(String text, int percent) {
-    }
-
-    /**
-     * 喊的動作。variants 是單機時偶爾換的說法，機率各自算，加起來不能超過 100，剩下的機率念原本的 text。
-     * 連線對戰一律念原本的。說法的語音檔照順序編號，新增說法放在後面，舊的語音檔還對得上。
-     */
+    /** levels 是每個字的高低，0 到 9，和 text 一樣長。 */
     public enum Line {
-        CHOW("吃", new Variant("我要吃", 20), new Variant("對不起，吃一下", 10), new Variant("吃啊，上家對我特別優待", 5)),
-        PONG("碰", new Variant("謝啦，碰", 20), new Variant("碰碰碰，我要碰", 10), new Variant("太棒了啦，我要碰", 5)),
-        KONG("槓"), WIN("胡"), SELF_WIN("自摸"), LISTEN("聽牌"), DRAWN_GAME("流局");
+        CHOW("吃", "6"), PONG("碰", "6"), KONG("槓", "6"), WIN("胡", "7"), SELF_WIN("自摸", "48"),
+        LISTEN("聽牌", "36"), DRAWN_GAME("流局", "33");
 
         private final String text;
-        private final List<Variant> variants;
+        private final String levels;
 
-        Line(String text, Variant... variants) {
+        Line(String text, String levels) {
             this.text = text;
-            this.variants = List.of(variants);
-            if (this.variants.stream().mapToInt(Variant::percent).sum() > 100) {
-                throw new IllegalArgumentException(name() + " 的說法機率加起來超過 100");
-            }
+            this.levels = levels;
         }
 
         public String text() {
             return text;
         }
 
-        public List<Variant> variants() {
-            return variants;
+        public String levels() {
+            return levels;
         }
 
-        /**
-         * 照 roll（0 到 99）挑一句：依序落在哪一句的機率範圍就念那句，都沒落到念原本的。
-         * 回傳 0 是原本的，1 起是 variants 的第幾句。
-         */
-        public int pick(int roll) {
-            int bound = 0;
-            for (int i = 0; i < variants.size(); i++) {
-                bound += variants.get(i).percent();
-                if (roll < bound) {
-                    return i + 1;
-                }
-            }
-            return 0;
+        private String fileName() {
+            return name().toLowerCase(Locale.ROOT) + ".wav";
         }
+    }
 
-        /** 第 choice 句念的字，0 是原本的。 */
-        public String text(int choice) {
-            return choice == 0 ? text : variants.get(choice - 1).text();
-        }
-
-        private String fileName(int choice) {
-            String base = name().toLowerCase(Locale.ROOT);
-            return (choice == 0 ? base : base + "_" + choice) + ".wav";
-        }
+    /** 一句要念的話：字與每個字的高低。 */
+    public record Phrase(String text, String levels) {
     }
 
     private static final int RATE = 44_100;
     private static final AudioFormat FORMAT = new AudioFormat(RATE, 16, 1, true, false);
     private static final int SILENCE = 300;
-    private static final int GENERATE_TIMEOUT_SECONDS = 60;
+    private static final int GENERATE_TIMEOUT_SECONDS = 90;
 
     private static final String[] DRAGON_TEXTS = {"紅中", "發財", "白板"};
-    private static final double EXCITED_PITCH_START = 1.25;
-    private static final double EXCITED_PITCH_END = 1.5;
-    private static final double EXCITED_DRIVE = 1.6;
+    /** 喊牌都是兩個字，後面那個字（萬、筒、風、中…）拉高。 */
+    private static final String TILE_LEVELS = "35";
     private static final double MALE_PITCH = .76;
     /** 比這小的語音檔只有檔頭，沒念出東西。 */
     private static final int MIN_VOICE_FILE_BYTES = 1024;
@@ -110,17 +83,11 @@ public final class VoiceLines {
     private static final Map<String, Clip> CLIPS = new ConcurrentHashMap<>();
     /** 產生語音要好幾秒，和播放分開，產生時喊的牌才不會全部排隊等著一起響。 */
     private static final ExecutorService PREPARER = daemonThread("ezmj-voice-prepare");
-    private static final ScheduledExecutorService PLAYER = Executors.newSingleThreadScheduledExecutor(task -> {
-        Thread thread = new Thread(task, "ezmj-voice");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private static final ExecutorService PLAYER = daemonThread("ezmj-voice");
     private static Clip playing;
-    /** 不能被打斷的那句念到什麼時候（System.nanoTime）；沒有時是 0。只在 PLAYER 的執行緒上讀寫。 */
-    private static long protectedUntil;
-    /** 等著前一句念完才念的那句，只留最新的一句。 */
-    private static ScheduledFuture<?> waiting;
     private static int volume = 100;
+    /** CLIPS 現在是哪個風格的；還沒載入是 null。只在 PREPARER 的執行緒上讀寫。 */
+    private static VoiceStyle loadedStyle;
 
     private VoiceLines() {
     }
@@ -143,19 +110,39 @@ public final class VoiceLines {
         return gender == Gender.MALE ? "male_" + file : file;
     }
 
-    /** 全部要準備的語音：女聲檔名對應念的內容。 */
-    private static Map<String, String> texts() {
-        Map<String, String> texts = new LinkedHashMap<>();
+    /** 全部要準備的語音：女聲檔名對應念的話。 */
+    public static Map<String, Phrase> phrases() {
+        Map<String, Phrase> phrases = new LinkedHashMap<>();
         for (Line line : Line.values()) {
-            for (int choice = 0; choice <= line.variants().size(); choice++) {
-                texts.put(line.fileName(choice), line.text(choice));
-            }
+            phrases.put(line.fileName(), new Phrase(line.text(), line.levels()));
         }
         for (int index = 0; index < Tile.KINDS; index++) {
             Tile tile = Tile.fromIndex(index);
-            texts.put(tileFile(tile), tileText(tile));
+            phrases.put(tileFile(tile), new Phrase(tileText(tile), TILE_LEVELS));
         }
-        return texts;
+        return phrases;
+    }
+
+    /**
+     * 一句話在這個風格下的 SSML 內容：每個字包一層 prosody，音高照它的高低；逗號不調。
+     * 外面的 speak 與語速、音量由產生語音的腳本包上去。屬性用單引號，腳本裡不能有雙引號。
+     */
+    public static String ssmlBody(Phrase phrase, VoiceStyle style) {
+        StringBuilder body = new StringBuilder();
+        String text = phrase.text();
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '，') {
+                body.append(c);
+                continue;
+            }
+            int level = Character.digit(phrase.levels().charAt(i), 10);
+            body.append("<prosody pitch='+").append(style.pitch(level)).append("%'>").append(c).append("</prosody>");
+        }
+        if (style.exclaim()) {
+            body.append('！');
+        }
+        return body.toString();
     }
 
     private static ExecutorService daemonThread(String name) {
@@ -166,29 +153,40 @@ public final class VoiceLines {
         });
     }
 
+    /** 這個風格的語音檔放在哪裡，例如 .ezmj\voice\hype。 */
+    private static Path styleDir(Path root, VoiceStyle style) {
+        return root.resolve(style.name().toLowerCase(Locale.ROOT));
+    }
+
     /**
-     * 準備好全部語音，已經準備好就不再重做。缺任何一個語音檔就全部重新產生，所以新增說法之後，
-     * 第一次開啟會在背景重做一次，這段時間不出聲。做不到時在背景執行緒呼叫 onUnavailable。
+     * 準備好這個風格的全部語音，換風格時換掉；已經準備好就不再重做。缺任何一個語音檔就整個風格重新產生。
+     * 做不到時在背景執行緒呼叫 onUnavailable。root 是 .ezmj\voice。
      */
-    public static void prepare(Path dir, Runnable onUnavailable) {
+    public static void prepare(Path root, VoiceStyle style, Runnable onUnavailable) {
         PREPARER.execute(() -> {
-            // 全部載入成功才會放進 CLIPS，所以有內容就是都好了；重新載入會多佔音訊資源
-            if (!CLIPS.isEmpty()) {
+            if (style == loadedStyle && !CLIPS.isEmpty()) {
                 return;
             }
+            removeOldLayout(root);
+            Path dir = styleDir(root, style);
             try {
                 if (!allPresent(dir)) {
-                    generate(dir);
+                    generate(dir, style);
                 }
                 Map<String, Clip> loaded = new HashMap<>();
                 for (Gender gender : Gender.values()) {
-                    for (String file : texts().keySet()) {
+                    for (String file : phrases().keySet()) {
                         String voice = voiceFile(file, gender);
-                        loaded.put(voice, load(dir.resolve(voice), file.equals(Line.SELF_WIN.fileName(0))));
+                        loaded.put(voice, load(dir.resolve(voice)));
                     }
                 }
+                Map<String, Clip> old = new HashMap<>(CLIPS);
+                CLIPS.clear();
                 CLIPS.putAll(loaded);
+                loadedStyle = style;
                 setVolume(volume);
+                // 舊的 Clip 還在播放的話要等一下才關得掉，這裡是背景執行緒，不影響牌局
+                old.values().forEach(Clip::close);
             } catch (IOException | UnsupportedAudioFileException | LineUnavailableException
                      | IllegalArgumentException | SecurityException e) {
                 onUnavailable.run();
@@ -197,6 +195,27 @@ public final class VoiceLines {
                 onUnavailable.run();
             }
         });
+    }
+
+    /** 換好風格之後喊一聲試聽。排在準備語音的後面，所以要重新產生時會等產生完才響。 */
+    public static void previewWhenReady(Line line, Gender gender) {
+        PREPARER.execute(() -> play(line, gender));
+    }
+
+    /** 0.11 以前沒有風格，語音檔直接放在 .ezmj\voice。現在用不到，刪掉免得佔地方。 */
+    private static void removeOldLayout(Path root) {
+        if (!Files.isDirectory(root)) {
+            return;
+        }
+        try (DirectoryStream<Path> files = Files.newDirectoryStream(root, "*.{wav,tmp}")) {
+            for (Path file : files) {
+                if (Files.isRegularFile(file)) {
+                    Files.deleteIfExists(file);
+                }
+            }
+        } catch (IOException e) {
+            // 刪不掉就留著，不影響語音
+        }
     }
 
     public static void setVolume(int percent) {
@@ -208,60 +227,29 @@ public final class VoiceLines {
         });
     }
 
-    /** 念原本的說法，連線對戰與試聽用。胡、自摸與流局一定馬上念，換的說法還沒念完也打斷。 */
     public static void play(Line line, Gender gender) {
-        boolean urgent = line == Line.WIN || line == Line.SELF_WIN || line == Line.DRAWN_GAME;
-        playFile(voiceFile(line.fileName(0), gender), false, urgent);
-    }
-
-    /**
-     * 單機用：roll 是 0 到 99 的亂數，偶爾換一種說法，見 Line.pick。換的說法比較長，
-     * 吃碰之後馬上要打牌，所以念完之前不讓下一句打斷，見 playFile。
-     */
-    public static void playVaried(Line line, Gender gender, int roll) {
-        int choice = line.pick(roll);
-        playFile(voiceFile(line.fileName(choice), gender), choice != 0, false);
+        playFile(voiceFile(line.fileName(), gender));
     }
 
     /** 喊出打出的這張牌。花牌不會被打出來，沒有語音。 */
     public static void play(Tile tile, Gender gender) {
-        playFile(voiceFile(tileFile(tile), gender), false, false);
+        playFile(voiceFile(tileFile(tile), gender));
     }
 
-    /**
-     * 新的一句會打斷還沒喊完的上一句。protect 的這句念完之前不被打斷：下一句等它念完才念，
-     * 中間又有新的，只留最新的那句，語音才不會越落越後面。urgent 的一句不等，直接打斷。
-     * 語音還沒準備好就不出聲。
-     */
-    private static void playFile(String file, boolean protect, boolean urgent) {
-        PLAYER.execute(() -> start(file, protect, urgent));
-    }
-
-    /** 只在 PLAYER 的執行緒上跑。 */
-    private static void start(String file, boolean protect, boolean urgent) {
-        Clip clip = CLIPS.get(file);
-        if (clip == null) {
-            return;
-        }
-        long now = System.nanoTime();
-        if (waiting != null) {
-            waiting.cancel(false);
-            waiting = null;
-        }
-        if (!urgent && protectedUntil > now) {
-            waiting = PLAYER.schedule(() -> {
-                waiting = null;
-                start(file, protect, urgent);
-            }, protectedUntil - now, TimeUnit.NANOSECONDS);
-            return;
-        }
-        if (playing != null) {
-            playing.stop();
-        }
-        clip.setFramePosition(0);
-        clip.start();
-        playing = clip;
-        protectedUntil = protect ? now + clip.getMicrosecondLength() * 1_000 : 0;
+    /** 新的一句會打斷還沒喊完的上一句。語音還沒準備好就不出聲。 */
+    private static void playFile(String file) {
+        PLAYER.execute(() -> {
+            Clip clip = CLIPS.get(file);
+            if (clip == null) {
+                return;
+            }
+            if (playing != null) {
+                playing.stop();
+            }
+            clip.setFramePosition(0);
+            clip.start();
+            playing = clip;
+        });
     }
 
     private static boolean allPresent(Path dir) {
@@ -269,16 +257,16 @@ public final class VoiceLines {
     }
 
     private static boolean allPresent(Path dir, Gender gender) {
-        return texts().keySet().stream().allMatch(file -> Files.isRegularFile(dir.resolve(voiceFile(file, gender))));
+        return phrases().keySet().stream().allMatch(file -> Files.isRegularFile(dir.resolve(voiceFile(file, gender))));
     }
 
-    private static void generate(Path dir) throws IOException, InterruptedException {
+    private static void generate(Path dir, VoiceStyle style) throws IOException, InterruptedException {
         if (!System.getProperty("os.name", "").startsWith("Windows")) {
             throw new IOException("只有 Windows 有內建語音");
         }
         Files.createDirectories(dir);
         Process process = new ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive",
-                "-WindowStyle", "Hidden", "-Command", script(dir))
+                "-WindowStyle", "Hidden", "-Command", script(dir, style))
                 .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                 .redirectError(ProcessBuilder.Redirect.DISCARD)
                 .start();
@@ -294,7 +282,7 @@ public final class VoiceLines {
 
     /** 男聲語音不是每台電腦都有，也可能個別句子念不出來。缺的就用女聲壓低音調代替。 */
     private static void deriveMissingMale(Path dir) throws IOException {
-        for (String file : texts().keySet()) {
+        for (String file : phrases().keySet()) {
             Path male = dir.resolve(voiceFile(file, Gender.MALE));
             if (Files.isRegularFile(male) && Files.size(male) >= MIN_VOICE_FILE_BYTES) {
                 continue;
@@ -315,32 +303,49 @@ public final class VoiceLines {
         }
     }
 
+    /** 放進 PowerShell 單引號字串裡，單引號要寫兩次。 */
+    private static String quoted(String text) {
+        return "'" + text.replace("'", "''") + "'";
+    }
+
     /**
      * 優先用台灣語音，其次任何中文語音。先寫暫存檔再改名，中斷時不會留下不完整的語音檔。
      * 舊介面通常只有女聲，男聲要走 Windows 新版的語音介面；這部分失敗就略過，之後由女聲壓低音調代替。
-     * 這段腳本會直接放進命令列，不能有雙引號。
+     * 兩邊都念 SSML：每句的內容在 $p，外面包上 speak 與這個風格的語速、音量。
+     * 這段腳本會直接放進命令列，不能有雙引號；命令列有長度上限，每句的內容只列一次。
      */
-    private static String script(Path dir) {
-        StringBuilder script = new StringBuilder("Add-Type -AssemblyName System.Speech;"
-                + "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;"
-                + "$voices = $s.GetInstalledVoices() | Where-Object { $_.Enabled };"
-                + "$v = $voices | Where-Object { $_.VoiceInfo.Culture.Name -eq 'zh-TW' } | Select-Object -First 1;"
-                + "if (-not $v) { $v = $voices | Where-Object { $_.VoiceInfo.Culture.Name -like 'zh*' } | Select-Object -First 1 };"
-                + "if (-not $v) { exit 3 };"
-                + "$s.SelectVoice($v.VoiceInfo.Name);"
-                + "$f = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo(" + RATE + ","
-                + " [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen,"
-                + " [System.Speech.AudioFormat.AudioChannel]::Mono);"
-                + "$d = '" + dir.toString().replace("'", "''") + "';"
-                + "function say($n, $t) {"
-                + " $p = Join-Path $d $n;"
-                + " $s.SetOutputToWaveFile($p + '.tmp', $f);"
-                + " $s.Speak($t);"
-                + " $s.SetOutputToNull();"
-                + " Move-Item -Force -LiteralPath ($p + '.tmp') -Destination $p };");
-        texts().forEach((file, text) ->
-                script.append("say '").append(file).append("' '").append(text).append("';"));
-        script.append("$s.Dispose();")
+    private static String script(Path dir, VoiceStyle style) {
+        String head = "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='zh-TW'>"
+                + "<prosody rate='+" + style.rate() + "%' volume='+" + style.volume() + "%'>";
+        StringBuilder script = new StringBuilder("$h = " + quoted(head) + ";"
+                + "$e = " + quoted("</prosody></speak>") + ";"
+                + "$p = @(");
+        StringBuilder list = new StringBuilder();
+        phrases().forEach((file, phrase) -> {
+            if (list.length() > 0) {
+                list.append(",");
+            }
+            list.append("@(").append(quoted(file)).append(",").append(quoted(ssmlBody(phrase, style))).append(")");
+        });
+        script.append(list).append(");")
+                .append("Add-Type -AssemblyName System.Speech;")
+                .append("$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;")
+                .append("$voices = $s.GetInstalledVoices() | Where-Object { $_.Enabled };")
+                .append("$v = $voices | Where-Object { $_.VoiceInfo.Culture.Name -eq 'zh-TW' } | Select-Object -First 1;")
+                .append("if (-not $v) { $v = $voices | Where-Object { $_.VoiceInfo.Culture.Name -like 'zh*' } | Select-Object -First 1 };")
+                .append("if (-not $v) { exit 3 };")
+                .append("$s.SelectVoice($v.VoiceInfo.Name);")
+                .append("$f = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo(").append(RATE).append(",")
+                .append(" [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen,")
+                .append(" [System.Speech.AudioFormat.AudioChannel]::Mono);")
+                .append("$d = ").append(quoted(dir.toString())).append(";")
+                .append("foreach ($x in $p) {")
+                .append(" $o = Join-Path $d $x[0];")
+                .append(" $s.SetOutputToWaveFile($o + '.tmp', $f);")
+                .append(" $s.SpeakSsml($h + $x[1] + $e);")
+                .append(" $s.SetOutputToNull();")
+                .append(" Move-Item -Force -LiteralPath ($o + '.tmp') -Destination $o };")
+                .append("$s.Dispose();")
                 .append("try {")
                 .append(" Add-Type -AssemblyName System.Runtime.WindowsRuntime;")
                 .append(" $null = [Windows.Media.SpeechSynthesis.SpeechSynthesizer, Windows.Media.SpeechSynthesis, ContentType = WindowsRuntime];")
@@ -354,31 +359,25 @@ public final class VoiceLines {
                 .append(" $_.Name -eq 'AsTask' -and $_.IsGenericMethod -and $_.GetParameters().Count -eq 1")
                 .append(" -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' } | Select-Object -First 1;")
                 .append(" $t = $t.MakeGenericMethod([Windows.Media.SpeechSynthesis.SpeechSynthesisStream]);")
-                .append(" function male($n, $x) {")
-                .append(" $p = Join-Path $d $n;")
-                .append(" $task = $t.Invoke($null, @($w.SynthesizeTextToStreamAsync($x)));")
+                .append(" foreach ($x in $p) {")
+                .append(" $o = Join-Path $d ('male_' + $x[0]);")
+                .append(" $task = $t.Invoke($null, @($w.SynthesizeSsmlToStreamAsync($h + $x[1] + $e)));")
                 .append(" $task.Wait();")
                 .append(" $from = [System.IO.WindowsRuntimeStreamExtensions]::AsStreamForRead($task.Result);")
-                .append(" $to = [System.IO.File]::Create($p + '.tmp');")
+                .append(" $to = [System.IO.File]::Create($o + '.tmp');")
                 .append(" $from.CopyTo($to);")
                 .append(" $to.Close();")
                 .append(" $from.Close();")
-                .append(" Move-Item -Force -LiteralPath ($p + '.tmp') -Destination $p };");
-        texts().forEach((file, text) -> script.append("male '").append(voiceFile(file, Gender.MALE))
-                .append("' '").append(text).append("';"));
+                .append(" Move-Item -Force -LiteralPath ($o + '.tmp') -Destination $o }");
         return script.append("} catch { exit 0 }").toString();
     }
 
-    private static Clip load(Path file, boolean excited)
-            throws IOException, UnsupportedAudioFileException, LineUnavailableException {
+    private static Clip load(Path file) throws IOException, UnsupportedAudioFileException, LineUnavailableException {
         try (AudioInputStream source = AudioSystem.getAudioInputStream(file.toFile());
              AudioInputStream converted = AudioSystem.getAudioInputStream(FORMAT, source)) {
             byte[] samples = trimSilence(converted.readAllBytes());
             if (samples.length == 0) {
                 throw new IOException("語音檔是空的: " + file);
-            }
-            if (excited) {
-                samples = excite(samples);
             }
             Clip clip = AudioSystem.getClip();
             clip.open(FORMAT, samples, 0, samples.length);
@@ -386,36 +385,15 @@ public final class VoiceLines {
         }
     }
 
-    /**
-     * 把語音變得高亢興奮：音調拉高並一路上揚（念得也跟著變快），再把音量推到接近滿格。
-     * Windows 內建語音不理會語氣設定，所以在這裡加工聲音，換哪個中文語音都有效。傳入 16 位元單聲道。
-     */
-    public static byte[] excite(byte[] pcm) {
-        byte[] raised = shiftPitch(pcm, EXCITED_PITCH_START, EXCITED_PITCH_END);
-        int length = raised.length / 2;
-        double peak = 1;
-        for (int i = 0; i < length; i++) {
-            peak = Math.max(peak, Math.abs(sample(raised, i)));
-        }
-        byte[] excited = new byte[raised.length];
-        for (int i = 0; i < length; i++) {
-            double driven = Math.tanh(sample(raised, i) / peak * EXCITED_DRIVE) / Math.tanh(EXCITED_DRIVE);
-            int value = (int) Math.round(driven * Short.MAX_VALUE * .95);
-            excited[i * 2] = (byte) value;
-            excited[i * 2 + 1] = (byte) (value >> 8);
-        }
-        return excited;
-    }
-
     /** 把女聲壓低成男聲的音域，沒有男聲語音時用。念得也會跟著變慢。傳入 16 位元單聲道。 */
     public static byte[] lowerPitch(byte[] pcm) {
-        return shiftPitch(pcm, MALE_PITCH, MALE_PITCH);
+        return shiftPitch(pcm, MALE_PITCH);
     }
 
-    /** 重新取樣來改音調，音調比例從 start 線性變到 end。比例大於 1 音調變高、長度變短。 */
-    private static byte[] shiftPitch(byte[] pcm, double start, double end) {
+    /** 重新取樣來改音調。比例大於 1 音調變高、長度變短。 */
+    private static byte[] shiftPitch(byte[] pcm, double ratio) {
         int samples = pcm.length / 2;
-        byte[] shifted = new byte[((int) (samples / Math.min(start, end)) + 1) * 2];
+        byte[] shifted = new byte[((int) (samples / ratio) + 1) * 2];
         int length = 0;
         for (double position = 0; position < samples - 1 && length * 2 < shifted.length; length++) {
             int index = (int) position;
@@ -423,7 +401,7 @@ public final class VoiceLines {
             int value = (int) Math.round(sample(pcm, index) * (1 - fraction) + sample(pcm, index + 1) * fraction);
             shifted[length * 2] = (byte) value;
             shifted[length * 2 + 1] = (byte) (value >> 8);
-            position += start + (end - start) * position / samples;
+            position += ratio;
         }
         return Arrays.copyOf(shifted, length * 2);
     }

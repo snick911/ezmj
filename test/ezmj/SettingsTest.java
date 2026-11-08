@@ -8,8 +8,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 import ezmj.model.AppSettings;
 import ezmj.model.GameSpeed;
@@ -17,6 +17,7 @@ import ezmj.model.Gender;
 import ezmj.model.MusicTrack;
 import ezmj.model.Resolution;
 import ezmj.model.Tile;
+import ezmj.model.VoiceStyle;
 import ezmj.ui.BackgroundMusic;
 import ezmj.ui.SoundEffects;
 import ezmj.ui.VoiceLines;
@@ -65,6 +66,7 @@ final class SettingsTest {
         check(settings.voiceEnabled(), "語音預設開啟");
         eq(100, settings.voiceVolume(), "語音音量");
         eq(Gender.FEMALE, settings.playerGender(), "我的語音");
+        eq(VoiceStyle.HYPE, settings.voiceStyle(), "語音風格");
         eq(GameSpeed.NORMAL, settings.gameSpeed(), "遊戲速度");
     }
 
@@ -170,59 +172,39 @@ final class SettingsTest {
             eq("紅中", VoiceLines.tileText(Tile.parseAll("5z").get(0)), "三元牌");
         });
 
-        test("語音：吃和碰照機率換說法，剩下的念原本的", () -> {
-            VoiceLines.Line chow = VoiceLines.Line.CHOW;
-            int[] counts = new int[chow.variants().size() + 1];
-            for (int roll = 0; roll < 100; roll++) {
-                counts[chow.pick(roll)]++;
+        test("語音風格：預設熱血，存了讀得回來，不認得就用預設", () -> {
+            eq(VoiceStyle.HYPE, new AppSettings().voiceStyle(), "預設");
+            eq(VoiceStyle.HYPE, loadText("voiceStyle=ROBOT\n").voiceStyle(), "不認得");
+            Path file = Files.createTempDirectory("ezmj-settings").resolve("settings.properties");
+            for (VoiceStyle style : VoiceStyle.values()) {
+                AppSettings settings = new AppSettings();
+                settings.setVoiceStyle(style);
+                settings.save(file);
+                eq(style, AppSettings.load(file).voiceStyle(), "讀回來");
             }
-            eq(65, counts[0], "吃");
-            eq(20, counts[1], "我要吃");
-            eq(10, counts[2], "對不起，吃一下");
-            eq(5, counts[3], "吃啊，上家對我特別優待");
-            eq("我要吃", chow.text(chow.pick(0)), "最前面的是我要吃");
-            eq("吃", chow.text(chow.pick(99)), "最後面的是原本的");
-
-            VoiceLines.Line pong = VoiceLines.Line.PONG;
-            eq(List.of("謝啦，碰", "碰碰碰，我要碰", "太棒了啦，我要碰"),
-                    pong.variants().stream().map(VoiceLines.Variant::text).collect(Collectors.toList()), "碰的說法");
-            eq(List.of(20, 10, 5),
-                    pong.variants().stream().map(VoiceLines.Variant::percent).collect(Collectors.toList()), "碰的機率");
-            eq("碰", pong.text(pong.pick(35)), "35 以上念原本的");
-
-            Set<String> all = new HashSet<>();
-            for (VoiceLines.Line line : VoiceLines.Line.values()) {
-                eq(0, line.pick(99), line + " 最後一個一定是原本的");
-                for (int choice = 0; choice <= line.variants().size(); choice++) {
-                    String text = line.text(choice);
-                    check(!text.contains("'") && !text.contains("\""), "語音產生的指令放不進引號：" + text);
-                    check(all.add(text), "說法重複：" + text);
-                }
-            }
-            eq(0, VoiceLines.Line.KONG.variants().size(), "槓沒有換說法");
         });
 
-        test("語音：興奮的聲音音調更高、更短、更大聲", () -> {
-            int rate = 44_100;
-            byte[] pcm = new byte[rate * 2];
-            for (int i = 0; i < rate; i++) {
-                int value = (int) (5_000 * Math.sin(2 * Math.PI * 200 * i / rate));
-                pcm[i * 2] = (byte) value;
-                pcm[i * 2 + 1] = (byte) (value >> 8);
+        test("語音：每句話每個字都有高低，SSML 照風格提高、只用單引號", () -> {
+            for (Map.Entry<String, VoiceLines.Phrase> entry : VoiceLines.phrases().entrySet()) {
+                VoiceLines.Phrase phrase = entry.getValue();
+                eq(phrase.text().length(), phrase.levels().length(), entry.getKey() + " 的高低和字一樣多");
+                check(phrase.levels().chars().allMatch(Character::isDigit), entry.getKey() + " 的高低是 0 到 9");
+                for (VoiceStyle style : VoiceStyle.values()) {
+                    String body = VoiceLines.ssmlBody(phrase, style);
+                    check(!body.contains("\""), "產生語音的指令放不進雙引號：" + body);
+                    eq(phrase.text().length(), body.split("<prosody ").length - 1, entry.getKey() + " 每個字一層");
+                }
             }
-            byte[] excited = VoiceLines.excite(pcm);
-            int samples = excited.length / 2;
-            check(samples > rate / 2 && samples < rate * 4 / 5, "長度 " + samples);
-            int peak = 0;
-            for (int i = 0; i < samples; i++) {
-                peak = Math.max(peak, Math.abs(sample(excited, i * 2)));
-            }
-            check(peak > 30_000 && peak < 32_000, "接近滿格但不破音 " + peak);
-            int head = crossings(excited, 0, samples / 4);
-            int tail = crossings(excited, samples * 3 / 4, samples);
-            check(head > (samples / 4) * 2 * 200 * 1.2 / rate, "音調拉高 " + head);
-            check(tail > head, "音調上揚 " + head + " → " + tail);
-            eq(0, VoiceLines.excite(new byte[0]).length, "沒有聲音");
+            VoiceLines.Phrase zimo = new VoiceLines.Phrase("自摸", "48");
+            eq("<prosody pitch='+65%'>自</prosody><prosody pitch='+105%'>摸</prosody>！",
+                    VoiceLines.ssmlBody(zimo, VoiceStyle.HYPE), "熱血：拉高、重點字更高、加驚嘆號");
+            eq("<prosody pitch='+15%'>自</prosody><prosody pitch='+15%'>摸</prosody>",
+                    VoiceLines.ssmlBody(zimo, VoiceStyle.BRISK), "輕快：整句一樣高");
+            eq("<prosody pitch='+34%'>自</prosody><prosody pitch='+58%'>摸</prosody>",
+                    VoiceLines.ssmlBody(zimo, VoiceStyle.LIVELY), "抑揚：逐字有高低");
+            eq("<prosody pitch='+45%'>吃</prosody>，<prosody pitch='+25%'>碰</prosody>",
+                    VoiceLines.ssmlBody(new VoiceLines.Phrase("吃，碰", "200"), VoiceStyle.HYPE).replace("！", ""),
+                    "逗號不調");
         });
 
         test("語音：沒有男聲時，女聲壓低後音調更低、更長", () -> {

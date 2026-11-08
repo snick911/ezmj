@@ -57,6 +57,7 @@ import ezmj.model.HonorRoll;
 import ezmj.model.MusicTrack;
 import ezmj.model.Resolution;
 import ezmj.model.Tile;
+import ezmj.model.VoiceStyle;
 import ezmj.online.OnlineProfile;
 import ezmj.online.RoomSettings;
 
@@ -238,7 +239,7 @@ public final class MainFrame extends JFrame {
     }
 
     private void prepareVoice() {
-        VoiceLines.prepare(VOICE_DIR, () -> SwingUtilities.invokeLater(() -> {
+        VoiceLines.prepare(VOICE_DIR, settings.voiceStyle(), () -> SwingUtilities.invokeLater(() -> {
             voiceItem.setText("語音（這台電腦沒有中文語音）");
             voiceItem.setEnabled(false);
         }));
@@ -275,6 +276,7 @@ public final class MainFrame extends JFrame {
         preferences.add(checkItem("音效", settings.soundEnabled(), this::changeSound));
         preferences.add(voiceItem);
         preferences.add(buildPlayerVoiceMenu());
+        preferences.add(buildVoiceStyleMenu());
         preferences.add(checkItem("動畫", settings.animationEnabled(), this::changeAnimation));
 
         // 進入修業檔案時看那個檔案的紀錄，其他時候看練習牌局的
@@ -438,6 +440,35 @@ public final class MainFrame extends JFrame {
             menu.add(item);
         }
         return menu;
+    }
+
+    private JMenu buildVoiceStyleMenu() {
+        JMenu menu = new JMenu("語音風格");
+        menu.setFont(Theme.font(Font.PLAIN, 15f));
+        ButtonGroup group = new ButtonGroup();
+        for (VoiceStyle style : VoiceStyle.values()) {
+            String suffix = style == VoiceStyle.DEFAULT ? "（預設）" : "";
+            JRadioButtonMenuItem item = new JRadioButtonMenuItem(style.label() + "：" + style.description() + suffix,
+                    style == settings.voiceStyle());
+            item.setFont(Theme.font(Font.PLAIN, 15f));
+            item.addActionListener(e -> changeVoiceStyle(style));
+            group.add(item);
+            menu.add(item);
+        }
+        return menu;
+    }
+
+    /**
+     * 換風格就換一套語音檔，第一次用的風格要在背景產生，這段時間不出聲。
+     * 準備好就用自己的聲音喊一聲「碰」，聽聽看。語音關著時只記下來，打開時才準備。
+     */
+    private void changeVoiceStyle(VoiceStyle style) {
+        settings.setVoiceStyle(style);
+        saveSettings();
+        if (settings.voiceEnabled()) {
+            prepareVoice();
+            VoiceLines.previewWhenReady(VoiceLines.Line.PONG, settings.playerGender());
+        }
     }
 
     /** 選了就喊一聲，聽聽看。牌局中改也會立刻生效。 */

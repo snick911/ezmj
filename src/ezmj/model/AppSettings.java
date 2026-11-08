@@ -7,7 +7,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Properties;
 
-/** 環境設定：字體大小、等待時間、遊戲速度、解析度、背景音樂、音量、音效與動畫。存成文字檔，檔案不存在或內容不正確時用預設值。 */
+/** 環境設定：字體大小、等待時間、遊戲速度、解析度、背景音樂、音量、音效、語音與動畫。存成文字檔，檔案不存在或內容不正確時用預設值。 */
 public final class AppSettings {
 
     public static final List<Integer> FONT_PERCENTS = List.of(85, 100, 125, 150);
@@ -33,6 +33,7 @@ public final class AppSettings {
     private static final String KEY_VOICE = "voice";
     private static final String KEY_VOICE_VOLUME = "voiceVolume";
     private static final String KEY_PLAYER_GENDER = "playerGender";
+    private static final String KEY_VOICE_STYLE = "voiceStyle";
     private static final String KEY_SPEED = "gameSpeed";
 
     private int fontPercent = DEFAULT_FONT_PERCENT;
@@ -47,6 +48,7 @@ public final class AppSettings {
     private boolean voiceEnabled = true;
     private int voiceVolume = DEFAULT_VOICE_VOLUME;
     private Gender playerGender = Gender.FEMALE;
+    private VoiceStyle voiceStyle = VoiceStyle.DEFAULT;
     private GameSpeed gameSpeed = GameSpeed.NORMAL;
 
     public static AppSettings load(Path file) {
@@ -69,6 +71,7 @@ public final class AppSettings {
         settings.setVoiceEnabled(!"false".equals(values.getProperty(KEY_VOICE, "").trim()));
         settings.setVoiceVolume(intValue(values, KEY_VOICE_VOLUME, DEFAULT_VOICE_VOLUME));
         settings.setPlayerGender(Gender.fromKey(values.getProperty(KEY_PLAYER_GENDER, "").trim()));
+        settings.setVoiceStyle(VoiceStyle.fromKey(values.getProperty(KEY_VOICE_STYLE, "").trim()));
         settings.setGameSpeed(GameSpeed.fromKey(values.getProperty(KEY_SPEED, "").trim()));
         return settings;
     }
@@ -95,6 +98,7 @@ public final class AppSettings {
         values.setProperty(KEY_VOICE, String.valueOf(voiceEnabled));
         values.setProperty(KEY_VOICE_VOLUME, String.valueOf(voiceVolume));
         values.setProperty(KEY_PLAYER_GENDER, playerGender.name());
+        values.setProperty(KEY_VOICE_STYLE, voiceStyle.name());
         values.setProperty(KEY_SPEED, gameSpeed.name());
         PropertyFiles.store(values, file);
     }
@@ -207,5 +211,14 @@ public final class AppSettings {
 
     public void setPlayerGender(Gender gender) {
         playerGender = gender;
+    }
+
+    /** 喊牌語音的風格，每種的語音檔分開存。 */
+    public VoiceStyle voiceStyle() {
+        return voiceStyle;
+    }
+
+    public void setVoiceStyle(VoiceStyle style) {
+        voiceStyle = style;
     }
 }
