@@ -2,11 +2,16 @@ package ezmj.ui;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.ArrayDeque;
 import java.util.Arrays;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Locale;
@@ -14,6 +19,8 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 import javax.sound.sampled.AudioFileFormat;
@@ -67,10 +74,16 @@ public final class VoiceLines {
     public record Phrase(String text, String levels) {
     }
 
+    /** 排著要念的一句。droppable 的是牌名，有新的一句進來就不念了。 */
+    private record Queued(String file, boolean droppable) {
+    }
+
     private static final int RATE = 44_100;
     private static final AudioFormat FORMAT = new AudioFormat(RATE, 16, 1, true, false);
     private static final int SILENCE = 300;
     private static final int GENERATE_TIMEOUT_SECONDS = 90;
+    /** 每個風格資料夾裡記著產生時的指紋，見 signature。 */
+    private static final String SIGNATURE_FILE = "signature.txt";
 
     private static final String[] DRAGON_TEXTS = {"紅中", "發財", "白板"};
     /** 喊牌都是兩個字，後面那個字（萬、筒、風、中…）拉高。 */
@@ -83,8 +96,18 @@ public final class VoiceLines {
     private static final Map<String, Clip> CLIPS = new ConcurrentHashMap<>();
     /** 產生語音要好幾秒，和播放分開，產生時喊的牌才不會全部排隊等著一起響。 */
     private static final ExecutorService PREPARER = daemonThread("ezmj-voice-prepare");
-    private static final ExecutorService PLAYER = daemonThread("ezmj-voice");
+    private static final ScheduledExecutorService PLAYER = Executors.newSingleThreadScheduledExecutor(task -> {
+        Thread thread = new Thread(task, "ezmj-voice");
+        thread.setDaemon(true);
+        return thread;
+    });
+    /** 排著等前一句念完的話。只在 PLAYER 的執行緒上讀寫，下面三個也是。 */
+    private static final Deque<Queued> QUEUE = new ArrayDeque<>();
     private static Clip playing;
+    /** 正在念的那句念到什麼時候（System.nanoTime）。 */
+    private static long busyUntil;
+    /** 等著前一句念完再念下一句的排程；沒有在等是 null。 */
+    private static ScheduledFuture<?> waiting;
     private static int volume = 100;
     /** CLIPS 現在是哪個風格的；還沒載入是 null。只在 PREPARER 的執行緒上讀寫。 */
     private static VoiceStyle loadedStyle;
@@ -92,11 +115,15 @@ public final class VoiceLines {
     private VoiceLines() {
     }
 
-    /** 喊牌時的講法。風牌和三元牌單念一個字聽不清楚，用牌桌上的叫法。 */
+    /**
+     * 喊牌時的講法。風牌和三元牌單念一個字聽不清楚，用牌桌上的叫法。條子喊「索」：女聲把「條」拉高加快之後
+     * 糊成一團，聽起來像別的字，「索」怎麼調都清楚。畫面上照舊寫「條」。
+     */
     public static String tileText(Tile tile) {
         switch (tile.suit()) {
             case WIND:   return tile.label() + "風";
             case DRAGON: return DRAGON_TEXTS[tile.rank() - 1];
+            case TIAO:   return tile.label().substring(0, 1) + "索";
             default:     return tile.label();
         }
     }
@@ -170,8 +197,10 @@ public final class VoiceLines {
             removeOldLayout(root);
             Path dir = styleDir(root, style);
             try {
-                if (!allPresent(dir)) {
+                String signature = signature(style);
+                if (!allPresent(dir) || !signature.equals(storedSignature(dir))) {
                     generate(dir, style);
+                    Files.writeString(dir.resolve(SIGNATURE_FILE), signature, StandardCharsets.UTF_8);
                 }
                 Map<String, Clip> loaded = new HashMap<>();
                 for (Gender gender : Gender.values()) {
@@ -195,6 +224,34 @@ public final class VoiceLines {
                 onUnavailable.run();
             }
         });
+    }
+
+    /**
+     * 這個風格要念的全部內容的指紋：每句話的字、高低與風格的調法。改了說法或風格的數字，指紋就變，
+     * 下次開啟會整個風格重新產生，不會繼續用舊的語音檔。
+     */
+    public static String signature(VoiceStyle style) {
+        StringBuilder all = new StringBuilder(ssmlHead(style));
+        phrases().forEach((file, phrase) -> all.append('\n').append(file).append('=').append(ssmlBody(phrase, style)));
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(all.toString().getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder();
+            for (byte b : digest) {
+                hex.append(String.format("%02x", b));
+            }
+            return hex.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("這個 Java 沒有 SHA-256", e);
+        }
+    }
+
+    /** 上次產生時記下的指紋；沒有或讀不到是空字串。 */
+    private static String storedSignature(Path dir) {
+        try {
+            return Files.readString(dir.resolve(SIGNATURE_FILE), StandardCharsets.UTF_8).trim();
+        } catch (IOException e) {
+            return "";
+        }
     }
 
     /** 換好風格之後喊一聲試聽。排在準備語音的後面，所以要重新產生時會等產生完才響。 */
@@ -227,29 +284,62 @@ public final class VoiceLines {
         });
     }
 
+    /** 吃、碰、槓、胡這些一定會念，前一句還沒念完就等它念完。 */
     public static void play(Line line, Gender gender) {
-        playFile(voiceFile(line.fileName(), gender));
+        playFile(voiceFile(line.fileName(), gender), false);
     }
 
-    /** 喊出打出的這張牌。花牌不會被打出來，沒有語音。 */
+    /** 喊出打出的這張牌。花牌不會被打出來，沒有語音。輪不到念之前又有新的一句，這張就不念了。 */
     public static void play(Tile tile, Gender gender) {
-        playFile(voiceFile(tileFile(tile), gender));
+        playFile(voiceFile(tileFile(tile), gender), true);
     }
 
-    /** 新的一句會打斷還沒喊完的上一句。語音還沒準備好就不出聲。 */
-    private static void playFile(String file) {
+    /**
+     * 不打斷還沒念完的那句：新的一句排在後面，念完才念下一句，聽起來才不會斷掉。
+     * 排著的牌名（droppable）只要又有新的一句進來就不念了，語音才不會越落越後面；吃碰槓胡一定會念。
+     * 語音還沒準備好就不出聲。
+     */
+    private static void playFile(String file, boolean droppable) {
         PLAYER.execute(() -> {
-            Clip clip = CLIPS.get(file);
-            if (clip == null) {
+            if (!CLIPS.containsKey(file)) {
                 return;
             }
-            if (playing != null) {
-                playing.stop();
-            }
-            clip.setFramePosition(0);
-            clip.start();
-            playing = clip;
+            QUEUE.removeIf(Queued::droppable);
+            QUEUE.add(new Queued(file, droppable));
+            playNext();
         });
+    }
+
+    /** 只在 PLAYER 的執行緒上跑：上一句念完了就念排在最前面的，還沒念完就等到念完再來。 */
+    private static void playNext() {
+        long now = System.nanoTime();
+        if (now < busyUntil) {
+            if (waiting == null) {
+                waiting = PLAYER.schedule(() -> {
+                    waiting = null;
+                    playNext();
+                }, busyUntil - now, TimeUnit.NANOSECONDS);
+            }
+            return;
+        }
+        Queued next = QUEUE.poll();
+        while (next != null) {
+            Clip clip = CLIPS.get(next.file());
+            if (clip != null) {
+                if (playing != null) {
+                    playing.stop();
+                }
+                clip.setFramePosition(0);
+                clip.start();
+                playing = clip;
+                busyUntil = now + clip.getMicrosecondLength() * 1_000;
+                if (!QUEUE.isEmpty()) {
+                    playNext();
+                }
+                return;
+            }
+            next = QUEUE.poll();
+        }
     }
 
     private static boolean allPresent(Path dir) {
@@ -314,10 +404,14 @@ public final class VoiceLines {
      * 兩邊都念 SSML：每句的內容在 $p，外面包上 speak 與這個風格的語速、音量。
      * 這段腳本會直接放進命令列，不能有雙引號；命令列有長度上限，每句的內容只列一次。
      */
-    private static String script(Path dir, VoiceStyle style) {
-        String head = "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='zh-TW'>"
+    /** 每句外面包的 speak 與這個風格的語速、音量。 */
+    private static String ssmlHead(VoiceStyle style) {
+        return "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='zh-TW'>"
                 + "<prosody rate='+" + style.rate() + "%' volume='+" + style.volume() + "%'>";
-        StringBuilder script = new StringBuilder("$h = " + quoted(head) + ";"
+    }
+
+    private static String script(Path dir, VoiceStyle style) {
+        StringBuilder script = new StringBuilder("$h = " + quoted(ssmlHead(style)) + ";"
                 + "$e = " + quoted("</prosody></speak>") + ";"
                 + "$p = @(");
         StringBuilder list = new StringBuilder();

@@ -170,6 +170,19 @@ final class SettingsTest {
             eq("三萬", VoiceLines.tileText(Tile.parseAll("3w").get(0)), "數牌");
             eq("東風", VoiceLines.tileText(Tile.parseAll("1z").get(0)), "風牌");
             eq("紅中", VoiceLines.tileText(Tile.parseAll("5z").get(0)), "三元牌");
+            eq("三索", VoiceLines.tileText(Tile.parseAll("3s").get(0)), "條子喊索，拉高加快之後還聽得清楚");
+            eq("三條", Tile.parseAll("3s").get(0).label(), "畫面上照舊寫條");
+        });
+
+        test("語音：說法或風格改了指紋就變，舊的語音檔會重新產生", () -> {
+            Set<String> signatures = new HashSet<>();
+            for (VoiceStyle style : VoiceStyle.values()) {
+                String signature = VoiceLines.signature(style);
+                eq(64, signature.length(), style + " 是 SHA-256");
+                eq(signature, VoiceLines.signature(style), style + " 每次算都一樣");
+                signatures.add(signature);
+            }
+            eq(VoiceStyle.values().length, signatures.size(), "每種風格的指紋都不同");
         });
 
         test("語音風格：預設熱血，存了讀得回來，不認得就用預設", () -> {
