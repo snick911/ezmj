@@ -136,11 +136,16 @@ public final class OnlineTrial {
         return failures;
     }
 
-    /** 開有名稱的公開房間，來賓從大廳的列表連點兩下加入。打完整場：看最後成績、回到房間、再開一場。籌碼給很少，有人胡就有人輸光。 */
+    /**
+     * 開有名稱的公開專家模式房間，來賓從大廳的列表連點兩下加入（要帶 supports 服務器才讓進）。
+     * 打完整場：看最後成績、回到房間、再開一場。籌碼給很少，有人胡就有人輸光。
+     */
     private static int gameOver(Path dir, int port) throws Exception {
         Files.createDirectories(dir);
-        Process host = client(dir, "甲", "host", port, "--chips", "100", "--secondGame", "--roomName", ROOM_NAME, "--chat");
-        Process guest = client(dir, "乙", "guest", port, "--secondGame", "--roomName", ROOM_NAME, "--fromLobby", "--chat");
+        Process host = client(dir, "甲", "host", port, "--chips", "100", "--secondGame", "--roomName", ROOM_NAME, "--chat",
+                "--expert");
+        Process guest = client(dir, "乙", "guest", port, "--secondGame", "--roomName", ROOM_NAME, "--fromLobby", "--chat",
+                "--expert");
         return expect("甲", host, 0) + expect("乙", guest, 0);
     }
 
@@ -448,6 +453,7 @@ public final class OnlineTrial {
                 ((JTextField) field(panel, "roomNameField")).setText(options.get("--roomName"));
             }
             ((JCheckBox) field(panel, "privateBox")).setSelected(options.containsKey("--private"));
+            ((JCheckBox) field(panel, "expertBox")).setSelected(options.containsKey("--expert"));
             shot("form-filled");
         }
 
@@ -468,7 +474,8 @@ public final class OnlineTrial {
                 return;
             }
             RoomListing room = listed.get(row);
-            if (!room.name().equals(options.get("--roomName")) || room.humans() != 1) {
+            if (!room.name().equals(options.get("--roomName")) || room.humans() != 1
+                    || room.settings().expert() != options.containsKey("--expert")) {
                 fail("大廳列的房間不對：" + room);
             }
             JTable table = (JTable) field(panel, "roomTable");
@@ -521,7 +528,11 @@ public final class OnlineTrial {
             if (((JLabel) field(panel, "privateBadge")).isVisible() != options.containsKey("--private")) {
                 fail("私人房間的標記不對");
             }
-            log("房間名稱「" + title + "」" + (options.containsKey("--private") ? "，標著私人" : ""));
+            if (((JLabel) field(panel, "expertBadge")).isVisible() != options.containsKey("--expert")) {
+                fail("專家模式的標記不對");
+            }
+            log("房間名稱「" + title + "」" + (options.containsKey("--private") ? "，標著私人" : "")
+                    + (options.containsKey("--expert") ? "，標著專家模式" : ""));
         }
 
         private void onRoom(RoomPanel panel) {
@@ -565,8 +576,16 @@ public final class OnlineTrial {
                 currentTable = table;
                 games++;
                 log("上牌桌，第 " + games + " 場");
+                // 專家模式的牌桌：紀錄鎖住只留一則，牌河只畫最後一張
+                boolean expert = options.containsKey("--expert");
+                if ((boolean) field(table, "logLocked") != expert || (boolean) field(field(table, "canvas"), "expert") != expert) {
+                    fail("牌桌的專家模式應該是 " + expert);
+                }
             }
             String hint = ((JLabel) field(table, "hint")).getText();
+            if (options.containsKey("--expert") && hint.contains("【聽牌中：")) {
+                fail("專家模式聽牌後不該列出等哪些牌：" + hint);
+            }
             if (!hint.equals(lastHint)) {
                 lastHint = hint;
                 if (hint.contains("連線中斷")) {

@@ -35,6 +35,7 @@ import ezmj.AppVersion;
 import ezmj.career.CareerProfile;
 import ezmj.career.CareerTitle;
 import ezmj.career.Challenge;
+import ezmj.career.Dan;
 import ezmj.engine.Achievement;
 import ezmj.engine.AchievementBook;
 import ezmj.engine.PlayerStats;
@@ -109,9 +110,77 @@ final class HelpDialog extends JDialog {
         setMinimumSize(new Dimension(720, 420));
     }
 
+    void showGameplay() {
+        currentPage = this::showGameplay;
+        showPage("遊戲玩法", gameplayPage());
+    }
+
     void showRules() {
         currentPage = this::showRules;
         showPage("基本規則", rulesPage());
+    }
+
+    /** 第一次玩的人看的：有哪幾種玩法、怎麼開一場、牌桌上哪裡是什麼、怎麼打、打完與離開，以及選單。 */
+    private static String gameplayPage() {
+        String levels = Arrays.stream(BotLevel.values()).map(BotLevel::label).collect(Collectors.joining("、"));
+        return "<h2>三種玩法</h2>"
+                + "<p>首頁有三個入口：</p><ul>"
+                + "<li><b>練習牌局</b>：自己決定籌碼、底台與三家電腦的等級，隨時可以開新的一場，適合熟悉規則。</li>"
+                + "<li><b>修業模式</b>：建立自己的檔案，籌碼的輸贏一直累積下去，還有 " + Challenge.values().length
+                + " 道挑戰關卡與稱號可以拿。最多三個檔案。</li>"
+                + "<li><b>連線對戰</b>：和朋友在網路上同桌，不到四人由電腦補滿。</li></ul>"
+                + "<p>練習牌局、每個修業檔案的成就、統計與榮譽榜都分開記。</p>"
+                + "<h2>開始一場練習牌局</h2>"
+                + "<p>輸入名字（最多 " + StartPanel.MAX_NAME_LENGTH + " 字），選籌碼本金、底、每台，以及右家、對家、左家的電腦等級，"
+                + "按「開始練習牌局」。電腦由弱到強是" + levels + "。底和每台不能大於籌碼本金。想考驗自己可以勾「專家模式」。</p>"
+                + "<p>上次離開時存了檔，畫面上會有「繼續上次的練習牌局」。存檔只有一份，開新的一場會蓋掉。</p>"
+                + "<h2>修業模式</h2>"
+                + "<p>在空的檔案按「建立新檔案」，取名字、選起始籌碼；勾專家模式的話起始只有 "
+                + CareerProfile.EXPERT_STARTING_CHIPS + "。進入檔案之後：</p><ul>"
+                + "<li><b>一般對戰</b>：帶帳上的籌碼打四圈，每局結算完就入帳，輸贏不會重來。籌碼越多，能選的底台越大。</li>"
+                + "<li><b>挑戰關卡</b>：每關的對手與任務固定，過了前一關才開放下一關，第一次過關有獎金。"
+                + "每關最多三顆星，過關之外再達成加星條件就多一顆，可以回頭再打來拿齊。</li>"
+                + "<li>籌碼少到上不了桌時可以領救濟金，會記一次破產。帳上的籌碼到過一定數目就得到稱號。</li></ul>"
+                + "<p>修業模式不能用電腦代打。詳細規則在「基本規則」最後的「修業模式」。</p>"
+                + "<h2>連線對戰</h2>"
+                + "<p>按「連線對戰」進大廳，輸入名字之後，可以從列表選一間房間按「加入」、輸入房號按「加入房間」，或按「開房間」。"
+                + "開房間的人是房主，決定籌碼、底台、補位電腦的等級、每次等待幾秒與要不要用專家模式；按「複製房號」把房號傳給朋友，"
+                + "人到齊之後房主按「開始牌局」，空位由電腦補滿。</p>"
+                + "<p>連線斷了會自己重連；程式被關掉的話，重開之後按「連線對戰」的「接回牌局」。連線牌局不記成就、統計與榮譽榜。</p>"
+                + "<h2>牌桌畫面</h2><ul>"
+                + "<li><b>下方</b>是你的手牌，剛摸到的牌放在最右邊、和其他牌隔開。上、左、右是三家，看不到他們的牌面。</li>"
+                + "<li><b>中央方框</b>寫著圈風局風與牌牆還剩幾張，連莊時多一行紅字「連N拉N」。四邊是各家的門風與名字，"
+                + "輪到誰，那一邊就亮金色；聽牌的人名字旁有圓圈的「聽」。</li>"
+                + "<li>方框外圍是<b>牌牆</b>，再外面是各家打出的牌，剛打出的那張有紅框。</li>"
+                + "<li><b>動作列</b>在最下面，寫著現在要做什麼與還剩幾秒，要你決定的時候會出現按鈕。</li>"
+                + "<li><b>右側</b>是四家的門風、名字與籌碼：莊家旁有紅色圓圈的「莊」，連莊時旁邊寫連莊次數；"
+                + "滑鼠停在電腦的名字上，可以看到它的打牌個性。下面依序是平均思考時間、紀錄（點一下展開，看這局發生的每件事；"
+                + "專家模式只顯示最新一則）、"
+                + "電腦代打、輸贏歷程（每一局誰贏誰輸）與離開牌局。</li></ul>"
+                + "<h2>怎麼打</h2><ul>"
+                + "<li><b>摸牌</b>是自動的；摸到花牌會自動亮出來，再從牌尾補一張。</li>"
+                + "<li><b>打牌</b>：輪到你時，滑鼠移到手牌上那張會抬起來，點一下就打出去。</li>"
+                + "<li><b>吃、碰、槓、胡</b>：別家打出你用得到的牌，動作列就出現對應的按鈕；不要就按「過」。"
+                + "吃有好幾種吃法時，再點手牌選要用哪幾張。</li>"
+                + "<li><b>自摸、暗槓、加槓</b>：輪到你時做得到就出現按鈕，不按就照常打牌。</li>"
+                + "<li><b>吃、碰之後</b>要再打一張牌，提示會放大閃動提醒你。</li>"
+                + "<li><b>聽牌</b>：打出某張就會聽牌時，出現半透明的「聽牌」按鈕，見「基本規則」的「聽牌」。</li>"
+                + "<li><b>時間</b>：環境設定的「等待時間」可以限制每次想幾秒。時間到還沒決定，吃碰槓胡算放棄，輪到打牌就打出最右邊那張。</li>"
+                + "<li><b>電腦代打</b>：練習牌局可以按右側的「電腦代打」交給電腦打，再按一次拿回來；用過的牌局不列入榮譽榜。</li></ul>"
+                + "<h2>一局結束</h2>"
+                + "<p>有人胡牌時跳出「胡」或「自摸」的大字，贏家的手牌推倒翻開，籌碼從付錢的人飛向贏家，各家跳出輸贏的數字。"
+                + "接著是結果視窗，列出台數、每家付多少與大家的手牌，倒數完自動進入下一局，也可以直接按按鈕。"
+                + "四圈打完或有人籌碼輸光，就顯示整場的排名。台數怎麼算見「台數計算」。</p>"
+                + "<h2>離開與存檔</h2>"
+                + "<p>牌局中按「離開牌局」或關閉視窗，會問要不要存檔。練習牌局存了檔，回到練習牌局畫面就能繼續；"
+                + "修業模式存了檔，在檔案畫面按「繼續牌局」接著打，選「結束這場」的話一般對戰已經打完的局照算，挑戰算失敗。"
+                + "連線對戰不存在這台電腦上。</p>"
+                + "<h2>選單</h2><ul>"
+                + "<li><b>環境設定</b>：字體大小、麻將大小、等待時間、遊戲速度（電腦出牌的快慢）、解析度、背景音樂、音量、音效、"
+                + "語音（喊牌）、我的語音（自己喊牌用女聲或男聲）、語音風格與動畫。改了立刻生效，下次開啟也記得。</li>"
+                + "<li><b>榮譽榜、成就、統計</b>：看自己的紀錄。進入修業檔案時看那個檔案的，其他時候看練習牌局的。"
+                + "「統計」裡的「段位證照」是初段到九段的證書，可以換個人圖像、複製到 LINE 或存成圖片。</li>"
+                + "<li><b>說明</b>：這一頁、基本規則、台數計算、段位證照與關於。說明視窗不擋住牌桌，可以邊看邊打。</li></ul>";
     }
 
     void showScoring() {
@@ -179,6 +248,45 @@ final class HelpDialog extends JDialog {
         currentPage = () -> showStats(stats, owner, career);
         showPage("我的統計（" + owner + "）", ownerLine(owner) + (career == null ? "" : careerSection(career))
                 + statsPage(stats));
+    }
+
+    /** 九段的門檻與目前的成績；current 是現在的段位，還沒入段是 null。 */
+    void showDans(PlayerStats stats, Dan current, String owner) {
+        currentPage = () -> showDans(stats, current, owner);
+        showPage("段位證照（" + owner + "）", ownerLine(owner) + dansPage(stats, current));
+    }
+
+    private static String dansPage(PlayerStats stats, Dan current) {
+        StringBuilder html = new StringBuilder("<h2>段位證照</h2>"
+                + "<p>局數、胡牌率、自摸率三項都達到，就升到那一段，發一張段位證書。證書上有名字、段位、認定日期、"
+                + "那一段看的局數、胡牌數、自摸數、胡牌率、自摸率與個人圖像，可以複製到 LINE 或存成圖片。"
+                + "段位只升不降，之後成績掉下來也不收回，證書上的數字是升段那天的。</p>"
+                + "<p>對初學者很容易把胡牌率衝高，所以段位越高只看越強對手的局：初段到三段看全部的局，"
+                + "四段到六段只看三家電腦都是業餘以上的局，七段到九段只看三家都是職業的局。"
+                + "成績同時到了好幾段，直接給最高的，所以只跟職業打的人可能直接拿到七段。</p>");
+        html.append("<p class=\"tai\"><b>目前：").append(current == null ? "尚未入段" : current.label()).append("</b></p>");
+        html.append("<table width=\"100%\" cellspacing=\"0\" cellpadding=\"5\"><tr class=\"head\">");
+        for (String title : new String[] {"段位", "只看哪些局", "局數", "胡牌率", "自摸率", "你的局數", "胡牌率", "自摸率"}) {
+            html.append("<td class=\"cell\">").append(title).append("</td>");
+        }
+        html.append("</tr>");
+        for (Dan dan : Dan.values()) {
+            PlayerStats.Totals pool = dan.pool(stats);
+            boolean mine = dan == current;
+            html.append("<tr>").append(honorCell(dan.label(), mine))
+                    .append(honorCell(dan.opponentsText(), mine))
+                    .append(honorCell(String.valueOf(dan.rounds()), mine))
+                    .append(honorCell(CertificateDialog.permille(dan.winPermille()), mine))
+                    .append(honorCell(CertificateDialog.permille(dan.selfDrawPermille()), mine))
+                    .append(honorCell(String.valueOf(pool.rounds()), mine))
+                    .append(honorCell(percent(pool.winRate()), mine))
+                    .append(honorCell(percent(pool.selfDrawRate()), mine))
+                    .append("</tr>");
+        }
+        return html.append("</table><p class=\"note\">門檻參考電腦互打的成績：實力相當時每家胡牌率約 22 到 24%、自摸率 5 到 7%，"
+                + "職業對三家職業是 23.6% 與 6.6%。「三家都是某等級以上」的局是有段位證照之後才開始記的，以前的局只算在全部的局裡。"
+                + "統計怎麼算，證照就怎麼算：開了電腦代打之後的局不列入，挑戰關卡的局照算，連線對戰不算。"
+                + "練習牌局與每個修業檔案各有一張證照。選單「統計」→「段位證照」看證書、換個人圖像或改名字。</p>").toString();
     }
 
     private static String ownerLine(String owner) {
@@ -393,16 +501,33 @@ final class HelpDialog extends JDialog {
                 + "<p>從東風圈開始，每輪完一次莊就換下一圈。</p>"
                 + "<h2>牌局結束</h2>"
                 + "<p>東南西北四圈打完，或有人籌碼輸光，牌局就結束，依籌碼排名，並列出四家的胡牌、自摸、放槍與輸贏。</p>"
+                + "<p>結束視窗的「分享結果圖」把排名畫成一張圖，按「複製圖片」再到 LINE 的對話框按 Ctrl+V 就能貼上，"
+                + "也可以存成圖檔；「存成輸贏 PDF…」把每一局的輸贏存成 A4 的 PDF。</p>"
                 + "<h2>每局結果</h2>"
                 + "<p>結果視窗會倒數，時間到自動進入下一局：流局 10 秒，其他 60 秒；連線對戰是流局 5 秒，其他 15 秒。也可以直接按按鈕。</p>"
-                + "<h2>報聽</h2>"
-                + "<p>照常打牌，打出之後如果已經聽牌，下方會出現「聽牌」按鈕。這個機會一直到你下一次摸牌、吃碰槓或這局結束，"
-                + "放棄別家打出的牌不影響。按下就報聽：之後自動摸牌打牌，胡的牌來了就自動胡，也不再吃、碰、槓，這一局不能取消。</p>"
-                + "<p>報聽是公開的，全桌都看得到，你的名字旁會有圓圈的「聽」。胡的時候多算「聽牌」1 台，自摸或胡別家的牌都算，"
-                + "也算在牌型台數裡。電腦也會報聽：初學者不報，其他等級看手牌與局勢決定。</p>"
+                + "<h2>聽牌</h2>"
+                + "<p>輪到你打牌時，如果打出某張牌就會聽牌，下方會多一個半透明的「聽牌」按鈕。按下後，打出去會聽牌的牌加上金框，"
+                + "其他牌蓋起來不能選，提示會列出打哪張聽哪些牌；點一張金框的牌打出就聽牌，按「取消」可以回去照常打牌。"
+                + "沒按聽牌就打出去的，這一輪就不能聽牌了。</p>"
+                + "<p>專家模式與連線對戰沒有打牌前的提示，照常打牌，打出之後如果已經聽牌，下方會出現「聽牌」按鈕，"
+                + "一直到你下一次摸牌、吃碰槓或這局結束。專家模式聽牌之後也不列出等哪些牌，要自己記。</p>"
+                + "<p>聽牌之後自動摸牌打牌，胡的牌來了就自動胡，也不再吃、碰、槓，這一局不能取消。</p>"
+                + "<p>聽牌是公開的，全桌都看得到，你的名字旁會有圓圈的「聽」。胡的時候多算「聽牌」1 台，自摸或胡別家的牌都算，"
+                + "也算在牌型台數裡。電腦也會聽牌：初學者不會，其他等級看手牌與局勢決定。</p>"
+                + "<h2>專家模式</h2>"
+                + "<p>練習牌局開始前、修業模式建立檔案時可以勾選專家模式：" + HomePanel.escape(StartPanel.EXPERT_SUMMARY)
+                + "。打牌前沒有聽牌按鈕，打出之後已經聽牌才出現；右側的紀錄只顯示最新一則，不能展開；"
+                + "牌河每家只留最後打出的那一張，被吃碰槓走就不見；牌桌中間不寫剩幾張。</p>"
+                + "<p>連線對戰開房間時也可以勾，房間裡每個人都照專家模式打；大廳列表的房間名稱旁標著「專家」，"
+                + "房間畫面標著「專家模式」。</p>"
+                + "<p>專家模式的修業檔案起始籌碼只有 " + CareerProfile.EXPERT_STARTING_CHIPS
+                + "，底與每台只要不大於帳上的籌碼就能選，每次等待固定 " + CareerProfile.EXPERT_WAIT_SECONDS
+                + " 秒，不能調整；連最小的底 " + CareerProfile.EXPERT_RELIEF_BELOW + " 都付不起時才能領救濟金，補回 "
+                + CareerProfile.EXPERT_RELIEF_TO + "；挑戰的獎金是原本的 1/" + CareerProfile.EXPERT_REWARD_SHARE
+                + "，見修業模式關卡表的「專家獎金」。建立之後就不能改。</p>"
                 + "<h2>電腦代打</h2>"
                 + "<p>牌桌右側的「電腦代打」按鈕可以隨時開關，打開後由職業等級的電腦替你決定。"
-                + "用過電腦代打的牌局不列入榮譽榜。連線對戰與修業模式的挑戰關卡不能使用電腦代打。</p>"
+                + "用過電腦代打的牌局不列入榮譽榜。只有練習牌局能用，連線對戰與修業模式（一般對戰與挑戰關卡）都不能使用電腦代打。</p>"
                 + careerRules();
     }
 
@@ -423,12 +548,16 @@ final class HelpDialog extends JDialog {
                 + "籌碼越多能選的底台越大：底最多帳上的 1/" + CareerProfile.BASE_SHARE + "、每台最多 1/"
                 + CareerProfile.TAI_SHARE + "。"
                 + "帳上不到 " + CareerProfile.RELIEF_BELOW + "（連最小的底都選不了）時可以領救濟金補到 "
-                + CareerProfile.RELIEF_TO + "，會記一次破產。每個檔案的成就、統計與榮譽榜各自記錄，和練習牌局也分開。</p>"
+                + CareerProfile.RELIEF_TO + "，會記一次破產。每個檔案的成就、統計與榮譽榜各自記錄，和練習牌局也分開。"
+                + "勾了專家模式的檔案規則不一樣，見上面的「專家模式」。修業模式不能用電腦代打。</p>"
                 + careerTitles()
                 + "<p>挑戰關卡要依序過關，每關的對手、圈數、籌碼與底台都固定，不從帳上扣籌碼；第一次過關有獎金。"
                 + "任務一確定成功或失敗，這場就在那一局結束。挑戰的每一局照算成就與統計，但不算整場類的成就與榮譽榜。</p>"
+                + "<p>每關最多三顆星：過關一顆，過關的那一刻再達成兩個加星條件各一顆，例如到那時都沒放槍、在東風圈內就過關。"
+                + "已經過的關可以再挑戰，幾次拿到的星合起來算；第一次拿到第二或第三顆星，各多給過關獎金的 1/"
+                + CareerProfile.STAR_BONUS_SHARE + "（專家檔案照專家獎金算）。修業檔案的畫面與檔案列表看得到拿了幾顆星。</p>"
                 + "<table width=\"100%\" cellspacing=\"0\" cellpadding=\"5\"><tr class=\"head\">");
-        for (String title : new String[] {"關", "名稱", "任務", "牌桌", "獎金"}) {
+        for (String title : new String[] {"關", "名稱", "任務", "加星條件", "牌桌", "獎金", "專家獎金"}) {
             html.append("<td class=\"cell\">").append(title).append("</td>");
         }
         html.append("</tr>");
@@ -436,8 +565,10 @@ final class HelpDialog extends JDialog {
             html.append("<tr>").append(honorCell(String.valueOf(challenge.number()), false))
                     .append(honorCell("<b>" + challenge.title() + "</b>", false))
                     .append(honorCell(challenge.goalText(), false))
+                    .append(honorCell(String.join("<br>", challenge.starTexts().subList(1, Challenge.MAX_STARS)), false))
                     .append(colorCell(challenge.setup(), Theme.MUTED))
                     .append(honorCell(String.valueOf(challenge.reward()), false))
+                    .append(honorCell(String.valueOf(challenge.reward() / CareerProfile.EXPERT_REWARD_SHARE), false))
                     .append("</tr>");
         }
         return html.append("</table>").toString();

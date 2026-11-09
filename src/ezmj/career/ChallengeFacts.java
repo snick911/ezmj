@@ -106,6 +106,12 @@ final class ChallengeFacts {
         return false;
     }
 
+    /** 最後打完的那一局是第幾圈，1 是東風圈；還沒打完任何一局是 0。過關時看這個就知道在第幾圈過的。 */
+    int lastCircle() {
+        List<RoundRecord> history = session.history();
+        return history.isEmpty() ? 0 : history.get(history.size() - 1).roundWind();
+    }
+
     /** 籌碼最少的電腦，同樣少時取座位前面的。 */
     Player poorestBot() {
         Player poorest = session.player(1);

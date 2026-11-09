@@ -338,6 +338,8 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
         presenter = new TablePresenter(this, settings);
         view = new TablePanel(presenter::humanDiscard, this::confirmLeave, null, () -> host.showHistory(game));
         presenter.attach(view);
+        // 房間設定的專家模式，房間裡每個人都一樣；服務器也不會給打哪張會聽牌
+        view.setExpert(info.settings().expert());
         view.showRoomCode(info.code());
         // 連線的牌桌都有聊天，跟電腦打的一人房間也有，只是沒有人回
         view.setChat(client::chat);
@@ -435,7 +437,8 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
             dealPending = false;
             view.appendLog(WallRing.announce(game, game.dice()));
             if (settings.animationEnabled()) {
-                presenter.showDeal();
+                // 服務器只留 3 秒給骰子和發牌，連莊的大字先不演
+                presenter.showDeal(false);
             } else {
                 view.refresh(game, game);
                 presenter.showIdle("發牌中…");
@@ -483,7 +486,8 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
         OnlineGame.TurnAsk ask = OnlineGame.parseTurn(message);
         waitId = ask.waitId();
         waiting = true;
-        presenter.askTurn(ask.waitId(), ask.options());
+        // 連線還是打完牌才問要不要報聽，聽牌按鈕先不在打牌前出現
+        presenter.askTurn(ask.waitId(), ask.options(), Map.of());
     }
 
     private void onAskClaim(Map<String, Object> message) {
@@ -533,8 +537,8 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
         presenter.showIdle(" ");
         host.refreshHistory();
         int serial = roundSerial;
-        // 有動畫時先讓胡牌的大字演完，再跳出結果；大胡演得比較久。台數在上面的 applyRoundEnd 就有了
-        int bannerMs = settings.animationEnabled() ? TableCanvas.endBannerMs(game.result()) : 0;
+        // 有動畫時先讓胡牌的大字與籌碼飛完，再跳出結果；大胡演得比較久。台數與輸贏在上面的 applyRoundEnd 就有了
+        int bannerMs = presenter.showSettlement(end.settlement().deltas());
         TablePresenter.after(bannerMs, () -> showResult(end, serial, bannerMs));
     }
 
@@ -573,7 +577,8 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
     /** 看完最後的成績就回到房間，可以再開一場。 */
     private void showFinal(OnlineGame shown) {
         if (shown.isOver()) {
-            openDialog = new FinalDialog(host.frame(), shown, "", List.of(), "回到房間");
+            String roomName = room == null ? "" : room.settings().name();
+            openDialog = new FinalDialog(host.frame(), shown, null, "", List.of(), "回到房間", roomName);
             openDialog.setVisible(true);
             openDialog = null;
         }
@@ -626,6 +631,23 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
     public void discard(int id, Tile tile) {
         if (sending(id)) {
             client.discard(id, tile);
+        }
+    }
+
+    /**
+     * 開房間時選的專家模式，從 room 訊息的 options.expert 來，舊服務器沒有這個設定就不是。
+     * 連線本來就是打完牌才問要不要報聽，專家模式另外不列出聽哪些牌，紀錄與棄牌照專家模式顯示。
+     */
+    @Override
+    public boolean isExpert() {
+        return room != null && room.settings().expert();
+    }
+
+    /** 服務器的舊報聽訊息：打出這張並報聽。 */
+    @Override
+    public void discardAndListen(int id, Tile tile) {
+        if (sending(id)) {
+            client.listen(id, tile);
         }
     }
 

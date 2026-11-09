@@ -59,6 +59,8 @@ final class CareerHubPanel extends JPanel {
 
         void showHonorRoll();
 
+        void showCertificate();
+
         void back();
     }
 
@@ -75,6 +77,10 @@ final class CareerHubPanel extends JPanel {
     private final JPanel pendingBox = box();
     private final JLabel pendingInfo = label(" ", Font.PLAIN, 15f, Theme.TEXT);
     private final JPanel reliefBox = box();
+    /** 救濟金補到多少，專家模式不一樣，換檔案時重寫。 */
+    private final JLabel reliefText = new JLabel();
+    /** 一般對戰的規則，專家模式不一樣，換檔案時重寫。 */
+    private final JLabel generalText = new JLabel();
     private final JLabel titleNote = label(" ", Font.BOLD, 14f, Theme.GOLD);
     /** 選項跟著帳上的籌碼變，見 fillStakes。 */
     private final JComboBox<Integer> baseBox = StartPanel.combo(new Integer[] {100}, 100);
@@ -172,6 +178,7 @@ final class CareerHubPanel extends JPanel {
         buttons.add(CareerListPanel.small("成就", Theme.BUTTON, actions::showAchievements));
         buttons.add(CareerListPanel.small("統計", Theme.BUTTON, actions::showStats));
         buttons.add(CareerListPanel.small("榮譽榜", Theme.BUTTON, actions::showHonorRoll));
+        buttons.add(CareerListPanel.small("證照", Theme.BUTTON, actions::showCertificate));
         buttons.add(CareerListPanel.small("返回檔案列表", Theme.PANEL_LIGHT, actions::back));
 
         JPanel header = new JPanel(new BorderLayout(20, 0));
@@ -204,10 +211,10 @@ final class CareerHubPanel extends JPanel {
         addWide(left, c, pendingBox, 12);
 
         reliefBox.add(sectionLabel("救濟金"));
-        JLabel reliefText = new JLabel();
         reliefText.setFont(Theme.font(Font.PLAIN, 14f));
         reliefText.setForeground(Theme.TEXT);
-        reliefBox.add(HomePanel.wrapped(reliefText, "補到 " + CareerProfile.RELIEF_TO + "，記一次破產。", 400));
+        reliefText.setAlignmentX(LEFT_ALIGNMENT);
+        reliefBox.add(reliefText);
         JPanel reliefButtons = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 4));
         reliefButtons.setOpaque(false);
         reliefButtons.add(CareerListPanel.small("領救濟金", Theme.RED, actions::takeRelief));
@@ -216,12 +223,9 @@ final class CareerHubPanel extends JPanel {
         addWide(left, c, reliefBox, 12);
 
         addWide(left, c, sectionLabel("一般對戰"), 14);
-        JLabel generalText = new JLabel();
         generalText.setFont(Theme.font(Font.PLAIN, 14f));
         generalText.setForeground(Theme.MUTED);
-        addWide(left, c, HomePanel.wrapped(generalText, "打四圈，帶帳上的籌碼上桌，每局結算完就入帳。"
-                + "底最多帳上的 1/" + CareerProfile.BASE_SHARE + "、每台最多 1/" + CareerProfile.TAI_SHARE + "。",
-                400), 2);
+        addWide(left, c, generalText, 2);
         StartPanel.addRow(left, c, "底", baseBox);
         StartPanel.addRow(left, c, "每台", taiBox);
         StartPanel.addRow(left, c, "電腦等級", StartPanel.levelRow(levelBoxes));
@@ -252,9 +256,19 @@ final class CareerHubPanel extends JPanel {
 
     /** 換一個檔案或檔案有變動時呼叫。pendingSummary 是沒打完的牌局的說明，沒有就是 null。 */
     void show(CareerSlot slot, CareerProfile shown, String pendingSummary) {
+        if (profile == null || !profile.name().equals(shown.name()) || profile.expert() != shown.expert()) {
+            // 換了一個檔案，上一個檔案選的底台不留，照這個檔案的預設重選
+            baseBox.setSelectedItem(null);
+            taiBox.setSelectedItem(null);
+        }
         profile = shown;
         title.setText(shown.name() + " 的修業");
-        subtitle.setText(slot.label() + "・" + shown.created() + " 建立");
+        subtitle.setText(slot.label() + "・" + (shown.expert() ? "專家模式・" : "") + shown.created() + " 建立");
+        HomePanel.wrapped(reliefText, "補到 " + shown.reliefTo() + "，記一次破產。", 400);
+        HomePanel.wrapped(generalText, "打四圈，帶帳上的籌碼上桌，每局結算完就入帳。" + (shown.expert()
+                ? "專家模式：底與每台不大於帳上的籌碼就能選，每次等待固定 " + CareerProfile.EXPERT_WAIT_SECONDS + " 秒。"
+                : "底最多帳上的 1/" + CareerProfile.BASE_SHARE + "、每台最多 1/" + CareerProfile.TAI_SHARE + "。")
+                + "修業模式不能用電腦代打。", 400);
         bankroll.setText(String.valueOf(shown.bankroll()));
         bankrollNote.setText("起始 " + shown.startingChips() + "・最高 " + shown.peak() + "・破產 "
                 + shown.bankruptcies() + " 次");
@@ -278,12 +292,12 @@ final class CareerHubPanel extends JPanel {
     }
 
     /**
-     * 底與每台只列帳上的籌碼選得了的：底最多帳上的 1/10、每台最多 1/20。原本選的還能選就留著，
-     * 不能選就換成能選的裡面最接近 100／20 的。
+     * 底與每台只列帳上的籌碼選得了的：底最多帳上的 1/10、每台最多 1/20，專家模式不大於帳上就好。
+     * 原本選的還能選就留著，不能選就換成能選的裡面最接近 100／20 的；專家模式籌碼少，先選最小的 50／10。
      */
     private void fillStakes() {
-        refill(baseBox, profile.baseOptions(), 100);
-        refill(taiBox, profile.taiOptions(), 20);
+        refill(baseBox, profile.baseOptions(), profile.expert() ? CareerProfile.BASE_OPTIONS.get(0) : 100);
+        refill(taiBox, profile.taiOptions(), profile.expert() ? CareerProfile.TAI_OPTIONS.get(0) : 20);
     }
 
     private void refill(JComboBox<Integer> box, List<Integer> options, int preferred) {
@@ -318,7 +332,7 @@ final class CareerHubPanel extends JPanel {
         if (profile.game() != CareerProfile.Game.NONE) {
             warning = "先把沒打完的牌局打完或放棄";
         } else if (profile.baseOptions().isEmpty() || profile.taiOptions().isEmpty()) {
-            warning = "籌碼不到 " + CareerProfile.RELIEF_BELOW + "，連最小的桌都上不了，領救濟金才能再打";
+            warning = "籌碼不到 " + profile.reliefBelow() + "，連最小的桌都上不了，領救濟金才能再打";
         } else if (!fit) {
             warning = "這個底台現在選不了";
         } else {
@@ -328,9 +342,15 @@ final class CareerHubPanel extends JPanel {
         generalButton.setEnabled(profile.game() == CareerProfile.Game.NONE && chips > 0 && fit);
     }
 
+    /** 例如兩顆星是「★★☆」。 */
+    static String starMarks(int stars) {
+        return "★".repeat(stars) + "☆".repeat(Challenge.MAX_STARS - stars);
+    }
+
     /** 重新排挑戰列表。scrollToCurrent 時捲到第一個還沒過的關；只是視窗變寬變窄就不捲。 */
     private void fillChallenges(boolean scrollToCurrent) {
-        challengeTitle.setText("挑戰關卡　已過 " + profile.clearedCount() + " / " + Challenge.values().length);
+        challengeTitle.setText("挑戰關卡　已過 " + profile.clearedCount() + " / " + Challenge.values().length
+                + "　★ " + profile.totalStars() + " / " + Challenge.values().length * Challenge.MAX_STARS);
         int goalPixels = goalPixels();
         challengeRows.removeAll();
         GridBagConstraints c = new GridBagConstraints();
@@ -399,18 +419,32 @@ final class CareerHubPanel extends JPanel {
         GridBagConstraints line = new GridBagConstraints();
         line.gridx = 0;
         line.anchor = GridBagConstraints.WEST;
-        text.add(label("第 " + challenge.number() + " 關　" + challenge.title(), Font.BOLD, 16f,
-                unlocked ? Theme.TEXT : Theme.MUTED), line);
+        int stars = profile.stars(challenge);
+        JLabel heading = label("第 " + challenge.number() + " 關　" + challenge.title(), Font.BOLD, 16f,
+                unlocked ? Theme.TEXT : Theme.MUTED);
+        if (unlocked) {
+            // 拿到的星是金色，還沒拿到的是灰色
+            heading.setText("<html>" + HomePanel.escape(heading.getText()) + "　<font color='" + hex(Theme.GOLD) + "'>"
+                    + "★".repeat(stars) + "</font><font color='" + hex(Theme.MUTED) + "'>"
+                    + "☆".repeat(Challenge.MAX_STARS - stars) + "</font></html>");
+        }
+        text.add(heading, line);
         JLabel goal = new JLabel();
         goal.setFont(Theme.font(Font.PLAIN, 14f));
         goal.setForeground(unlocked ? Theme.TEXT : Theme.MUTED);
         goal.setText(HomePanel.wrapHtml(challenge.goalText(), goalPixels));
         text.add(goal, line);
+        JLabel starLine = new JLabel();
+        starLine.setFont(Theme.font(Font.PLAIN, 13f));
+        starLine.setForeground(Theme.MUTED);
+        starLine.setText(HomePanel.wrapHtml(starConditions(challenge, profile.starMask(challenge)), goalPixels));
+        text.add(starLine, line);
         String reward = cleared ? "（" + HomePanel.escape(profile.clearedDate(challenge)) + " 過關，獎金已領）" : "";
         JLabel setup = new JLabel();
         setup.setFont(Theme.font(Font.PLAIN, 13f));
         setup.setForeground(Theme.MUTED);
-        setup.setText(HomePanel.wrapHtml(challenge.setup() + "・獎金 " + challenge.reward() + reward, goalPixels));
+        setup.setText(HomePanel.wrapHtml(challenge.setup() + "・獎金 " + profile.rewardFor(challenge) + reward
+                + "・每多一顆星 +" + profile.starBonus(challenge), goalPixels));
         text.add(setup, line);
 
         boolean enabled = unlocked && profile.game() == CareerProfile.Game.NONE;
@@ -441,6 +475,22 @@ final class CareerHubPanel extends JPanel {
         cell.insets = new Insets(0, 0, 0, 0);
         row.add(start, cell);
         return row;
+    }
+
+    /** 三顆星各要做到什麼，例如「★ 過關　★ 沒有放槍　☆ 自摸過關」：拿過的是金色實心，還沒拿過的是灰色空心。 */
+    private static String starConditions(Challenge challenge, int mask) {
+        StringBuilder html = new StringBuilder();
+        List<String> texts = challenge.starTexts();
+        for (int i = 0; i < texts.size(); i++) {
+            boolean got = (mask & (1 << i)) != 0;
+            html.append(i == 0 ? "" : "　").append("<font color='").append(hex(got ? Theme.GOLD : Theme.MUTED))
+                    .append("'>").append(got ? "★ " : "☆ ").append(HomePanel.escape(texts.get(i))).append("</font>");
+        }
+        return html.toString();
+    }
+
+    private static String hex(Color color) {
+        return String.format("#%02x%02x%02x", color.getRed(), color.getGreen(), color.getBlue());
     }
 
     /** 字體大小改變後，讓挑戰列表與按鈕跟著調整。 */

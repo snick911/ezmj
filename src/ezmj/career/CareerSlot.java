@@ -74,6 +74,7 @@ public final class CareerSlot {
     public void delete() throws IOException {
         List<String> files = new ArrayList<>(Records.FILES);
         files.add(PROFILE);
+        files.add(Records.AVATAR);
         for (String file : files) {
             Files.deleteIfExists(dir.resolve(file));
             Files.deleteIfExists(dir.resolve(file + ".tmp"));

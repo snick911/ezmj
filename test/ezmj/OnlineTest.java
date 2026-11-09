@@ -245,13 +245,19 @@ final class OnlineTest {
                 eq("FAST", create.get("speed"), "速度");
                 eq("", create.get("name"), "沒填名稱也送，由服務器取");
                 eq(false, create.get("private"), "預設公開");
+                eq(false, create.get("expert"), "預設不是專家模式");
                 probe.client.createRoom(new RoomSettings(500, 10, 2,
-                        List.of(BotLevel.PRO, BotLevel.BEGINNER, BotLevel.AMATEUR), 15, GameSpeed.FAST, "週五牌搭子", true));
+                        List.of(BotLevel.PRO, BotLevel.BEGINNER, BotLevel.AMATEUR), 15, GameSpeed.FAST, "週五牌搭子", true,
+                        true));
                 Map<String, Object> named = connection.next("createRoom");
                 eq("週五牌搭子", named.get("name"), "房間名稱");
                 eq(true, named.get("private"), "私人房間");
+                eq(true, named.get("expert"), "專家模式");
                 probe.client.joinRoom("ABC234");
-                eq("ABC234", connection.next("joinRoom").get("code"), "房號");
+                Map<String, Object> join = connection.next("joinRoom");
+                eq("ABC234", join.get("code"), "房號");
+                // 服務器 0.7.0 起沒帶這個就不讓加入專家模式的房間
+                eq(List.of("expert"), join.get("supports"), "看得懂專家模式");
             }
         });
         test(name + "只看大廳：不登入，第一則就是 listRooms，之後再要一次", () -> {
@@ -389,14 +395,32 @@ final class OnlineTest {
                 eq("loggedIn:true", probe.next(), "是接回來的");
             }
         });
-        test(name + "連不上就通知，不重試", () -> {
-            int unusedPort;
-            try (ServerSocket socket = new ServerSocket(0)) {
-                unusedPort = socket.getLocalPort();
-            }
-            try (Probe probe = new Probe(webSocket ? ServerAddress.parse("ws://127.0.0.1:" + unusedPort + "/ws")
-                    : new ServerAddress("127.0.0.1", unusedPort))) {
+        test(name + "一直連不上，重試到期限才通知", () -> {
+            OnlineClient.Timing shortRetry = new OnlineClient.Timing(100, 2_000, new int[] {20}, 300);
+            try (Probe probe = new Probe(address(webSocket, unusedPort()), shortRetry)) {
+                long start = System.nanoTime();
                 probe.client.loginWithName("小明");
+                check(probe.next().startsWith("closed:"), "連不上");
+                check(System.nanoTime() - start >= TimeUnit.MILLISECONDS.toNanos(300), "到期限才放棄");
+            }
+        });
+        test(name + "服務器還沒起來就一直重試，起來之後接上", () -> {
+            int port = unusedPort();
+            try (Probe probe = new Probe(address(webSocket, port))) {
+                probe.client.loginWithName("小明");
+                Thread.sleep(200);
+                try (FakeServer server = new FakeServer(webSocket, port)) {
+                    eq("小明", server.accept().next("hello").get("name"), "再送一樣的 hello");
+                    server.current().send("{\"type\":\"welcome\",\"token\":\"t1\",\"room\":null}");
+                    eq("loggedIn:false", probe.next(), "登入成功");
+                }
+            }
+        });
+        test(name + "只看大廳：連不上就通知，不重試", () -> {
+            // 期限設得比 Probe 等通知的 5 秒長，有重試的話就等不到
+            OnlineClient.Timing longRetry = new OnlineClient.Timing(100, 2_000, new int[] {20}, 10_000);
+            try (Probe probe = new Probe(address(webSocket, unusedPort()), longRetry)) {
+                probe.client.browse();
                 check(probe.next().startsWith("closed:"), "連不上");
             }
         });
@@ -481,10 +505,19 @@ final class OnlineTest {
         test("WebSocket：服務器不接受升級時說出原因，不重試", () -> {
             try (FakeServer server = new FakeServer(true); Probe probe = new Probe(server)) {
                 probe.client.loginWithName("小明");
-                server.refuse();
+                server.refuse("404 Not Found");
                 String event = probe.next();
                 check(event.startsWith("closed:") && event.contains("404"), event);
                 check(!server.acceptsAnother(300), "不重試");
+            }
+        });
+        test("WebSocket：升級時回 5xx 是暫時的，會重試", () -> {
+            try (FakeServer server = new FakeServer(true); Probe probe = new Probe(server)) {
+                probe.client.loginWithName("小明");
+                server.refuse("503 Service Unavailable");
+                eq("小明", server.accept().next("hello").get("name"), "重試之後送一樣的 hello");
+                server.current().send("{\"type\":\"welcome\",\"token\":\"t1\",\"room\":null}");
+                eq("loggedIn:false", probe.next(), "登入成功");
             }
         });
     }
@@ -503,10 +536,17 @@ final class OnlineTest {
             eq(List.of(BotLevel.NORMAL, BotLevel.PRO, BotLevel.BEGINNER), info.settings().botLevels(), "等級");
             eq(GameSpeed.FAST, info.settings().speed(), "速度");
         });
-        test("房間：舊服務器沒有名稱與私人，當成空的與公開", () -> {
+        test("房間：舊服務器沒有名稱、私人與專家模式，當成空的、公開與一般模式", () -> {
             RoomSettings settings = RoomInfo.parse(parse(ROOM_PLAYING)).settings();
             eq("", settings.name(), "沒有名稱");
             check(!settings.privateRoom(), "公開");
+            check(!settings.expert(), "一般模式");
+        });
+        test("房間：讀出專家模式", () -> {
+            check(RoomInfo.parse(parse(ROOM_PLAYING.replace("\"speed\":\"FAST\"", "\"speed\":\"FAST\",\"expert\":true")))
+                    .settings().expert(), "專家模式");
+            check(!RoomInfo.parse(parse(ROOM_PLAYING.replace("\"speed\":\"FAST\"", "\"speed\":\"FAST\",\"expert\":false")))
+                    .settings().expert(), "明說不是");
         });
         test("房間：讀出名稱與私人", () -> {
             RoomSettings settings = RoomInfo.parse(parse(ROOM_PLAYING.replace("\"speed\":\"FAST\"",
@@ -529,6 +569,10 @@ final class OnlineTest {
             eq(3, listed.get(1).humans(), "第二間的人數");
             eq(20000, listed.get(1).settings().chips(), "第二間的籌碼");
             eq(0, RoomListing.parse(parse(rooms())).size(), "沒有房間");
+            check(!first.settings().expert(), "舊服務器沒有專家模式");
+            RoomListing expert = RoomListing.parse(parse(rooms(LISTING.replace("\"speed\":\"FAST\"",
+                    "\"speed\":\"FAST\",\"expert\":true")))).get(0);
+            check(expert.settings().expert(), "專家模式的房間");
         });
         test("大廳：缺欄位要拒絕", () -> {
             for (String key : List.of("code", "name", "host", "humans", "options")) {
@@ -836,8 +880,12 @@ final class OnlineTest {
         }
 
         Probe(ServerAddress address) {
+            this(address, FAST);
+        }
+
+        Probe(ServerAddress address, OnlineClient.Timing timing) {
             this.server = null;
-            this.client = new OnlineClient(address, this, Runnable::run, FAST);
+            this.client = new OnlineClient(address, this, Runnable::run, timing);
         }
 
         /** 登入好，回傳這條連線。 */
@@ -902,19 +950,35 @@ final class OnlineTest {
         }
     }
 
+    /** 現在沒有人在聽的 port，連過去會被拒絕。 */
+    private static int unusedPort() throws IOException {
+        try (ServerSocket socket = new ServerSocket(0)) {
+            return socket.getLocalPort();
+        }
+    }
+
+    private static ServerAddress address(boolean webSocket, int port) {
+        return webSocket ? ServerAddress.parse("ws://127.0.0.1:" + port + "/ws") : new ServerAddress("127.0.0.1", port);
+    }
+
     /** 測試自己開的服務器，要說什麼由測試決定。 */
     private static final class FakeServer implements AutoCloseable {
-        private final ServerSocket socket = new ServerSocket(0);
+        private final ServerSocket socket;
         private final List<FakeConnection> connections = new ArrayList<>();
         private final boolean webSocket;
 
         FakeServer(boolean webSocket) throws IOException {
+            this(webSocket, 0);
+        }
+
+        /** port 給 0 時由系統挑。 */
+        FakeServer(boolean webSocket, int port) throws IOException {
             this.webSocket = webSocket;
+            this.socket = new ServerSocket(port);
         }
 
         ServerAddress address() {
-            return webSocket ? ServerAddress.parse("ws://127.0.0.1:" + socket.getLocalPort() + "/ws")
-                    : new ServerAddress("127.0.0.1", socket.getLocalPort());
+            return OnlineTest.address(webSocket, socket.getLocalPort());
         }
 
         FakeConnection accept() throws IOException {
@@ -925,12 +989,12 @@ final class OnlineTest {
             return connection;
         }
 
-        /** 下一條連線不給升級，像是路徑寫錯。 */
-        void refuse() throws IOException {
+        /** 下一條連線不給升級，回這個狀態，例如路徑寫錯的 "404 Not Found"。 */
+        void refuse(String status) throws IOException {
             socket.setSoTimeout(5_000);
             try (Socket accepted = socket.accept()) {
                 FakeWebSocket.readHead(new DataInputStream(new BufferedInputStream(accepted.getInputStream())));
-                accepted.getOutputStream().write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"
+                accepted.getOutputStream().write(("HTTP/1.1 " + status + "\r\nContent-Length: 0\r\n\r\n")
                         .getBytes(StandardCharsets.US_ASCII));
             }
         }

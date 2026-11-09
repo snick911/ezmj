@@ -192,6 +192,19 @@ final class SaveTest {
             eq(3, loaded.session().handWind(), "讀回來的整場");
         });
 
+        test("專家模式：存檔讀回來還是專家模式，以前的存檔沒有這個欄位就是一般模式", () -> {
+            Path file = tempFile();
+            GameSession session = new GameSession(newSession(6).config().withExpert(true), new Random(6));
+            Round round = session.newRound(message -> { });
+            round.start();
+            GameSave.save(file, 6, session, round, false, new ThinkTimer());
+            check(GameSave.load(file).session().config().expert(), "專家模式讀回來");
+            String text = Files.readString(file, StandardCharsets.ISO_8859_1);
+            check(text.contains("config.expert=true"), "存了專家模式");
+            Files.writeString(file, text.replace("config.expert=true", ""), StandardCharsets.ISO_8859_1);
+            check(!GameSave.load(file).session().config().expert(), "沒有欄位是一般模式");
+        });
+
         test("局與局之間存檔：沒有 round，整場的資料都留著，再來的局也正常", () -> {
             Path file = tempFile();
             GameSession session = newSession(3);

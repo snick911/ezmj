@@ -260,7 +260,7 @@ public final class Round implements RoundView {
         }
         listening[seat] = true;
         listenChance[seat] = false;
-        log.accept(players[seat].name() + " 報聽");
+        log.accept(players[seat].name() + " 聽牌");
         listener.accept(new RoundEvent(RoundEvent.Type.LISTEN, seat, null, -1));
     }
 

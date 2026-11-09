@@ -117,12 +117,12 @@ public final class OnlineClient {
         return token;
     }
 
-    /** 用名字登入，第一次進服務器時用。 */
+    /** 用名字登入，第一次進服務器時用。連不上會重試，見 connect。 */
     public void loginWithName(String name) {
         connect(Fields.object("type", "hello", "protocol", PROTOCOL, "name", name));
     }
 
-    /** 用之前的 token 接回來。 */
+    /** 用之前的 token 接回來。連不上會重試，見 connect。 */
     public void loginWithToken(String savedToken) {
         token = savedToken;
         connect(Fields.object("type", "hello", "protocol", PROTOCOL, "token", savedToken));
@@ -137,12 +137,37 @@ public final class OnlineClient {
         connect(Fields.object("type", "listRooms"));
     }
 
+    /**
+     * 連上就送 first。要登入的連線連不上時照 retryDelaysMs 一直重試，到 retryForMs 才放棄：
+     * 免費主機睡著時第一個連線要等它醒來，Render 重新部署的一兩分鐘裡也會直接拒絕連線，等一下就好了。
+     * 網頁版的 WebClient 也是這樣。只看大廳的連線不重試，大廳下次更新時自己會再連；
+     * 服務器回 4xx（NotRetryable）也不重試，那是設定錯了，等多久都一樣。
+     */
     private void connect(Map<String, Object> first) {
         background("ezmj-connect", () -> {
-            try {
-                install(open()).send(first);
-            } catch (IOException e) {
-                finish(() -> listener.closed("連不上服務器 " + address + "：" + e.getMessage()));
+            long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timing.retryForMs());
+            int[] delays = timing.retryDelaysMs();
+            int attempt = 0;
+            while (true) {
+                try {
+                    install(open()).send(first);
+                    return;
+                } catch (IOException e) {
+                    if (browsing || e instanceof NotRetryable || System.nanoTime() - deadline > 0) {
+                        finish(() -> listener.closed("連不上服務器 " + address + "：" + e.getMessage()));
+                        return;
+                    }
+                }
+                try {
+                    Thread.sleep(delays[Math.min(attempt++, delays.length - 1)]);
+                } catch (InterruptedException e) {
+                    return;
+                }
+                synchronized (lock) {
+                    if (finished) {
+                        return;
+                    }
+                }
             }
         });
     }
@@ -158,8 +183,9 @@ public final class OnlineClient {
         send(message);
     }
 
+    /** 帶 supports 說明看得懂專家模式，服務器 0.7.0 起沒帶的話不讓加入專家模式的房間（expertNotSupported）。 */
     public void joinRoom(String code) {
-        send(Fields.object("type", "joinRoom", "code", code));
+        send(Fields.object("type", "joinRoom", "code", code, "supports", List.of("expert")));
     }
 
     public void leave() {
@@ -457,6 +483,18 @@ public final class OnlineClient {
         }
     }
 
+    /**
+     * 重試也沒用的連線失敗：服務器回 HTTP 4xx，例如路徑寫錯。
+     * 連線被拒絕、逾時或 5xx 是暫時的，主機在喚醒或重新部署時就是這樣。
+     */
+    private static final class NotRetryable extends IOException {
+        private static final long serialVersionUID = 1L;
+
+        NotRetryable(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
+
     /** 收發一則一則的訊息，訊息都不含結尾的換行。 */
     private interface Transport {
         /** 等下一則訊息。對方關閉或訊息太長時回傳 null，太久沒有訊息時丟 IOException。 */
@@ -555,7 +593,14 @@ public final class OnlineClient {
                         .buildAsync(url, transport).get();
                 return transport;
             } catch (ExecutionException e) {
-                throw new IOException(openFailure(e.getCause()), e.getCause());
+                Throwable cause = e.getCause();
+                if (cause instanceof WebSocketHandshakeException) {
+                    int status = ((WebSocketHandshakeException) cause).getResponse().statusCode();
+                    if (status >= 400 && status < 500) {
+                        throw new NotRetryable(openFailure(cause), cause);
+                    }
+                }
+                throw new IOException(openFailure(cause), cause);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new InterruptedIOException("連線被中斷");

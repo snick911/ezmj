@@ -48,8 +48,11 @@ public final class TablePanel extends JPanel {
     static final int MAX_CHAT_LENGTH = 100;
     private static final int PROMPT_BLINK_MS = 450;
 
-    /** 動作列上的一個按鈕。 */
-    record ActionItem(String label, Color color, Runnable run) {
+    /** 動作列上的一個按鈕。translucent 的按鈕半透明，表示可以用但不一定要按。 */
+    record ActionItem(String label, Color color, Runnable run, boolean translucent) {
+        ActionItem(String label, Color color, Runnable run) {
+            this(label, color, run, false);
+        }
     }
 
     private final TableCanvas canvas;
@@ -88,6 +91,13 @@ public final class TablePanel extends JPanel {
     private final Timer promptBlink = new Timer(PROMPT_BLINK_MS, e -> blinkHint());
     private boolean blinkOn;
     private boolean logExpanded;
+    /** 專家模式：紀錄一直只顯示最新一則，不能展開。 */
+    private boolean logLocked;
+    /** 結算時計分表的籌碼從舊的數目滾到新的數目。rollTo 不是 null 時正在滾，refresh 不改籌碼那一欄。 */
+    private final Timer chipRoll = new Timer(30, e -> stepChipRoll());
+    private int[] rollFrom;
+    private int[] rollTo;
+    private long rollBegin;
     /** 聊天送出的地方；沒有聊天時是 null。 */
     private Consumer<String> chatSender;
 
@@ -254,7 +264,7 @@ public final class TablePanel extends JPanel {
         latestLog.setMinimumSize(new Dimension(0, 0));
         logToggle.setIcon(logToggleIcon);
         logToggle.setBorder(BorderFactory.createEmptyBorder(4, 7, 4, 7));
-        logToggle.addActionListener(e -> setLogExpanded(!logExpanded));
+        logToggle.addActionListener(e -> toggleLog());
         JPanel header = new JPanel(new BorderLayout(8, 0)) {
             @Override
             public Dimension getMaximumSize() {
@@ -269,7 +279,7 @@ public final class TablePanel extends JPanel {
         header.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
-                setLogExpanded(!logExpanded);
+                toggleLog();
             }
         });
         latestLog.setVisible(false);
@@ -324,6 +334,79 @@ public final class TablePanel extends JPanel {
         area.setBackground(Theme.PANEL_LIGHT);
         area.setForeground(Theme.TEXT);
         area.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
+    }
+
+    private void toggleLog() {
+        if (!logLocked) {
+            setLogExpanded(!logExpanded);
+        }
+    }
+
+    /**
+     * 專家模式：紀錄收起來只留最新一則，展開的箭頭藏起來；牌桌的棄牌每家只留最後一張，中間不寫剩幾張。
+     * 一般模式照舊。
+     */
+    void setExpert(boolean on) {
+        logLocked = on;
+        logToggle.setVisible(!on);
+        setLogExpanded(false);
+        canvas.setExpert(on);
+    }
+
+    /** 每個事件都會送來，有沒有動畫都一樣。 */
+    void noteEvent(RoundEvent event) {
+        canvas.noteEvent(event);
+    }
+
+    /**
+     * 結算：delayMs 之後牌桌上的籌碼飛向贏家，第一顆落地時計分表的籌碼從舊的數目滾到 chipsNow。
+     * 在那之前計分表先顯示結算前的數目。
+     */
+    void animateSettlement(int[] deltas, int[] chipsNow, int delayMs) {
+        canvas.animateSettlement(deltas, delayMs);
+        rollTo = chipsNow.clone();
+        rollFrom = new int[rollTo.length];
+        for (int seat = 0; seat < rollTo.length; seat++) {
+            rollFrom[seat] = rollTo[seat] - deltas[seat];
+        }
+        rollBegin = System.nanoTime() + (long) (delayMs + TableCanvas.CHIP_FLIGHT_MS) * 1_000_000L;
+        showChips(rollFrom);
+        chipRoll.start();
+    }
+
+    private void stepChipRoll() {
+        if (rollTo == null) {
+            chipRoll.stop();
+            return;
+        }
+        double t = (System.nanoTime() - rollBegin) / 1e6 / TableCanvas.CHIP_ROLL_MS;
+        if (t <= 0) {
+            return;
+        }
+        if (t >= 1) {
+            int[] done = rollTo;
+            stopChipRoll();
+            showChips(done);
+            return;
+        }
+        double eased = 1 - Math.pow(1 - t, 3);
+        int[] now = new int[rollTo.length];
+        for (int seat = 0; seat < now.length; seat++) {
+            now[seat] = (int) Math.round(rollFrom[seat] + (rollTo[seat] - rollFrom[seat]) * eased);
+        }
+        showChips(now);
+    }
+
+    private void stopChipRoll() {
+        chipRoll.stop();
+        rollTo = null;
+        rollFrom = null;
+    }
+
+    private void showChips(int[] chips) {
+        for (int seat = 0; seat < chips.length; seat++) {
+            scoreCells[seat][2].setText(String.valueOf(chips[seat]));
+        }
     }
 
     /** 紀錄一律預設收起來，只留「紀錄」那一行，空出來的地方給聊天。箭頭朝下是展開，朝上是收合。 */
@@ -393,18 +476,39 @@ public final class TablePanel extends JPanel {
     /**
      * 計分表裡莊家的標記：紅色圓圈框住紅字「莊」。直徑跟著字體大小設定，是 22 的 Theme.scaled；
      * 圈線寬是直徑的 0.09（至少 1.5），字是粗體、直徑的 0.64。牌桌上名字旁邊的「莊」不用這個。
+     * 連莊時圓圈右邊再寫紅色粗體的連莊次數，字是直徑的 0.8。
      */
     static final class DealerBadge implements Icon {
-        static final DealerBadge INSTANCE = new DealerBadge();
+        static final DealerBadge INSTANCE = new DealerBadge(0);
         static final Color RED = new Color(0xE5, 0x48, 0x3D);
         private static final int DIAMETER = 22;
+        /** 用來量連莊次數的寬度，不用畫在哪裡。 */
+        private static final JLabel MEASURE = new JLabel();
 
-        private DealerBadge() {
+        /** 連莊次數，0 表示沒有連莊，只畫圓圈。 */
+        private final int streak;
+
+        private DealerBadge(int streak) {
+            this.streak = streak;
+        }
+
+        /** 連莊 streak 次的莊家標記。 */
+        static DealerBadge of(int streak) {
+            return streak > 0 ? new DealerBadge(streak) : INSTANCE;
+        }
+
+        private static Font streakFont(double size) {
+            return Theme.fixedFont(Font.BOLD, (float) (size * .8));
+        }
+
+        private int streakWidth(double size) {
+            return streak > 0 ? Theme.scaled(3) + MEASURE.getFontMetrics(streakFont(size)).stringWidth(String.valueOf(streak)) : 0;
         }
 
         @Override
         public int getIconWidth() {
-            return Theme.scaled(DIAMETER);
+            int size = Theme.scaled(DIAMETER);
+            return size + streakWidth(size);
         }
 
         @Override
@@ -417,7 +521,7 @@ public final class TablePanel extends JPanel {
             Graphics2D g = (Graphics2D) graphics.create();
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-            double size = getIconWidth();
+            double size = getIconHeight();
             double stroke = Math.max(1.5, size * .09);
             g.setColor(RED);
             g.setStroke(new BasicStroke((float) stroke));
@@ -427,6 +531,12 @@ public final class TablePanel extends JPanel {
             String text = "莊";
             g.drawString(text, (float) (x + (size - metrics.stringWidth(text)) / 2),
                     (float) (y + (size - metrics.getHeight()) / 2 + metrics.getAscent()));
+            if (streak > 0) {
+                g.setFont(streakFont(size));
+                FontMetrics streakMetrics = g.getFontMetrics();
+                g.drawString(String.valueOf(streak), (float) (x + size + Theme.scaled(3)),
+                        (float) (y + (size - streakMetrics.getHeight()) / 2 + streakMetrics.getAscent()));
+            }
             g.dispose();
         }
     }
@@ -484,6 +594,8 @@ public final class TablePanel extends JPanel {
         logArea.setText("");
         latestLog.setText(" ");
         setDiscardPrompt(false);
+        // 上一局的籌碼還沒滾完就開了新局，接著的 refresh 直接寫上現在的數目
+        stopChipRoll();
         canvas.setRound(round, dice);
     }
 
@@ -517,8 +629,9 @@ public final class TablePanel extends JPanel {
         canvas.animate(event);
     }
 
-    void animateDeal() {
-        canvas.animateDeal();
+    /** streak 大於 0 時先跳出「連莊」的大字再擲骰子，見 TableCanvas.animateDeal。 */
+    void animateDeal(int streak) {
+        canvas.animateDeal(streak);
     }
 
     void appendLog(String message) {
@@ -537,12 +650,16 @@ public final class TablePanel extends JPanel {
         for (int seat = 0; seat < 4; seat++) {
             Player player = game.player(seat);
             scoreCells[seat][0].setText(Tile.windName(round.seatWind(seat)));
-            scoreCells[seat][0].setIcon(round.dealer() == seat ? DealerBadge.INSTANCE : null);
-            scoreCells[seat][0].setToolTipText(round.dealer() == seat ? "莊家" : null);
+            boolean dealer = round.dealer() == seat;
+            scoreCells[seat][0].setIcon(dealer ? DealerBadge.of(round.streak()) : null);
+            scoreCells[seat][0].setToolTipText(!dealer ? null
+                    : round.streak() > 0 ? "莊家，連" + round.streak() + "拉" + round.streak() : "莊家");
             scoreCells[seat][1].setText(player.name());
             String traits = game.traits(seat);
             scoreCells[seat][1].setToolTipText(traits == null ? player.name() : player.name() + "（" + traits + "）");
-            scoreCells[seat][2].setText(String.valueOf(player.chips()));
+            if (rollTo == null) {
+                scoreCells[seat][2].setText(String.valueOf(player.chips()));
+            }
         }
         canvas.repaint();
     }
@@ -561,14 +678,23 @@ public final class TablePanel extends JPanel {
     /** 進入選牌：只有 tiles 裡的手牌能點，其他蓋上遮罩。first 是已經選好的牌，沒有就是 null。 */
     void showPick(String hintText, Set<Tile> tiles, Tile first, Consumer<Tile> onPick, List<ActionItem> actions) {
         hint.setText(hintText);
-        canvas.startPick(tiles, first, onPick);
+        canvas.startPick(tiles, first, onPick, false);
+        setButtons(actions);
+    }
+
+    /** 和 showPick 一樣只有 tiles 裡的手牌能點，這些牌另外加上金框，例如報聽時打出去會聽牌的牌。 */
+    void showMarkedPick(String hintText, Set<Tile> tiles, Consumer<Tile> onPick, List<ActionItem> actions) {
+        hint.setText(hintText);
+        canvas.startPick(tiles, null, onPick, true);
         setButtons(actions);
     }
 
     private void setButtons(List<ActionItem> actions) {
         actionButtons.removeAll();
         for (ActionItem action : actions) {
-            JButton button = Theme.button(action.label(), action.color());
+            JButton button = action.translucent()
+                    ? Theme.translucentButton(action.label(), action.color())
+                    : Theme.button(action.label(), action.color());
             button.addActionListener(e -> action.run().run());
             actionButtons.add(button);
         }

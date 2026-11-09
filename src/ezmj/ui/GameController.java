@@ -2,8 +2,10 @@ package ezmj.ui;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import java.util.function.IntSupplier;
 
 import ezmj.bot.Bot;
 import ezmj.career.Records;
@@ -48,10 +50,11 @@ public final class GameController implements TableFlow.Listener, TablePresenter.
 
     /**
      * proxy 是電腦代打時替真人決定的電腦。settings 隨時會被選單改變，每次要用時才讀。
+     * waitSeconds 是每次等待的秒數，也是每次要用時才讀；專家修業固定，其他照環境設定。
      * checkpoint 在每次輪到真人決定時呼叫，用來存檔。
      */
     public GameController(GameSession session, Bot bot, Bot proxy, RoundEndHandler roundEndHandler,
-                          AppSettings settings, Runnable checkpoint) {
+                          AppSettings settings, IntSupplier waitSeconds, Runnable checkpoint) {
         this.session = session;
         this.roundEndHandler = roundEndHandler;
         this.settings = settings;
@@ -70,7 +73,7 @@ public final class GameController implements TableFlow.Listener, TablePresenter.
 
             @Override
             public int waitSeconds() {
-                return settings.waitSeconds();
+                return waitSeconds.getAsInt();
             }
         }, TablePresenter::after, this);
     }
@@ -78,6 +81,13 @@ public final class GameController implements TableFlow.Listener, TablePresenter.
     void attach(TablePanel view) {
         this.view = view;
         presenter.attach(view);
+        view.setExpert(isExpert());
+    }
+
+    /** 專家模式：打完牌才問要不要聽牌，紀錄只留一筆，棄牌每家只看得到最後一張，不顯示剩幾張。 */
+    @Override
+    public boolean isExpert() {
+        return session.config().expert();
     }
 
     /** 電腦代打的開關。正在等真人決定時，打開就立刻交給電腦。 */
@@ -174,6 +184,11 @@ public final class GameController implements TableFlow.Listener, TablePresenter.
     }
 
     @Override
+    public void discardAndListen(int waitId, Tile tile) {
+        flow.declareListening(HUMAN_SEAT, waitId, tile);
+    }
+
+    @Override
     public void declareListening(int listenId) {
         flow.declareListening(HUMAN_SEAT, listenId);
     }
@@ -226,7 +241,7 @@ public final class GameController implements TableFlow.Listener, TablePresenter.
         if (!settings.animationEnabled() || round.phase() == Round.Phase.FINISHED) {
             return 0;
         }
-        return presenter.showDeal();
+        return presenter.showDeal(true);
     }
 
     @Override
@@ -249,9 +264,10 @@ public final class GameController implements TableFlow.Listener, TablePresenter.
         checkpoint.run();
     }
 
+    /** 打哪張會聽牌一起給畫面，聽牌按鈕在打牌之前就出現。專家模式不給，打完牌才問。 */
     @Override
     public void askTurn(int seat, int waitId, TurnOptions options) {
-        presenter.askTurn(waitId, options);
+        presenter.askTurn(waitId, options, isExpert() ? Map.of() : round().readyDiscards(HUMAN_SEAT));
     }
 
     @Override
@@ -259,9 +275,15 @@ public final class GameController implements TableFlow.Listener, TablePresenter.
         presenter.askClaim(waitId, options);
     }
 
+    /**
+     * 單機在打牌前用聽牌按鈕選牌報聽，沒有按就打出去的，打完不再問。
+     * 專家模式照以前的做法：打完牌已經聽牌，才出現聽牌按鈕，自己決定要不要按。
+     */
     @Override
     public void canListen(int seat, int listenId) {
-        presenter.canListen(listenId);
+        if (isExpert()) {
+            presenter.canListen(listenId);
+        }
     }
 
     @Override
@@ -274,8 +296,8 @@ public final class GameController implements TableFlow.Listener, TablePresenter.
         presenter.showIdle(" ");
         view.refresh(session, round);
         Runnable showResult = roundEndHandler.onRoundEnd(session, round, settlement, this::startRound);
-        // 有動畫時先讓胡牌的大字演完，再跳出結果；大胡演得比較久
-        TablePresenter.after(settings.animationEnabled() ? TableCanvas.endBannerMs(round.result()) : 0, () -> {
+        // 有動畫時先讓胡牌的大字與籌碼飛完，再跳出結果；大胡演得比較久
+        TablePresenter.after(presenter.showSettlement(settlement.deltas()), () -> {
             if (!presenter.isStopped()) {
                 showResult.run();
             }

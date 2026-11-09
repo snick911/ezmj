@@ -48,6 +48,12 @@ final class ResultDialog extends JDialog {
     /** 時間到自動關閉，電腦代打才能一直打下去。 */
     ResultDialog(Frame owner, GameView game, RoundView round, Settlement settlement, List<Achievement> earned,
                  String buttonText, int autoCloseSeconds) {
+        this(owner, game, round, settlement, earned, null, buttonText, autoCloseSeconds);
+    }
+
+    /** notice 是成就下面另外要說的一句話，例如升段；沒有是 null。 */
+    ResultDialog(Frame owner, GameView game, RoundView round, Settlement settlement, List<Achievement> earned,
+                 String notice, String buttonText, int autoCloseSeconds) {
         super(owner, "本局結果", true);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
 
@@ -76,6 +82,10 @@ final class ResultDialog extends JDialog {
         content.add(Box.createVerticalStrut(12));
         content.add(otherHands(round));
         addEarned(content, earned);
+        if (notice != null) {
+            content.add(Box.createVerticalStrut(earned.isEmpty() ? 10 : 4));
+            content.add(line(notice, Font.BOLD, 16f, Theme.GOLD));
+        }
         content.add(Box.createVerticalStrut(16));
 
         JButton next = Theme.button(buttonText, Theme.RED);

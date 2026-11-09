@@ -86,6 +86,7 @@ public final class GameSave {
         values.setProperty("config.base", String.valueOf(config.basePay()));
         values.setProperty("config.tai", String.valueOf(config.taiPay()));
         values.setProperty("config.levels", config.botLevels().stream().map(BotLevel::name).collect(Collectors.joining(LIST)));
+        values.setProperty("config.expert", String.valueOf(config.expert()));
         values.setProperty("session.firstDealer", String.valueOf(session.firstDealer()));
         values.setProperty("session.dealer", String.valueOf(session.dealer()));
         values.setProperty("session.roundWind", String.valueOf(session.roundWind()));
@@ -164,8 +165,10 @@ public final class GameSave {
         for (String level : text(values, "config.levels").split(LIST)) {
             levels.add(BotLevel.valueOf(level));
         }
+        // 以前的存檔沒有專家模式，當作一般模式
         GameConfig config = new GameConfig(text(values, "config.name"), integer(values, "config.chips"),
-                integer(values, "config.base"), integer(values, "config.tai"), levels);
+                integer(values, "config.base"), integer(values, "config.tai"), levels,
+                "true".equals(values.getProperty("config.expert", "").trim()));
 
         Player[] players = new Player[SEATS];
         Personality[] personalities = new Personality[SEATS];

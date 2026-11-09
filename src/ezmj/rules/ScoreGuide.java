@@ -75,7 +75,7 @@ public final class ScoreGuide {
                                     pong("9s9s9s"), pong("5s5s5s")).build()),
                     new Entry("獨聽", 1, "聽牌時只聽一種牌",
                             ron(ALL_SEQUENCES, "3w").build()),
-                    new Entry("聽牌", 1, "打出牌後已經聽牌，在下一次摸牌或吃碰槓之前報聽。報聽之後全桌都知道，手牌不能再換，也不能吃碰槓。胡別家打出的牌或自摸都算",
+                    new Entry("聽牌", 1, "打牌時按「聽牌」，打出一張就聽牌的牌（連線對戰是打出牌後、下一次摸牌或吃碰槓之前按）。聽牌之後全桌都知道，手牌不能再換，也不能吃碰槓。胡別家打出的牌或自摸都算",
                             ron(ALL_SEQUENCES, "6w").listening().build()))),
             new Group("特殊時機", List.of(
                     new Entry("海底撈月", 1, "自摸牌牆最後一張可摸的牌",

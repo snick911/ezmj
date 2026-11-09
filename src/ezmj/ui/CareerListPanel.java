@@ -12,7 +12,9 @@ import java.time.LocalDate;
 import java.util.List;
 
 import javax.swing.BorderFactory;
+import javax.swing.DefaultComboBoxModel;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
@@ -125,7 +127,8 @@ final class CareerListPanel extends JPanel {
                 name.setFont(Theme.font(Font.BOLD, 17f));
                 name.setForeground(Theme.TEXT);
                 text.add(name, line);
-                text.add(muted("挑戰 " + profile.clearedCount() + " / " + Challenge.values().length
+                text.add(muted((profile.expert() ? "專家模式・" : "") + "挑戰 " + profile.clearedCount() + " / " + Challenge.values().length
+                        + "（★ " + profile.totalStars() + "）"
                         + "・起始 " + profile.startingChips() + "・破產 " + profile.bankruptcies() + " 次・"
                         + profile.created() + " 建立"
                         + (profile.game() == CareerProfile.Game.NONE ? "" : "・有一場沒打完")), line);
@@ -174,16 +177,35 @@ final class CareerListPanel extends JPanel {
         return button;
     }
 
-    /** 問名字與起始籌碼；名字是空的就再問一次，按取消就算了。 */
+    /**
+     * 問名字、起始籌碼與要不要專家模式；名字是空的就再問一次，按取消就算了。
+     * 勾了專家模式，起始籌碼固定是 EXPERT_STARTING_CHIPS，不能選。
+     */
     private void askCreate(CareerSlot slot) {
         JTextField nameField = new JTextField(12);
         nameField.setFont(Theme.font(Font.PLAIN, 16f));
         ((AbstractDocument) nameField.getDocument()).setDocumentFilter(new LengthLimit(CareerProfile.MAX_NAME_LENGTH));
-        JComboBox<Integer> chipBox = StartPanel.combo(CareerProfile.STARTING_CHIPS.toArray(new Integer[0]),
-                CareerProfile.DEFAULT_STARTING_CHIPS);
+        Integer[] normalChips = CareerProfile.STARTING_CHIPS.toArray(new Integer[0]);
+        JComboBox<Integer> chipBox = StartPanel.combo(normalChips, CareerProfile.DEFAULT_STARTING_CHIPS);
+        JCheckBox expertBox = new JCheckBox("專家模式（建立之後就不能改）");
+        expertBox.setFont(Theme.font(Font.PLAIN, 15f));
+        JLabel expertNote = new JLabel(HomePanel.wrapHtml(HomePanel.escape(StartPanel.EXPERT_SUMMARY + "。起始籌碼只有 "
+                + CareerProfile.EXPERT_STARTING_CHIPS + "，底台只要不大於帳上的籌碼就能選，每次等待固定 "
+                + CareerProfile.EXPERT_WAIT_SECONDS + " 秒。"), Theme.scaled(320)));
+        expertNote.setFont(Theme.font(Font.PLAIN, 13f));
+        expertBox.addActionListener(e -> {
+            boolean expert = expertBox.isSelected();
+            chipBox.setModel(new DefaultComboBoxModel<>(expert
+                    ? new Integer[] {CareerProfile.EXPERT_STARTING_CHIPS} : normalChips));
+            if (!expert) {
+                chipBox.setSelectedItem(CareerProfile.DEFAULT_STARTING_CHIPS);
+            }
+            chipBox.setEnabled(!expert);
+        });
         Object[] message = {
             "名字（最多 " + CareerProfile.MAX_NAME_LENGTH + " 字）", nameField,
             "起始籌碼（建立之後就不能改）", chipBox,
+            expertBox, expertNote,
         };
         while (true) {
             int answer = JOptionPane.showConfirmDialog(this, message, slot.label() + "：建立新檔案",
@@ -194,7 +216,7 @@ final class CareerListPanel extends JPanel {
             String name = nameField.getText().strip();
             if (!name.isEmpty()) {
                 actions.create(slot, new CareerProfile(name, (Integer) chipBox.getSelectedItem(),
-                        LocalDate.now().toString()));
+                        LocalDate.now().toString(), expertBox.isSelected()));
                 return;
             }
             JOptionPane.showMessageDialog(this, "請輸入名字。", "建立新檔案", JOptionPane.WARNING_MESSAGE);

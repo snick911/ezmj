@@ -97,11 +97,15 @@ final class CareerTest {
                 check(GameConfig.paysFit(config.startingChips(), config.basePay(), config.taiPay()), challenge + " 底台");
                 check(challenge.circles() >= 1 && challenge.circles() <= 4, challenge + " 圈數");
                 check(challenge.reward() > 0, challenge + " 獎金");
+                check(challenge.reward() % CareerProfile.EXPERT_REWARD_SHARE == 0, challenge + " 專家獎金除得盡");
                 check(!challenge.goalText().isEmpty() && !challenge.chapter().isEmpty(), challenge + " 說明");
                 check(seen.add(challenge.title()), "關卡名稱重複：" + challenge.title());
                 check(!titles.contains(challenge.title()), "和成就同名：" + challenge.title());
                 eq(challenge, Challenge.fromKey(challenge.name()), "讀檔用的名稱");
                 eq(Challenge.Status.PLAYING, challenge.check(session(challenge)).status(), challenge + " 還沒開打");
+                eq(Challenge.MAX_STARS, new HashSet<>(challenge.starTexts()).size(), challenge + " 三顆星的條件都不一樣");
+                eq(Challenge.CLEAR_STAR, challenge.starTexts().get(0), challenge + " 第一顆是過關");
+                eq(0, challenge.check(session(challenge)).stars(), challenge + " 還沒過關沒有星");
             }
         });
 
@@ -163,6 +167,78 @@ final class CareerTest {
             fails(IllegalStateException.class, profile::takeRelief, "補完就不能再領");
             check(CareerProfile.RELIEF_TO <= CareerProfile.STARTING_CHIPS.get(0), "救濟金不比最小的起始籌碼多");
             check(!profile.baseOptions().isEmpty(), "領完上得了桌");
+        });
+
+        test("專家模式：起始只有 100，底台不大於帳上就能選，付不起最小的底才能領救濟金，補回 100", () -> {
+            fails(IllegalArgumentException.class, () -> new CareerProfile("專家", 20_000, DATE, true), "起始只能是 100");
+            CareerProfile expert = new CareerProfile("專家", CareerProfile.EXPERT_STARTING_CHIPS, DATE, true);
+            check(expert.expert(), "專家模式");
+            check(!profile(1_000).expert(), "一般模式");
+            eq(List.of(50, 100), expert.baseOptions(), "100 能選的底");
+            eq(List.of(10, 20, 50, 100), expert.taiOptions(), "100 能選的每台");
+            check(!expert.canTakeRelief(), "100 還上得了最小的桌");
+            eq(100, expert.startGeneral(100, 100), "全部帶上桌");
+            expert.settleGeneral(CareerProfile.EXPERT_RELIEF_BELOW);
+            expert.endGame();
+            check(!expert.canTakeRelief(), "剛好付得起最小的底");
+            check(expert.stakesAllowed(50, 50), "最小的底、每台 50");
+            check(!expert.stakesAllowed(100, 10), "底付不起");
+            expert.startGeneral(50, 10);
+            expert.settleGeneral(CareerProfile.EXPERT_RELIEF_BELOW - 1);
+            expert.endGame();
+            check(expert.baseOptions().isEmpty(), "連最小的底都付不起");
+            check(expert.canTakeRelief(), "可以領");
+            expert.takeRelief();
+            eq((long) CareerProfile.EXPERT_STARTING_CHIPS, expert.bankroll(), "補回起始的 100");
+            eq(1, expert.bankruptcies(), "破產次數");
+        });
+
+        test("關卡星等：過關一顆，加星條件各一顆，再打可以補齊，新拿到的星各給 1/5 獎金", () -> {
+            Challenge stage = Challenge.FIRST_WIN;
+            int bonus = Challenge.FIRST_WIN.reward() / CareerProfile.STAR_BONUS_SHARE;
+            CareerProfile profile = profile(10_000);
+            eq(bonus, profile.starBonus(stage), "加星獎金");
+            fails(IllegalArgumentException.class, () -> profile.clearChallenge(stage, DATE, 0b10), "一定要有過關那顆");
+            eq(stage.reward() + bonus, profile.clearChallenge(stage, DATE, 0b011), "過關加第二顆");
+            eq(2, profile.stars(stage), "兩顆");
+            eq(bonus, profile.clearChallenge(stage, DATE, 0b101), "再打拿到第三顆，只給新的那顆");
+            eq(3, profile.stars(stage), "合起來三顆");
+            eq(0, profile.clearChallenge(stage, DATE, 0b111), "都拿過了沒有獎金");
+            eq(3, profile.totalStars(), "總星數");
+            eq(10_000L + stage.reward() + 2 * bonus, profile.bankroll(), "入帳");
+            CareerProfile expert = new CareerProfile("專家", CareerProfile.EXPERT_STARTING_CHIPS, DATE, true);
+            eq(20, expert.starBonus(stage), "專家：專家獎金 100 的 1/5");
+        });
+
+        test("關卡星等：過關當下判定加星條件", () -> {
+            Challenge stage = Challenge.FIRST_WIN;
+            GameSession clean = session(stage);
+            clean.settle(tsumo(0));
+            eq(0b111, stage.check(clean).stars(), "自摸過關、沒放槍：三顆");
+            eq(List.of("過關", "沒有放槍", "自摸過關"), stage.starTexts(stage.check(clean).stars()), "說明");
+            GameSession dealtIn = session(stage);
+            dealtIn.settle(ron(1, 0));
+            dealtIn.settle(ron(0, 2));
+            eq(0b001, stage.check(dealtIn).stars(), "放過槍、胡別家：只有過關");
+            Challenge early = Challenge.FIRST_SELF_DRAW;
+            GameSession quick = session(early);
+            quick.settle(tsumo(0));
+            eq(0b111, early.check(quick).stars(), "東風圈內自摸：三顆");
+            GameSession late = session(early);
+            endCircles(late, 1);
+            late.settle(tsumo(0));
+            eq(0b011, early.check(late).stars(), "南風圈才自摸：沒有東風圈內那顆");
+        });
+
+        test("專家模式的挑戰獎金是原本的 1/20，一般模式照舊", () -> {
+            CareerProfile expert = new CareerProfile("專家", CareerProfile.EXPERT_STARTING_CHIPS, DATE, true);
+            eq(100, expert.rewardFor(Challenge.FIRST_WIN), "第一關 2000 的 1/20");
+            eq(2_500, expert.rewardFor(Challenge.GRADUATE), "出師 50000 的 1/20");
+            expert.startChallenge(Challenge.FIRST_WIN);
+            eq(100, expert.clearChallenge(Challenge.FIRST_WIN, DATE), "拿到的獎金");
+            eq(200L, expert.bankroll(), "100 加 100");
+            eq(0, expert.clearChallenge(Challenge.FIRST_WIN, DATE), "再過一次沒有獎金");
+            eq(Challenge.FIRST_WIN.reward(), profile(1_000).rewardFor(Challenge.FIRST_WIN), "一般模式照舊");
         });
 
         test("起始籌碼有 1000、20000、100000 三種", () -> {
@@ -252,6 +328,20 @@ final class CareerTest {
             CareerProfile challenge = CareerProfile.load(file);
             eq(CareerProfile.Game.CHALLENGE, challenge.game(), "挑戰打到一半");
             eq(Challenge.CONCEALED, challenge.challenge(), "哪一關");
+            check(!challenge.expert(), "一般模式讀回來還是一般模式");
+
+            new CareerProfile("專家", CareerProfile.EXPERT_STARTING_CHIPS, DATE, true).save(file);
+            check(CareerProfile.load(file).expert(), "專家模式讀得回來");
+
+            CareerProfile starred = profile(10_000);
+            starred.clearChallenge(Challenge.FIRST_WIN, DATE, 0b101);
+            starred.clearChallenge(Challenge.FIRST_SELF_DRAW, DATE);
+            starred.save(file);
+            CareerProfile reloaded = CareerProfile.load(file);
+            eq(0b101, reloaded.starMask(Challenge.FIRST_WIN), "拿過哪幾顆星讀得回來");
+            eq(3, reloaded.totalStars(), "總星數讀得回來");
+            Files.writeString(file, "name=amin\nstartingChips=10000\ncleared.FIRST_WIN=2026-11-01\n");
+            eq(1, CareerProfile.load(file).stars(Challenge.FIRST_WIN), "以前的檔案過關就是一顆星");
 
             Files.writeString(file, "name=amin\nstartingChips=10000\nbankroll=x\ngame=NOPE\ncleared.NOPE=2026\n");
             CareerProfile messy = CareerProfile.load(file);

@@ -16,6 +16,7 @@ import java.util.stream.Collectors;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
@@ -46,6 +47,7 @@ public final class StartPanel extends JPanel {
     /** 依序是座位 1、2、3，也就是右家、對家、左家。 */
     private final List<JComboBox<BotLevel>> levelBoxes = List.of(combo(BotLevel.values(), BotLevel.NORMAL),
             combo(BotLevel.values(), BotLevel.NORMAL), combo(BotLevel.values(), BotLevel.NORMAL));
+    private final JCheckBox expertBox = expertCheckBox();
     private final JButton startButton = Theme.button("開始練習牌局", Theme.RED);
     private final JButton resumeButton = Theme.button("繼續上次的練習牌局", Theme.BUTTON);
     private final JButton backButton = Theme.button("返回", Theme.PANEL_LIGHT);
@@ -87,6 +89,7 @@ public final class StartPanel extends JPanel {
         addRow(card, c, "底", baseBox);
         addRow(card, c, "每台", taiBox);
         addRow(card, c, "電腦等級", levelRow(levelBoxes));
+        addRow(card, c, "專家模式", expertBox);
 
         c.gridx = 0;
         c.gridy++;
@@ -132,11 +135,26 @@ public final class StartPanel extends JPanel {
             if (startButton.isEnabled()) {
                 onStart.accept(new GameConfig(name, (Integer) chipBox.getSelectedItem(),
                         (Integer) baseBox.getSelectedItem(), (Integer) taiBox.getSelectedItem(),
-                        levelBoxes.stream().map(box -> (BotLevel) box.getSelectedItem()).collect(Collectors.toList())));
+                        levelBoxes.stream().map(box -> (BotLevel) box.getSelectedItem()).collect(Collectors.toList()),
+                        expertBox.isSelected()));
             }
         };
         startButton.addActionListener(e -> submit.run());
         nameField.addActionListener(e -> submit.run());
+    }
+
+    /** 專家模式說的是哪些不一樣，開始畫面、修業建立檔案與說明都用這句。 */
+    static final String EXPERT_SUMMARY = "沒有聽牌提示，紀錄只留一筆，棄牌每家只看得到最後一張，也不顯示剩幾張";
+
+    /** 綠底畫面上的專家模式勾選框，旁邊寫著專家模式有哪些不一樣。 */
+    static JCheckBox expertCheckBox() {
+        // 說明比下拉選單長，折成兩行，畫面才不會被撐寬
+        JCheckBox box = new JCheckBox(HomePanel.wrapHtml(HomePanel.escape(EXPERT_SUMMARY), Theme.scaled(300)));
+        box.setFont(Theme.font(Font.PLAIN, 14f));
+        box.setForeground(Theme.TEXT);
+        box.setOpaque(false);
+        box.setFocusPainted(false);
+        return box;
     }
 
     /** 三家排成一列，開始畫面才不會變高，字體調大時還放得下。 */

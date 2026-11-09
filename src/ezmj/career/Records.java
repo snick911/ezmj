@@ -19,16 +19,22 @@ import ezmj.model.PropertyStore;
 import ezmj.model.SealedStore;
 
 /**
- * 一套紀錄：成就、統計與榮譽榜，加上打到一半的牌局存檔，都放在同一個資料夾。
+ * 一套紀錄：成就、統計、榮譽榜與段位證照，加上打到一半的牌局存檔，都放在同一個資料夾。
  * 練習牌局用使用者目錄的 .ezmj，每個修業檔案在自己的資料夾各有一套，彼此不相干。
  * 全部經過 STORE 封存，玩家用記事本改不了；改過或壞掉的檔案當作讀不懂。
+ * 證照的個人圖像是一般的 PNG，不封存，改了也只是換一張圖。
  */
 public final class Records {
 
     /** 玩家的存檔與紀錄一律這樣存。 */
     public static final PropertyStore STORE = SealedStore.INSTANCE;
     static final String SAVE = "save.properties";
-    static final List<String> FILES = List.of(SAVE, "achievements.properties", "stats.properties", "honor.properties");
+    private static final String CERTIFICATE = "certificate.properties";
+    /** 封存的檔案。 */
+    static final List<String> FILES = List.of(SAVE, "achievements.properties", "stats.properties", "honor.properties",
+            CERTIFICATE);
+    /** 玩家上傳的個人圖像。 */
+    static final String AVATAR = "avatar.png";
     /** 有這個檔案表示以前的明碼檔案已經封存過，之後明碼的一律當作讀不懂。 */
     private static final String SEALED_MARK = "sealed.properties";
 
@@ -36,12 +42,14 @@ public final class Records {
     private final HonorRoll honorRoll;
     private final AchievementBook achievements;
     private final PlayerStats stats;
+    private final DanCertificate certificate;
 
     private Records(Path dir) {
         this.dir = dir;
         this.honorRoll = HonorRoll.load(honorFile(), STORE);
         this.achievements = AchievementBook.load(achievementFile(), STORE);
         this.stats = PlayerStats.load(statsFile(), STORE);
+        this.certificate = DanCertificate.load(dir.resolve(CERTIFICATE), STORE);
     }
 
     /** 讀不到、讀不懂或被改過的檔案當作空的。 */
@@ -104,6 +112,15 @@ public final class Records {
         return stats;
     }
 
+    public DanCertificate certificate() {
+        return certificate;
+    }
+
+    /** 玩家上傳的個人圖像，裁好的正方形 PNG；沒上傳過就不存在。 */
+    public Path avatarFile() {
+        return dir.resolve(AVATAR);
+    }
+
     public Path saveFile() {
         return dir.resolve(SAVE);
     }
@@ -128,6 +145,11 @@ public final class Records {
 
     public void saveStats() throws IOException {
         stats.save(statsFile(), STORE);
+    }
+
+    public void saveCertificate() throws IOException {
+        Files.createDirectories(dir);
+        certificate.save(dir.resolve(CERTIFICATE), STORE);
     }
 
     private Path honorFile() {

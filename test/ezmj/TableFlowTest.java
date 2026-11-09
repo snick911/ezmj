@@ -480,7 +480,7 @@ final class TableFlowTest {
             eq(1, round.current(), "代打替座位 1 吃了");
         });
 
-        test("舊的報聽（打出並報聽，給還沒更新的連線客戶端）：摸什麼打什麼，只胡不吃碰，胡了就結束", () -> {
+        test("打出並報聽（單機的聽牌按鈕、舊的連線客戶端）：摸什麼打什麼，只胡不吃碰，胡了就結束", () -> {
             Clock clock = new Clock();
             Recorder recorder = new Recorder();
             TableFlow flow = flow(Set.of(1), NEVER, 0, clock, recorder);

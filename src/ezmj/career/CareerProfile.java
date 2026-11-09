@@ -36,6 +36,18 @@ public final class CareerProfile {
     public static final int RELIEF_BELOW = BASE_OPTIONS.get(0) * BASE_SHARE;
     /** 救濟金補到這麼多，和最小的起始籌碼一樣，不會比新開一個檔案還多。 */
     public static final int RELIEF_TO = STARTING_CHIPS.get(0);
+    /** 專家模式的檔案只能從這麼多籌碼開始。 */
+    public static final int EXPERT_STARTING_CHIPS = 100;
+    /** 專家模式的牌局每次等待固定這麼多秒，不能調整。 */
+    public static final int EXPERT_WAIT_SECONDS = 10;
+    /** 專家模式連最小的底都付不起才能領救濟金。 */
+    public static final int EXPERT_RELIEF_BELOW = BASE_OPTIONS.get(0);
+    /** 專家模式的救濟金補回起始籌碼，不會比新開一個專家檔案還多。 */
+    public static final int EXPERT_RELIEF_TO = EXPERT_STARTING_CHIPS;
+    /** 專家模式的挑戰獎金是原本的幾分之一。起始只有 100，過一關才不會一下子多出好幾十倍。 */
+    public static final int EXPERT_REWARD_SHARE = 20;
+    /** 第一次拿到第二、第三顆星，各再多給過關獎金的幾分之一。 */
+    public static final int STAR_BONUS_SHARE = 5;
     public static final int MAX_NAME_LENGTH = 8;
     /** 檔案的格式版本，見 PropertyFiles.FORMAT_KEY。 */
     private static final int FORMAT = 1;
@@ -48,31 +60,60 @@ public final class CareerProfile {
     private final String name;
     private final int startingChips;
     private final String created;
+    /** 專家模式：建立時決定，之後不能改。 */
+    private final boolean expert;
     private long bankroll;
     private long peak;
     private int bankruptcies;
     private final Map<Challenge, String> cleared = new EnumMap<>(Challenge.class);
+    /** 每關拿過哪幾顆星，見 Challenge.Check；幾次挑戰拿到的合起來算，只記過關的。 */
+    private final Map<Challenge, Integer> stars = new EnumMap<>(Challenge.class);
     private Game game = Game.NONE;
     private Challenge challenge;
     /** 一般對戰開打時留在帳上、沒帶上桌的籌碼。 */
     private long reserve;
 
+    /** 一般模式的檔案。 */
     public CareerProfile(String name, int startingChips, String created) {
+        this(name, startingChips, created, false);
+    }
+
+    /** 專家模式的檔案起始籌碼一定是 EXPERT_STARTING_CHIPS。 */
+    public CareerProfile(String name, int startingChips, String created, boolean expert) {
         if (name.isBlank() || name.codePointCount(0, name.length()) > MAX_NAME_LENGTH) {
             throw new IllegalArgumentException("名字要 1 到 " + MAX_NAME_LENGTH + " 個字：" + name);
         }
         if (startingChips <= 0) {
             throw new IllegalArgumentException("起始籌碼要大於 0：" + startingChips);
         }
+        if (expert && startingChips != EXPERT_STARTING_CHIPS) {
+            throw new IllegalArgumentException("專家模式的起始籌碼是 " + EXPERT_STARTING_CHIPS + "：" + startingChips);
+        }
         this.name = name;
         this.startingChips = startingChips;
         this.created = created;
+        this.expert = expert;
         this.bankroll = startingChips;
         this.peak = startingChips;
     }
 
     public String name() {
         return name;
+    }
+
+    /** 專家模式：牌桌照專家模式打、等待固定 EXPERT_WAIT_SECONDS 秒，底台只要帳上付得起就能選。 */
+    public boolean expert() {
+        return expert;
+    }
+
+    /** 帳上不到這麼多、沒有打到一半的牌局，就能領救濟金。 */
+    public int reliefBelow() {
+        return expert ? EXPERT_RELIEF_BELOW : RELIEF_BELOW;
+    }
+
+    /** 救濟金補到這麼多。 */
+    public int reliefTo() {
+        return expert ? EXPERT_RELIEF_TO : RELIEF_TO;
     }
 
     public int startingChips() {
@@ -126,17 +167,19 @@ public final class CareerProfile {
         return (int) Math.max(0, Math.min(bankroll, MAX_TABLE_CHIPS));
     }
 
-    /** 帳上的籌碼選得了的底，由小到大；連最小的都選不了時是空的。 */
+    /** 帳上的籌碼選得了的底，由小到大；連最小的都選不了時是空的。專家模式只要不大於帳上的籌碼。 */
     public List<Integer> baseOptions() {
-        return BASE_OPTIONS.stream().filter(base -> (long) base * BASE_SHARE <= bankroll).collect(Collectors.toList());
+        int share = expert ? 1 : BASE_SHARE;
+        return BASE_OPTIONS.stream().filter(base -> (long) base * share <= bankroll).collect(Collectors.toList());
     }
 
-    /** 帳上的籌碼選得了的每台，由小到大。 */
+    /** 帳上的籌碼選得了的每台，由小到大。專家模式只要不大於帳上的籌碼。 */
     public List<Integer> taiOptions() {
-        return TAI_OPTIONS.stream().filter(tai -> (long) tai * TAI_SHARE <= bankroll).collect(Collectors.toList());
+        int share = expert ? 1 : TAI_SHARE;
+        return TAI_OPTIONS.stream().filter(tai -> (long) tai * share <= bankroll).collect(Collectors.toList());
     }
 
-    /** 籌碼越多能選的底台越大：底最多帳上的 1/10、每台最多 1/20，而且要是選項裡有的。 */
+    /** 籌碼越多能選的底台越大：底最多帳上的 1/10、每台最多 1/20（專家模式不大於帳上就好），而且要是選項裡有的。 */
     public boolean stakesAllowed(int basePay, int taiPay) {
         return baseOptions().contains(basePay) && taiOptions().contains(taiPay);
     }
@@ -170,20 +213,59 @@ public final class CareerProfile {
         challenge = next;
     }
 
-    /**
-     * 挑戰過關：第一次過關才有獎金，記下日期，回傳拿到的獎金。打到一半的挑戰也一起結束。
-     * 已經過關的再過一次只回傳 0。
-     */
+    /** 這個檔案第一次過這關拿得到的獎金：專家模式是原本的 1/EXPERT_REWARD_SHARE。 */
+    public int rewardFor(Challenge stage) {
+        return expert ? stage.reward() / EXPERT_REWARD_SHARE : stage.reward();
+    }
+
+    /** 第一次拿到這關的第二或第三顆星，各多給這麼多：過關獎金的 1/STAR_BONUS_SHARE。 */
+    public int starBonus(Challenge stage) {
+        return rewardFor(stage) / STAR_BONUS_SHARE;
+    }
+
+    /** 這關拿過哪幾顆星，第 i 個位元是第 i+1 顆；還沒過關是 0。 */
+    public int starMask(Challenge stage) {
+        return stars.getOrDefault(stage, 0);
+    }
+
+    /** 這關拿過幾顆星，還沒過關是 0。 */
+    public int stars(Challenge stage) {
+        return Integer.bitCount(starMask(stage));
+    }
+
+    /** 全部關卡加起來拿了幾顆星。 */
+    public int totalStars() {
+        return stars.values().stream().mapToInt(Integer::bitCount).sum();
+    }
+
+    /** 只拿到過關那一顆星，見另一個 clearChallenge。 */
     public int clearChallenge(Challenge done, String date) {
+        return clearChallenge(done, date, 1);
+    }
+
+    /**
+     * 挑戰過關，earned 是這次拿到哪幾顆星（Challenge.Check 的 stars，一定有過關那顆），回傳這次拿到的獎金。
+     * 打到一半的挑戰也一起結束。第一次過關給過關獎金（見 rewardFor）並記下日期；
+     * 以前沒拿過的加星條件，每顆再給 starBonus。已經過關、也沒有新的星的話回傳 0。
+     */
+    public int clearChallenge(Challenge done, String date, int earned) {
+        if ((earned & 1) == 0 || (earned & ~Challenge.ALL_STARS) != 0) {
+            throw new IllegalArgumentException("拿到的星不對：" + Integer.toBinaryString(earned));
+        }
         if (game == Game.CHALLENGE && challenge == done) {
             endGame();
         }
-        if (cleared.containsKey(done)) {
-            return 0;
+        int reward = 0;
+        if (!cleared.containsKey(done)) {
+            cleared.put(done, date);
+            reward += rewardFor(done);
         }
-        cleared.put(done, date);
-        setBankroll(bankroll + done.reward());
-        return done.reward();
+        // 過關那顆不另外給，新拿到的加星條件每顆給一次
+        int fresh = earned & ~starMask(done) & ~1;
+        reward += Integer.bitCount(fresh) * starBonus(done);
+        stars.put(done, starMask(done) | earned);
+        setBankroll(bankroll + reward);
+        return reward;
     }
 
     /** 打完、放棄或讀不回來的牌局都從這裡結束。一般對戰已經結算的局照算，打到一半的那局不算。 */
@@ -212,7 +294,7 @@ public final class CareerProfile {
     }
 
     public boolean canTakeRelief() {
-        return game == Game.NONE && bankroll < RELIEF_BELOW;
+        return game == Game.NONE && bankroll < reliefBelow();
     }
 
     /** 補到救濟金的數目，記一次破產。 */
@@ -221,7 +303,7 @@ public final class CareerProfile {
             throw new IllegalStateException("現在不能領救濟金");
         }
         bankruptcies++;
-        setBankroll(RELIEF_TO);
+        setBankroll(reliefTo());
     }
 
     private void requireNoGame() {
@@ -241,10 +323,13 @@ public final class CareerProfile {
         values.setProperty("name", name);
         values.setProperty("startingChips", String.valueOf(startingChips));
         values.setProperty("created", created);
+        values.setProperty("expert", String.valueOf(expert));
         values.setProperty("bankroll", String.valueOf(bankroll));
         values.setProperty("peak", String.valueOf(peak));
         values.setProperty("bankruptcies", String.valueOf(bankruptcies));
         cleared.forEach((stage, date) -> values.setProperty("cleared." + stage.name(), date));
+        // 拿過哪幾顆星，例如「1,3」是過關與第三顆
+        stars.forEach((stage, mask) -> values.setProperty("stars." + stage.name(), starNumbers(mask)));
         values.setProperty("game", game.name());
         if (challenge != null) {
             values.setProperty("game.challenge", challenge.name());
@@ -266,9 +351,11 @@ public final class CareerProfile {
         Properties values = store.read(file);
         CareerProfile profile;
         try {
+            // 以前的檔案沒有專家模式，當作一般模式
             profile = new CareerProfile(values.getProperty("name", ""),
                     Integer.parseInt(values.getProperty("startingChips", "").trim()),
-                    values.getProperty("created", "").trim());
+                    values.getProperty("created", "").trim(),
+                    "true".equals(values.getProperty("expert", "").trim()));
         } catch (IllegalArgumentException e) {
             throw new IOException("檔案內容不正確", e);
         }
@@ -279,6 +366,8 @@ public final class CareerProfile {
             String date = values.getProperty("cleared." + stage.name());
             if (date != null) {
                 profile.cleared.put(stage, date.trim());
+                // 以前的檔案沒有記星，過關就是一顆；過關那顆一定有
+                profile.stars.put(stage, starMask(values.getProperty("stars." + stage.name(), "")) | 1);
             }
         }
         try {
@@ -294,6 +383,33 @@ public final class CareerProfile {
         }
         profile.reserve = profile.game == Game.GENERAL ? number(values, "game.reserve", 0) : 0;
         return profile;
+    }
+
+    /** 例如位元 101 寫成「1,3」。 */
+    private static String starNumbers(int mask) {
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < Challenge.MAX_STARS; i++) {
+            if ((mask & (1 << i)) != 0) {
+                text.append(text.length() == 0 ? "" : ",").append(i + 1);
+            }
+        }
+        return text.toString();
+    }
+
+    /** 「1,3」讀回位元 101；讀不懂或超出範圍的數字略過。 */
+    private static int starMask(String text) {
+        int mask = 0;
+        for (String part : text.split(",")) {
+            try {
+                int number = Integer.parseInt(part.trim());
+                if (number >= 1 && number <= Challenge.MAX_STARS) {
+                    mask |= 1 << (number - 1);
+                }
+            } catch (NumberFormatException e) {
+                // 略過
+            }
+        }
+        return mask;
     }
 
     private static long number(Properties values, String key, long fallback) {

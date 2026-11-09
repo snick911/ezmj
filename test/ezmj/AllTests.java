@@ -28,6 +28,8 @@ public final class AllTests {
         TableFlowTest.run();
         OnlineTest.run();
         WallRingTest.run();
+        ReportTest.run();
+        CertificateTest.run();
         System.exit(T.report() == 0 ? 0 : 1);
     }
 }

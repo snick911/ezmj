@@ -42,6 +42,7 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
+import javax.swing.table.TableCellRenderer;
 import javax.swing.table.TableColumn;
 import javax.swing.text.AbstractDocument;
 
@@ -85,6 +86,7 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
     private final JTextField codeField = new JTextField(8);
     private final PromptField roomNameField = new PromptField(16);
     private final JCheckBox privateBox = new JCheckBox("不列在大廳，只能用房號加入");
+    private final JCheckBox expertBox = StartPanel.expertCheckBox();
     private final JComboBox<Integer> chipBox = StartPanel.combo(StartPanel.CHIP_OPTIONS, 20_000);
     private final JComboBox<Integer> baseBox = StartPanel.combo(StartPanel.BASE_OPTIONS, 100);
     private final JComboBox<Integer> taiBox = StartPanel.combo(StartPanel.TAI_OPTIONS, 20);
@@ -185,6 +187,8 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
         StartPanel.addRow(right, c, "補位電腦等級", StartPanel.levelRow(levelBoxes));
         StartPanel.addRow(right, c, "等待秒數", waitSpinner);
         StartPanel.addRow(right, c, "電腦速度", speedBox);
+        expertBox.setToolTipText("房間裡每個人都照專家模式打");
+        StartPanel.addRow(right, c, "專家模式", expertBox);
         addWide(right, c, payWarning, 2);
         addWide(right, c, createButton, 4);
         for (JComboBox<Integer> box : List.of(chipBox, baseBox, taiBox)) {
@@ -295,6 +299,7 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
         roomTable.getTableHeader().setResizingAllowed(false);
         roomTable.getTableHeader().setDefaultRenderer(new HeaderRenderer());
         roomTable.setDefaultRenderer(Object.class, new CellRenderer());
+        roomTable.getColumnModel().getColumn(0).setCellRenderer(new NameRenderer());
         roomTable.setForeground(Theme.TEXT);
         roomTable.setBackground(Theme.PANEL_LIGHT);
         roomTable.setSelectionForeground(Color.WHITE);
@@ -433,7 +438,7 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
                 (Integer) taiBox.getSelectedItem(),
                 levelBoxes.stream().map(box -> (BotLevel) box.getSelectedItem()).collect(Collectors.toList()),
                 (Integer) waitSpinner.getValue(), (GameSpeed) speedBox.getSelectedItem(),
-                roomNameField.getText().strip(), privateBox.isSelected());
+                roomNameField.getText().strip(), privateBox.isSelected(), expertBox.isSelected());
     }
 
     @Override
@@ -515,7 +520,40 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
                 return null;
             }
             RoomListing room = ((RoomTableModel) getModel()).get(row);
-            return room.name() + "　房主 " + room.host() + "　電腦速度" + room.settings().speed().label();
+            return room.name() + "　房主 " + room.host() + "　電腦速度" + room.settings().speed().label()
+                    + (room.settings().expert() ? "　專家模式" : "");
+        }
+    }
+
+    /** 房間名稱那一格：專家模式的房間在名稱右邊標「專家」，名稱太長時只截名稱，標記一直看得到。 */
+    private static final class NameRenderer extends JPanel implements TableCellRenderer {
+        private final CellRenderer name = new CellRenderer();
+        private final JLabel badge = new JLabel("專家");
+        private final JPanel badgeHolder = new JPanel(new GridBagLayout());
+
+        NameRenderer() {
+            super(new BorderLayout());
+            badge.setOpaque(true);
+            badge.setForeground(Color.WHITE);
+            badge.setBackground(Theme.RED);
+            badge.setBorder(BorderFactory.createEmptyBorder(1, 5, 1, 5));
+            badgeHolder.setOpaque(false);
+            badgeHolder.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 6));
+            badgeHolder.add(badge);
+            add(name, BorderLayout.CENTER);
+            add(badgeHolder, BorderLayout.EAST);
+        }
+
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean selected, boolean focused,
+                                                       int row, int column) {
+            name.getTableCellRendererComponent(table, value, selected, focused, row, column);
+            badge.setFont(table.getFont().deriveFont(Font.BOLD, table.getFont().getSize2D() * 0.8f));
+            badgeHolder.setVisible(((RoomTableModel) table.getModel()).get(row).settings().expert());
+            setBackground(name.getBackground());
+            // 同一欄的大小不變，標記出現或消失時要自己重新排
+            invalidate();
+            return this;
         }
     }
 

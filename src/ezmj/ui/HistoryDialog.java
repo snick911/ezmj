@@ -144,7 +144,8 @@ final class HistoryDialog extends JDialog {
 
     private void addRound(GridTable table, RoundRecord record, int running) {
         RoundResult result = record.result();
-        List<String> cells = new ArrayList<>(List.of(String.valueOf(record.number()), windText(record), resultText(result),
+        List<String> cells = new ArrayList<>(List.of(String.valueOf(record.number()), windText(game, record),
+                resultText(game, result),
                 result.isDrawnGame() ? "—" : String.valueOf(result.score().totalTai())));
         for (int seat = 0; seat < SEATS; seat++) {
             cells.add(ResultDialog.money(record.deltas()[seat]));
@@ -176,12 +177,13 @@ final class HistoryDialog extends JDialog {
         label.setForeground(ResultDialog.moneyColor(amount));
     }
 
-    private String windText(RoundRecord record) {
+    /** 例如「東風 莊王小明 連2」；結果圖的 PDF 也用。 */
+    static String windText(GameView game, RoundRecord record) {
         return Tile.windName(record.roundWind()) + "風 莊" + game.player(record.dealer()).name()
                 + (record.streak() > 0 ? " 連" + record.streak() : "");
     }
 
-    private String resultText(RoundResult result) {
+    static String resultText(GameView game, RoundResult result) {
         if (result.isDrawnGame()) {
             return "流局";
         }
@@ -197,7 +199,7 @@ final class HistoryDialog extends JDialog {
     }
 
     /** 滑鼠提示裡的牌型明細；流局沒有。 */
-    private static String scoreText(RoundResult result) {
+    static String scoreText(RoundResult result) {
         if (result.isDrawnGame()) {
             return null;
         }

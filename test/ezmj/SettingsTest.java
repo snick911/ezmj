@@ -182,14 +182,13 @@ final class SettingsTest {
                     "喊條的不加快、不太大聲，女聲才聽得清楚");
         });
 
-        test("條子的喊法：自己的照設定，別人照名字，同一個名字每次都一樣", () -> {
-            eq(BambooCall.TIAO, new AppSettings().bambooCall(), "預設喊條");
-            eq(BambooCall.TIAO, loadText("bambooCall=ROBOT\n").bambooCall(), "不認得");
+        test("條子的喊法：自己一律喊條、不能設定，別人照名字，同一個名字每次都一樣", () -> {
             Path file = Files.createTempDirectory("ezmj-settings").resolve("settings.properties");
-            AppSettings settings = new AppSettings();
-            settings.setBambooCall(BambooCall.SUO);
+            Files.writeString(file, "bambooCall=SUO\nwaitSeconds=7\n");
+            AppSettings settings = AppSettings.load(file);
+            eq(7, settings.waitSeconds(), "以前存的喊索讀得進來，其他設定照舊");
             settings.save(file);
-            eq(BambooCall.SUO, AppSettings.load(file).bambooCall(), "讀回來");
+            check(!Files.readString(file).contains("bambooCall"), "存檔不再寫條子的喊法");
             eq(BambooCall.forName("阿土"), BambooCall.forName("阿土"), "同一個名字");
             Set<BambooCall> calls = new HashSet<>();
             for (String name : List.of("陳小明", "林雅婷", "黃阿土", "張淑芬", "李國強", "王美玲", "吳志明", "劉佳穎")) {

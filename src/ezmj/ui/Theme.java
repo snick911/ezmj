@@ -1,9 +1,12 @@
 package ezmj.ui;
 
+import java.awt.AlphaComposite;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Container;
 import java.awt.Font;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
 import java.awt.GraphicsEnvironment;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -26,6 +29,8 @@ final class Theme {
     static final Color GOLD = new Color(0xE8, 0xC0, 0x5A);
     static final Color RED = new Color(0xC9, 0x3A, 0x32);
     static final Color BUTTON = new Color(0x2C, 0x6E, 0x58);
+    /** 半透明按鈕平常的不透明度。 */
+    private static final float TRANSLUCENT_ALPHA = .5f;
 
     private static final String FAMILY = pickFamily(Font.DIALOG,
             "Microsoft JhengHei", "PingFang TC", "Noto Sans CJK TC", "Noto Sans TC");
@@ -117,6 +122,32 @@ final class Theme {
         button.setBackground(background);
         button.setFocusPainted(false);
         button.setBorder(BorderFactory.createEmptyBorder(8, 18, 8, 18));
+        return button;
+    }
+
+    /** 半透明的按鈕：可以用、但不一定要按的選項。滑鼠移上去時變成不透明，按下時顏色變深。 */
+    static JButton translucentButton(String text, Color background) {
+        JButton button = new JButton(text) {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                float alpha = getModel().isRollover() || getModel().isPressed() ? 1f : TRANSLUCENT_ALPHA;
+                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
+                g2.setColor(getModel().isPressed() ? getBackground().darker() : getBackground());
+                g2.fillRect(0, 0, getWidth(), getHeight());
+                super.paintComponent(g2);
+                g2.dispose();
+            }
+        };
+        button.setFont(font(Font.BOLD, 16f));
+        button.setForeground(Color.WHITE);
+        button.setBackground(background);
+        button.setFocusPainted(false);
+        button.setBorder(BorderFactory.createEmptyBorder(8, 18, 8, 18));
+        // 底色自己畫，才能半透明
+        button.setOpaque(false);
+        button.setContentAreaFilled(false);
+        button.setRolloverEnabled(true);
         return button;
     }
 }

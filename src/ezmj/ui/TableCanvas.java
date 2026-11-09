@@ -56,6 +56,26 @@ final class TableCanvas extends JComponent {
     static final int SELF_DRAW_BANNER_MS = 1400;
     /** 大胡，見 RoundResult.isBigWin。 */
     static final int BIG_WIN_BANNER_MS = 2400;
+    /** 連莊時擲骰子前「連莊」大字演多久，演完才擲骰子。 */
+    static final int STREAK_BANNER_MS = 1500;
+    /** 胡牌時贏家的手牌從左到右一張一張推倒翻開：每張隔這麼久開始，每張翻這麼久。 */
+    private static final int PUSH_INTERVAL_MS = 35;
+    private static final int PUSH_TILE_MS = 240;
+    /** 胡的那張翻開之後，外面的金光擴散多久。 */
+    private static final int WIN_GLOW_MS = 650;
+    /** 結算時籌碼從付錢的人飛向贏家、各家跳出輸贏，整段演這麼久。 */
+    static final int CHIPS_MS = 1200;
+    /** 一顆籌碼飛多久；第一顆落地時贏家的數字跳出來，計分表開始滾。 */
+    static final int CHIP_FLIGHT_MS = 450;
+    /** 計分表的籌碼從舊的數目滾到新的數目要多久。 */
+    static final int CHIP_ROLL_MS = 550;
+    /** 每一家付錢的人飛幾顆籌碼，一顆隔多久。 */
+    static final int CHIPS_PER_PAYER = 5;
+    static final int CHIP_GAP_MS = 60;
+    /** 不同付錢的人的籌碼錯開這麼久起飛。 */
+    private static final int PAYER_GAP_MS = 40;
+    private static final Color CHIP_DARK = new Color(0xB0, 0x84, 0x2A);
+    private static final Color CHIP_RIM = new Color(0x7A, 0x55, 0x12);
     private static final int SPARKS = 40;
     private static final double GOLDEN_ANGLE = 2.39996323;
     private static final Color BIG_WIN_TOP = new Color(0xC9, 0x3A, 0x32, 235);
@@ -103,8 +123,12 @@ final class TableCanvas extends JComponent {
     private static final double WALL_TOP = 103;
     private static final double WALL_DEPTH = 17;
     private static final int DISCARD_COLUMNS = 8;
-    private static final double DISCARD_W = 25;
-    private static final double DISCARD_H = 33;
+    /**
+     * 棄牌的大小。一排的一半寬（DISCARD_COLUMNS × DISCARD_W / 2）要小於 DISCARD_TOP，
+     * 相鄰兩家的棄牌在角落才不會疊在一起，所以 8 張一排時寬最多到 30。
+     */
+    private static final double DISCARD_W = 30;
+    private static final double DISCARD_H = 40;
     /** 棄牌排在牌牆外面。 */
     private static final double DISCARD_TOP = 123;
     private static final double FLOWER_W = 22;
@@ -118,6 +142,8 @@ final class TableCanvas extends JComponent {
     /** 手牌列至少要留這麼多格，張數少的時候牌也不會忽大忽小。 */
     private static final double MIN_ROW_SLOTS = 18;
     private static final double MAX_TABLE_SCALE = 1.25;
+    /** 麻將放到很大、又留不下三排棄牌時，中央最多縮到這麼小，棄牌才不會壓到自己的手牌。 */
+    private static final double MIN_TABLE_SCALE = .9;
     private static final int DISCARD_ROWS_TO_FIT = 3;
 
     private record HandHit(Rectangle bounds, Tile tile) {
@@ -162,8 +188,8 @@ final class TableCanvas extends JComponent {
         }
     }
 
-    /** 大字的樣子：吃碰槓、補花與流局只有字，三種胡牌在字的後面各有不同的效果。 */
-    enum Style { PLAIN, WIN, SELF_DRAW, BIG_WIN }
+    /** 大字的樣子：吃碰槓、補花與流局只有字，三種胡牌在字的後面各有不同的效果，連莊和胡一樣有往外擴散的金圈。 */
+    enum Style { PLAIN, WIN, SELF_DRAW, BIG_WIN, STREAK }
 
     /** 跳出來的大字。位置以牌桌中心為原點。detail 是大胡時寫在字下面的台數，其他時候是 null。 */
     record Banner(String text, String detail, double x, double y, double size, Color color, Style style,
@@ -184,6 +210,8 @@ final class TableCanvas extends JComponent {
     private Set<Tile> pickable;
     /** 已經選好的第一張牌；吃牌還要再選一張時才有。 */
     private Tile picked;
+    /** 選牌中能點的牌加上金框。 */
+    private boolean markPickable;
     private Consumer<Tile> onPick;
     private int hover = -1;
     private long frameNow;
@@ -196,6 +224,16 @@ final class TableCanvas extends JComponent {
     private BufferedImage felt;
     /** 各座位報聽動畫開始的時間，0 表示沒有在演。 */
     private final long[] listenStart = new long[4];
+    /** 專家模式：棄牌每家只畫最後一張，中央不寫剩幾張。 */
+    private boolean expert;
+    /** 正在推倒手牌的贏家，沒有是 -1；pushStart 是胡牌的時間。 */
+    private int pushSeat = -1;
+    private long pushStart;
+    /** 結算籌碼開始飛的時間，0 表示沒有在演；chipDeltas 是各家的輸贏。 */
+    private long chipStart;
+    private int[] chipDeltas;
+    /** 每家剛打出牌時牌河有幾張，-1 表示這局還沒看到他打牌。牌河張數不一樣了，就是最後那張被吃碰槓胡走了。 */
+    private final int[] shownDiscards = new int[4];
     /** 吃碰槓後要打牌，手牌外框亮起。 */
     private boolean discardPrompt;
     private long promptStart;
@@ -232,10 +270,27 @@ final class TableCanvas extends JComponent {
         flights.clear();
         banners.clear();
         Arrays.fill(listenStart, 0);
+        Arrays.fill(shownDiscards, -1);
+        pushSeat = -1;
+        chipStart = 0;
+        chipDeltas = null;
         discardPrompt = false;
         dealStart = 0;
         lastEvent = null;
         repaint();
+    }
+
+    /** 專家模式：棄牌每家只畫最後一張，畫在牌河的第一格，看不出打了幾張；中央不寫剩幾張。 */
+    void setExpert(boolean on) {
+        expert = on;
+        repaint();
+    }
+
+    /** 有沒有動畫都會收到。打出牌時記下牌河的張數，之後少了就是被拿走了，專家模式就不再畫它。 */
+    void noteEvent(RoundEvent event) {
+        if (event.type() == RoundEvent.Type.DISCARD && round != null) {
+            shownDiscards[event.seat()] = round.player(event.seat()).discards().size();
+        }
     }
 
     /** 吃碰槓之後要打一張牌：自己的手牌外框一明一暗，直到打出牌。 */
@@ -252,12 +307,24 @@ final class TableCanvas extends JComponent {
         repaint();
     }
 
-    /** 先擲骰子，再從牌牆一批一批發牌。牌局其實已經發好了，這裡只是讓牌一批一批出現。 */
-    void animateDeal() {
-        dealStart = System.nanoTime();
-        frameNow = dealStart;
+    /**
+     * 先擲骰子，再從牌牆一批一批發牌。牌局其實已經發好了，這裡只是讓牌一批一批出現。
+     * streak 大於 0 是連莊：先跳出「連莊」與「連 N 拉 N」的大字，演完才擲骰子，這段時間手牌還沒發。
+     */
+    void animateDeal(int streak) {
+        long now = System.nanoTime();
+        if (streak > 0) {
+            addCenterBanner("連莊", "連" + streak + "拉" + streak, Theme.GOLD, Style.STREAK, STREAK_BANNER_MS);
+        }
+        dealStart = now + dealLeadMs(streak) * 1_000_000L;
+        frameNow = now;
         frameTimer.start();
         repaint();
+    }
+
+    /** 擲骰子前要先演多久：連莊時是「連莊」大字的時間，其他時候是 0。 */
+    static int dealLeadMs(int streak) {
+        return streak > 0 ? STREAK_BANNER_MS : 0;
     }
 
     /** 從擲骰子開始過了多久。 */
@@ -368,9 +435,11 @@ final class TableCanvas extends JComponent {
             case WIN:
             case SELF_WIN:
                 addWinBanner(event.type() == RoundEvent.Type.SELF_WIN);
+                pushSeat = event.seat();
+                pushStart = System.nanoTime();
                 break;
             case LISTEN:
-                addSeatBanner(event.seat(), "報聽");
+                addSeatBanner(event.seat(), "聽牌");
                 listenStart[event.seat()] = System.nanoTime();
                 break;
             default:
@@ -443,10 +512,26 @@ final class TableCanvas extends JComponent {
             }
             listenAnimating |= listenStart[seat] != 0;
         }
-        if (flights.isEmpty() && banners.isEmpty() && !dealing() && !listenAnimating && !discardPrompt) {
+        if (flights.isEmpty() && banners.isEmpty() && !dealing() && !listenAnimating && !discardPrompt
+                && !pushing() && !settling()) {
             frameTimer.stop();
         }
         repaint();
+    }
+
+    /** 從胡牌起過了幾毫秒。 */
+    private double pushElapsedMs() {
+        return (frameNow - pushStart) / 1e6;
+    }
+
+    /** 推倒手牌與胡的那張的金光還在演。最多 17 張加上一張分開的。 */
+    private boolean pushing() {
+        return pushSeat >= 0 && pushElapsedMs() < 18 * PUSH_INTERVAL_MS + PUSH_TILE_MS + WIN_GLOW_MS;
+    }
+
+    /** 結算的籌碼還在飛，或數字還沒淡掉；還沒開始飛也算。 */
+    private boolean settling() {
+        return chipStart != 0 && (frameNow - chipStart) / 1e6 < CHIPS_MS;
     }
 
     /** 報聽動畫的進度，0 到 1；沒有在演時是 1。 */
@@ -458,13 +543,17 @@ final class TableCanvas extends JComponent {
         return Math.min(getWidth(), getHeight()) / 720.0;
     }
 
-    /** 中央方框與棄牌區跟著牌放大，但至少要留得下三排棄牌，不能撞到自己的手牌。 */
+    /**
+     * 中央方框與棄牌區跟著牌放大，但至少要留得下三排棄牌，不能撞到自己的手牌。
+     * 留不下時可以比原本小一點，最小到 MIN_TABLE_SCALE。
+     */
     private double tableUnit() {
         double unit = unit();
         double handH = rowTileW(0, MIN_ROW_SLOTS) * TILE_RATIO;
         double room = (getHeight() / 2.0 - handH - 8 * unit) / unit;
         double fit = room / (DISCARD_TOP + DISCARD_ROWS_TO_FIT * DISCARD_H);
-        return unit * Math.max(1, Math.min(Math.min(Theme.tileScale(), MAX_TABLE_SCALE), fit));
+        double grow = Math.min(Theme.tileScale(), MAX_TABLE_SCALE);
+        return unit * Math.max(MIN_TABLE_SCALE, Math.min(Math.max(1, grow), fit));
     }
 
     private double preferredTileW(int seat) {
@@ -543,7 +632,8 @@ final class TableCanvas extends JComponent {
                 }
             }
         }
-        int index = round.player(seat).discards().size() - 1;
+        // 專家模式只畫最後一張，放在第一格
+        int index = expert ? 0 : round.player(seat).discards().size() - 1;
         Point2D.Double to = discardCenter(index);
         Point2D from = toTable(seat, fromX, fromY);
         Point2D target = toTable(seat, to.x, to.y);
@@ -566,7 +656,7 @@ final class TableCanvas extends JComponent {
             meldX += earlier.tiles().size() * row.step() + row.gap();
         }
 
-        Point2D.Double slot = discardCenter(round.player(event.from()).discards().size());
+        Point2D.Double slot = discardCenter(expert ? 0 : round.player(event.from()).discards().size());
         Point2D from = toTable(event.from(), slot.x, slot.y);
         Point2D to = toTable(seat, meldX + tileIndex * row.step() + row.tileW() / 2, row.y() + row.tileH() / 2);
         double turn = Math.IEEEremainder(seatAngle(seat) - seatAngle(event.from()), Math.PI * 2);
@@ -629,8 +719,132 @@ final class TableCanvas extends JComponent {
         addSeatBanner(seat, text, 58 * unit(), CLAIM_BANNER_MS);
     }
 
+    /**
+     * 結算：delayMs 之後籌碼從付錢的人飛向贏的人，每家付錢的人 CHIPS_PER_PAYER 顆，各家跳出「+1200」「−400」。
+     * 付錢的人的數字一開始就出現，贏的人的數字等第一顆籌碼落地才跳出來。
+     */
+    void animateSettlement(int[] deltas, int delayMs) {
+        long now = System.nanoTime();
+        chipDeltas = deltas.clone();
+        chipStart = now + delayMs * 1_000_000L;
+        frameNow = now;
+        frameTimer.start();
+        repaint();
+    }
+
+    /** 有沒有人的籌碼變了；流局或沒有輸贏時不用演籌碼。 */
+    static boolean moneyMoved(int[] deltas) {
+        return Arrays.stream(deltas).anyMatch(delta -> delta != 0);
+    }
+
+    /** 胡牌大字演到快完的時候籌碼開始飛。 */
+    static int chipsStartMs(RoundResult result) {
+        return endBannerMs(result) * 4 / 5;
+    }
+
+    /** 一局結束要演多久才跳出結果：胡牌大字；有人輸贏的話一直到籌碼飛完、數字跳完。 */
+    static int endAnimationMs(RoundResult result, int[] deltas) {
+        return moneyMoved(deltas) ? chipsStartMs(result) + CHIPS_MS : endBannerMs(result);
+    }
+
+    /** 每家跳出大字、籌碼起降的地方：中央方框和這家手牌之間，以牌桌中心為原點。 */
+    private Point2D seatAnchor(int seat) {
+        return toTable(seat, 0, halfDepth(seat) * .62);
+    }
+
+    private void paintSettlement(Graphics2D g) {
+        if (chipStart == 0 || chipDeltas == null) {
+            return;
+        }
+        double ms = (frameNow - chipStart) / 1e6;
+        if (ms < 0 || ms >= CHIPS_MS) {
+            return;
+        }
+        double unit = tableUnit();
+        int pair = 0;
+        for (int payer = 0; payer < 4; payer++) {
+            if (chipDeltas[payer] >= 0) {
+                continue;
+            }
+            for (int gainer = 0; gainer < 4; gainer++) {
+                if (chipDeltas[gainer] <= 0) {
+                    continue;
+                }
+                Point2D from = seatAnchor(payer);
+                Point2D to = seatAnchor(gainer);
+                for (int chip = 0; chip < CHIPS_PER_PAYER; chip++) {
+                    double t = (ms - pair * PAYER_GAP_MS - chip * CHIP_GAP_MS) / CHIP_FLIGHT_MS;
+                    if (t < 0 || t >= 1) {
+                        continue;
+                    }
+                    double eased = t < .5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
+                    double x = from.getX() + (to.getX() - from.getX()) * eased;
+                    double y = from.getY() + (to.getY() - from.getY()) * eased - Math.sin(Math.PI * t) * 70 * unit;
+                    paintChip(g, x, y, 11 * unit);
+                }
+                pair++;
+            }
+        }
+        for (int seat = 0; seat < 4; seat++) {
+            int delta = chipDeltas[seat];
+            if (delta != 0) {
+                paintAmount(g, seat, delta, ms - (delta > 0 ? CHIP_FLIGHT_MS : 0), unit);
+            }
+        }
+    }
+
+    /** 一顆金色籌碼：底下有影子，邊緣深色，裡面一圈白色虛線。 */
+    private static void paintChip(Graphics2D g, double x, double y, double r) {
+        g.setColor(new Color(0, 0, 0, 70));
+        g.fill(new Ellipse2D.Double(x - r + r * .15, y - r + r * .3, r * 2, r * 2));
+        g.setPaint(new RadialGradientPaint(new Point2D.Double(x - r * .35, y - r * .35), (float) (r * 1.6),
+                new float[] {0f, 1f}, new Color[] {Theme.GOLD.brighter(), CHIP_DARK}));
+        g.fill(new Ellipse2D.Double(x - r, y - r, r * 2, r * 2));
+        g.setColor(CHIP_RIM);
+        g.setStroke(new BasicStroke((float) Math.max(1, r * .14)));
+        g.draw(new Ellipse2D.Double(x - r, y - r, r * 2, r * 2));
+        double inner = r * .62;
+        g.setColor(new Color(255, 255, 255, 170));
+        g.setStroke(new BasicStroke((float) Math.max(1, r * .16), BasicStroke.CAP_BUTT, BasicStroke.JOIN_ROUND, 10,
+                new float[] {(float) (r * .5), (float) (r * .4)}, 0));
+        g.draw(new Ellipse2D.Double(x - inner, y - inner, inner * 2, inner * 2));
+    }
+
+    /**
+     * 這家的輸贏數字，贏是金色「+」、輸是紅色「−」，黑邊才看得清楚。shownMs 是跳出來之後過了多久，
+     * 還沒到就不畫；贏的人跳出來時先放大再彈回。之後慢慢往上飄，最後一小段淡掉。
+     */
+    private void paintAmount(Graphics2D g, int seat, int delta, double shownMs, double unit) {
+        if (shownMs < 0) {
+            return;
+        }
+        double life = CHIPS_MS - (delta > 0 ? CHIP_FLIGHT_MS : 0);
+        double t = Math.min(1, shownMs / life);
+        double fadeIn = Math.min(1, shownMs / 120);
+        double fadeOut = t > .85 ? (1 - t) / .15 : 1;
+        double pop = delta > 0 && t < .2 ? 1.6 - .6 * easeOut(t / .2) : 1;
+        Point2D at = seatAnchor(seat);
+        double rise = 26 * unit * easeOut(t);
+        String text = (delta > 0 ? "+" : "−") + Math.abs(delta);
+        Font font = Theme.fixedFont(Font.BOLD, (float) (30 * unit * pop));
+        FontMetrics metrics = g.getFontMetrics(font);
+        float x = (float) (at.getX() - metrics.stringWidth(text) / 2.0);
+        float y = (float) (at.getY() - rise + metrics.getAscent() / 2.0);
+        Composite saved = g.getComposite();
+        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) Math.max(0, fadeIn * fadeOut)));
+        g.setFont(font);
+        g.setColor(new Color(0, 0, 0, 200));
+        float edge = (float) Math.max(1.5, 2 * unit);
+        for (float[] offset : new float[][] {{-edge, 0}, {edge, 0}, {0, -edge}, {0, edge}}) {
+            g.drawString(text, x + offset[0], y + offset[1]);
+        }
+        g.setColor(delta > 0 ? Theme.GOLD : TablePanel.DealerBadge.RED);
+        g.drawString(text, x, y);
+        g.setComposite(saved);
+    }
+
     private void addSeatBanner(int seat, String text, double size, int durationMs) {
-        Point2D at = toTable(seat, 0, halfDepth(seat) * .62);
+        Point2D at = seatAnchor(seat);
         banners.add(new Banner(text, null, at.getX(), at.getY(), size, Theme.GOLD, Style.PLAIN, System.nanoTime(),
                 durationMs));
     }
@@ -657,15 +871,20 @@ final class TableCanvas extends JComponent {
         discardEnabled = enabled;
         pickable = null;
         picked = null;
+        markPickable = false;
         hover = -1;
         repaint();
     }
 
-    /** 開始選牌：只有 tiles 裡的牌能點，其他手牌蓋上遮罩。first 是已經選好、要留著不蓋的牌。 */
-    void startPick(Set<Tile> tiles, Tile first, Consumer<Tile> onPick) {
+    /**
+     * 開始選牌：只有 tiles 裡的牌能點，其他手牌蓋上遮罩。first 是已經選好、要留著不蓋的牌。
+     * marked 時能點的牌另外加上金框。
+     */
+    void startPick(Set<Tile> tiles, Tile first, Consumer<Tile> onPick, boolean marked) {
         discardEnabled = false;
         pickable = tiles;
         picked = first;
+        markPickable = marked;
         this.onPick = onPick;
         hover = -1;
         repaint();
@@ -722,6 +941,7 @@ final class TableCanvas extends JComponent {
             for (Banner banner : banners) {
                 paintBanner(g, banner, Math.min(1, Math.max(0, banner.progress(frameNow))));
             }
+            paintSettlement(g);
         }
         g.dispose();
     }
@@ -797,6 +1017,7 @@ final class TableCanvas extends JComponent {
         g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
         switch (banner.style()) {
             case WIN:
+            case STREAK:
                 paintRings(g, size, t);
                 break;
             case SELF_DRAW:
@@ -1004,6 +1225,10 @@ final class TableCanvas extends JComponent {
             return 0;
         }
         double t = diceElapsedMs();
+        if (t < 0) {
+            // 連莊的大字還在演，骰子還沒丟出來
+            return 0;
+        }
         return t <= DICE_MS ? 1 : Math.max(0, 1 - (t - DICE_MS) / DICE_FADE_MS);
     }
 
@@ -1138,6 +1363,18 @@ final class TableCanvas extends JComponent {
         double startY = DISCARD_TOP * unit;
         List<Tile> discards = player.discards();
         boolean lastHidden = flying(Slot.DISCARD, seat, -1);
+        if (expert) {
+            // 只畫最後打出、還沒被拿走的那張，放在第一格
+            int count = discards.size();
+            if (count == 0 || count != shownDiscards[seat] || lastHidden) {
+                return;
+            }
+            TilePainter.paintFace(g, discards.get(count - 1), startX, startY, tileW - 1, tileH - 1);
+            if (round.phase() == Round.Phase.CLAIMS && !round.isRobbing() && round.discarder() == seat) {
+                TilePainter.paintHighlight(g, startX, startY, tileW - 1, tileH - 1, Theme.RED);
+            }
+            return;
+        }
         for (int i = 0; i < discards.size(); i++) {
             if (lastHidden && i == discards.size() - 1) {
                 break;
@@ -1204,17 +1441,29 @@ final class TableCanvas extends JComponent {
             }
             x += gap;
         }
+        // 有動畫時贏家的手牌在胡牌時推倒翻開，沒有動畫就直接翻開
+        boolean pushed = finished && seat == pushSeat && !dealing();
         int index = 0;
         for (Tile tile : hand) {
             // 被下一張疊住的部分點不到，點擊範圍只算露出來的寬度
             double hitW = index == hand.size() - 1 ? tileW : step;
-            paintDealtTile(g, seat, tile, index++, x, y, tileW, tileH, hitW, faceUp);
+            if (pushed) {
+                paintPushedTile(g, seat, tile, index++, x, y, tileW, tileH, false);
+            } else {
+                paintDealtTile(g, seat, tile, index++, x, y, tileW, tileH, hitW, faceUp);
+            }
             x += step;
         }
         if (separated != null) {
             x += step * .4;
-            if (!flying(Slot.DRAWN, seat, -1)) {
+            if (pushed) {
+                paintPushedTile(g, seat, separated, index, x, y, tileW, tileH, true);
+            } else if (!flying(Slot.DRAWN, seat, -1)) {
                 paintDealtTile(g, seat, separated, index, x, y, tileW, tileH, tileW, faceUp);
+                if (finished) {
+                    // 一局結束時分開的那張就是胡的牌
+                    TilePainter.paintHighlight(g, x, y, tileW, tileH, Theme.GOLD);
+                }
             } else if (seat == 0) {
                 // 還在飛也要點得到，真人可以馬上打掉
                 addHit(x, y, tileW, tileH, separated);
@@ -1290,6 +1539,61 @@ final class TableCanvas extends JComponent {
         }
     }
 
+    /**
+     * 胡牌時贏家的手牌從左到右一張一張推倒：先往上抬一點、壓扁，再翻成牌面落回原位。
+     * 別家原本是牌背，翻過來才看得到；自己的本來就是牌面，看起來是整排往前倒。
+     * 胡的那張最後翻，翻開後有金框，外面一圈金光擴散。
+     */
+    private void paintPushedTile(Graphics2D g, int seat, Tile tile, int index, double x, double y, double w, double h,
+                                 boolean winTile) {
+        double t = (pushElapsedMs() - index * PUSH_INTERVAL_MS) / PUSH_TILE_MS;
+        if (t >= 1) {
+            TilePainter.paintFace(g, tile, x, y, w, h);
+            if (winTile) {
+                TilePainter.paintHighlight(g, x, y, w, h, Theme.GOLD);
+                double glow = (pushElapsedMs() - index * PUSH_INTERVAL_MS - PUSH_TILE_MS) / WIN_GLOW_MS;
+                if (glow < 1) {
+                    paintWinGlow(g, x + w / 2, y + h / 2, w, glow);
+                }
+            }
+            return;
+        }
+        boolean faceBefore = seat == 0;
+        if (t <= 0) {
+            if (faceBefore) {
+                TilePainter.paintFace(g, tile, x, y, w, h);
+            } else {
+                TilePainter.paintBack(g, x, y, w, h);
+            }
+            return;
+        }
+        // 前半壓扁到看不見，後半從牌面撐開；整段抬起再落下
+        boolean secondHalf = t >= .5;
+        double squash = Math.max(.04, secondHalf ? (t - .5) / .5 : 1 - t / .5);
+        double lift = Math.sin(Math.PI * t) * h * .18;
+        AffineTransform saved = g.getTransform();
+        g.translate(x + w / 2, y + h / 2 - lift);
+        g.scale(1, squash);
+        g.translate(-(x + w / 2), -(y + h / 2));
+        if (secondHalf || faceBefore) {
+            TilePainter.paintFace(g, tile, x, y, w, h);
+        } else {
+            TilePainter.paintBack(g, x, y, w, h);
+        }
+        g.setTransform(saved);
+    }
+
+    /** 胡的那張翻開後，一圈金光往外擴散、變淡。t 是 0 到 1。 */
+    private static void paintWinGlow(Graphics2D g, double cx, double cy, double w, double t) {
+        double radius = w * (.6 + 1.1 * easeOut(t));
+        Composite saved = g.getComposite();
+        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) (.85 * (1 - t))));
+        g.setColor(Theme.GOLD);
+        g.setStroke(new BasicStroke((float) Math.max(1.5, w * .1 * (1 - t))));
+        g.draw(new Ellipse2D.Double(cx - radius, cy - radius, radius * 2, radius * 2));
+        g.setComposite(saved);
+    }
+
     /** 剛摸到的牌（或胡的那張）與手牌分開顯示。 */
     private Tile separatedTile(int seat, boolean finished) {
         if (finished) {
@@ -1303,12 +1607,14 @@ final class TableCanvas extends JComponent {
                                double hitW, boolean faceUp) {
         double drawY = y;
         boolean masked = false;
+        boolean marked = false;
         if (seat == 0) {
             int index = hits.size();
             // 相同的牌只抬起第一張，看起來才是選了一張
             boolean chosen = tile.equals(picked) && hits.stream().noneMatch(hit -> hit.tile().equals(picked));
             addHit(x, y, hitW, h, tile);
             masked = pickable != null && !pickable.contains(tile) && !chosen;
+            marked = markPickable && pickable != null && pickable.contains(tile);
             if (chosen || index == hover) {
                 drawY -= h * .16;
             }
@@ -1320,6 +1626,9 @@ final class TableCanvas extends JComponent {
         }
         if (masked) {
             TilePainter.paintMask(g, x, drawY, w, h);
+        }
+        if (marked) {
+            TilePainter.paintHighlight(g, x, drawY, w, h, Theme.GOLD);
         }
     }
 
@@ -1351,26 +1660,51 @@ final class TableCanvas extends JComponent {
         g.setComposite(saved);
     }
 
+    /**
+     * 圈風局風與剩餘張數；連莊時三行一起往上挪，最下面用紅字寫「連 N 拉 N」，和計分表的「莊」同一個紅。
+     * 專家模式不寫剩幾張，其他行往中間靠。
+     */
     private void paintCenterLines(Graphics2D g, double unit, double half) {
+        int streak = round.streak();
+        if (expert) {
+            g.setColor(Theme.GOLD);
+            g.setFont(Theme.font(Font.BOLD, (float) (22 * unit)));
+            fitWidth(g, roundLabel(round), half * 2 - 12 * unit);
+            drawCenteredLine(g, roundLabel(round), (streak > 0 ? -10 : 8) * unit);
+            if (streak > 0) {
+                g.setColor(TablePanel.DealerBadge.RED);
+                g.setFont(Theme.font(Font.BOLD, (float) (16 * unit)));
+                drawCenteredLine(g, "連" + streak + "拉" + streak, 24 * unit);
+            }
+            return;
+        }
         g.setColor(Theme.GOLD);
         g.setFont(Theme.font(Font.BOLD, (float) (22 * unit)));
         String label = roundLabel(round);
-        // 字體調大時四個字會超出方框，縮回框內
-        int labelWidth = g.getFontMetrics().stringWidth(label);
-        double maxWidth = half * 2 - 12 * unit;
-        if (labelWidth > maxWidth) {
-            g.setFont(g.getFont().deriveFont((float) (g.getFont().getSize2D() * maxWidth / labelWidth)));
-        }
-        drawCenteredLine(g, label, -14 * unit);
+        fitWidth(g, label, half * 2 - 12 * unit);
+        drawCenteredLine(g, label, (streak > 0 ? -26 : -14) * unit);
         g.setColor(Theme.TEXT);
         g.setFont(Theme.font(Font.PLAIN, (float) (16 * unit)));
-        drawCenteredLine(g, "剩餘 " + (round.liveTiles() + undealtTiles()) + " 張", 22 * unit);
+        drawCenteredLine(g, "剩餘 " + (round.liveTiles() + undealtTiles()) + " 張", (streak > 0 ? 8 : 22) * unit);
+        if (streak > 0) {
+            g.setColor(TablePanel.DealerBadge.RED);
+            g.setFont(Theme.font(Font.BOLD, (float) (16 * unit)));
+            drawCenteredLine(g, "連" + streak + "拉" + streak, 40 * unit);
+        }
     }
 
     /** 圈風加局風，例如「東風東局」「南風西局」。舊服務器沒有送局風時是原本的「東風圈」。牌桌中間與右側都用這個。 */
     static String roundLabel(RoundView round) {
         int hand = round.handWind();
         return Tile.windName(round.roundWind()) + "風" + (hand >= 1 && hand <= 4 ? Tile.windName(hand) + "局" : "圈");
+    }
+
+    /** 字體調大時圈風局風四個字會超出方框，字型縮到放得下。 */
+    private static void fitWidth(Graphics2D g, String text, double maxWidth) {
+        int width = g.getFontMetrics().stringWidth(text);
+        if (width > maxWidth) {
+            g.setFont(g.getFont().deriveFont((float) (g.getFont().getSize2D() * maxWidth / width)));
+        }
     }
 
     private static void drawCenteredLine(Graphics2D g, String text, double y) {

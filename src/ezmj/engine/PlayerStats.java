@@ -2,6 +2,7 @@ package ezmj.engine;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.Collections;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -13,7 +14,9 @@ import ezmj.model.PropertyStore;
 
 /**
  * 真人玩家的長期統計，每局累計。一份總計，再依同桌有哪些電腦等級各一份：
- * 同桌有兩種等級時兩邊都會加，所以各等級的局數加起來會超過總計。存成文字檔，讀不懂的數字當作 0。
+ * 同桌有兩種等級時兩邊都會加，所以各等級的局數加起來會超過總計。
+ * 另外依三家裡最弱的是哪一級各記一份，每局只加一份，用來算「三家都是某等級以上」的成績（段位證照看這個）；
+ * 這份是有段位證照之後才開始記的，以前的局只在總計與同桌等級裡。存成文字檔，讀不懂的數字當作 0。
  */
 public final class PlayerStats {
 
@@ -23,6 +26,7 @@ public final class PlayerStats {
     private static final int FORMAT = 1;
     private static final String TOTAL_PREFIX = "total.";
     private static final String LEVEL_PREFIX = "level.";
+    private static final String WEAKEST_PREFIX = "weakest.";
 
     /** 一份累計。比率沒有局數時都是 0。 */
     public static final class Totals {
@@ -126,6 +130,20 @@ public final class PlayerStats {
             }
         }
 
+        private void add(Totals other) {
+            rounds += other.rounds;
+            wins += other.wins;
+            selfDraws += other.selfDraws;
+            dealIns += other.dealIns;
+            drawnGames += other.drawnGames;
+            winTai += other.winTai;
+            bestTai = Math.max(bestTai, other.bestTai);
+            winnings += other.winnings;
+            games += other.games;
+            firstPlaces += other.firstPlaces;
+            placeSum += other.placeSum;
+        }
+
         private void write(Properties values, String prefix) {
             values.setProperty(prefix + "rounds", String.valueOf(rounds));
             values.setProperty(prefix + "wins", String.valueOf(wins));
@@ -165,10 +183,12 @@ public final class PlayerStats {
 
     private final Totals total = new Totals();
     private final Map<BotLevel, Totals> byLevel = new EnumMap<>(BotLevel.class);
+    private final Map<BotLevel, Totals> byWeakest = new EnumMap<>(BotLevel.class);
 
     public PlayerStats() {
         for (BotLevel level : BotLevel.values()) {
             byLevel.put(level, new Totals());
+            byWeakest.put(level, new Totals());
         }
     }
 
@@ -176,8 +196,20 @@ public final class PlayerStats {
         return total;
     }
 
+    /** 同桌有這個等級的局，不管另外兩家是誰。 */
     public Totals against(BotLevel level) {
         return byLevel.get(level);
+    }
+
+    /** 三家都是這個等級以上的局，加起來的一份新的累計。 */
+    public Totals weakestAtLeast(BotLevel level) {
+        Totals sum = new Totals();
+        byWeakest.forEach((weakest, totals) -> {
+            if (weakest.compareTo(level) >= 0) {
+                sum.add(totals);
+            }
+        });
+        return sum;
     }
 
     /** 一局結算完呼叫。 */
@@ -186,6 +218,7 @@ public final class PlayerStats {
         RoundRecord last = history.get(history.size() - 1);
         total.addRound(last);
         session.config().botLevels().stream().distinct().forEach(level -> byLevel.get(level).addRound(last));
+        byWeakest.get(weakest(session)).addRound(last);
     }
 
     /** 整場打完呼叫。 */
@@ -193,6 +226,12 @@ public final class PlayerStats {
         int place = place(session);
         total.addGame(place);
         session.config().botLevels().stream().distinct().forEach(level -> byLevel.get(level).addGame(place));
+        byWeakest.get(weakest(session)).addGame(place);
+    }
+
+    /** 三家電腦裡最弱的等級。 */
+    private static BotLevel weakest(GameSession session) {
+        return Collections.min(session.config().botLevels());
     }
 
     /** 籌碼相同就是同一名。 */
@@ -222,6 +261,7 @@ public final class PlayerStats {
         }
         stats.total.read(values, TOTAL_PREFIX);
         stats.byLevel.forEach((level, totals) -> totals.read(values, LEVEL_PREFIX + level.name() + "."));
+        stats.byWeakest.forEach((level, totals) -> totals.read(values, WEAKEST_PREFIX + level.name() + "."));
         return stats;
     }
 
@@ -234,6 +274,7 @@ public final class PlayerStats {
         values.setProperty(PropertyFiles.FORMAT_KEY, String.valueOf(FORMAT));
         total.write(values, TOTAL_PREFIX);
         byLevel.forEach((level, totals) -> totals.write(values, LEVEL_PREFIX + level.name() + "."));
+        byWeakest.forEach((level, totals) -> totals.write(values, WEAKEST_PREFIX + level.name() + "."));
         store.write(values, file);
     }
 }

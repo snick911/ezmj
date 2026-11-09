@@ -42,6 +42,8 @@ import ezmj.career.CareerProfile;
 import ezmj.career.CareerSlot;
 import ezmj.career.CareerTitle;
 import ezmj.career.Challenge;
+import ezmj.career.Dan;
+import ezmj.career.DanCertificate;
 import ezmj.career.Records;
 import ezmj.engine.Achievement;
 import ezmj.engine.GameSave;
@@ -50,7 +52,6 @@ import ezmj.engine.GameView;
 import ezmj.engine.Round;
 import ezmj.engine.Settlement;
 import ezmj.model.AppSettings;
-import ezmj.model.BambooCall;
 import ezmj.model.BotLevel;
 import ezmj.model.GameConfig;
 import ezmj.model.GameRecord;
@@ -157,6 +158,11 @@ public final class MainFrame extends JFrame {
         }
 
         @Override
+        public void showCertificate() {
+            MainFrame.this.showCertificate();
+        }
+
+        @Override
         public void back() {
             showCareerList();
         }
@@ -190,8 +196,10 @@ public final class MainFrame extends JFrame {
     private OnlineController online;
     private RoomPanel roomPanel;
     private HistoryDialog historyDialog;
+    private CertificateDialog certificateDialog;
     private boolean achievementSaveWarned;
     private boolean statsSaveWarned;
+    private boolean certificateSaveWarned;
     private boolean gameSaveWarned;
     private boolean careerSaveWarned;
     /** 練習牌局有沒有存檔。 */
@@ -201,8 +209,12 @@ public final class MainFrame extends JFrame {
     private Mode mode = Mode.PRACTICE;
     /** 這場已經結束，結果視窗還沒看完。挑戰關卡的任務一確定就結束，不一定打完四圈。 */
     private boolean gameOver;
+    /** 牌桌上這場的等待秒數固定，不能從選單調整：專家模式的修業牌局。 */
+    private boolean waitFixed;
     /** 這場拿到的修業稱號，牌局結束時一起告訴玩家。 */
     private final List<CareerTitle> titlesEarned = new ArrayList<>();
+    /** 這場升到的段位，牌局結束時再說一次最高的那個。 */
+    private Dan danEarned;
     /** 進入的修業檔案；在開始畫面、練習牌局或檔案列表時都是 null。練習牌局時一定是 null。 */
     private CareerSlot careerSlot;
     private CareerProfile career;
@@ -301,10 +313,13 @@ public final class MainFrame extends JFrame {
 
         JMenu statsMenu = topMenu("統計");
         statsMenu.add(menuItem("我的統計", () -> helpDialog.showStats(records().stats(), recordsOwner(), career)));
+        statsMenu.add(menuItem("段位證照", this::showCertificate));
 
         JMenu help = topMenu("說明");
+        help.add(menuItem("遊戲玩法", helpDialog::showGameplay));
         help.add(menuItem("基本規則", helpDialog::showRules));
         help.add(menuItem("台數計算", helpDialog::showScoring));
+        help.add(menuItem("段位證照", this::showDanRules));
         help.addSeparator();
         help.add(menuItem("關於", helpDialog::showAbout));
 
@@ -444,28 +459,7 @@ public final class MainFrame extends JFrame {
             group.add(item);
             menu.add(item);
         }
-        // 條子的喊法：別人照名字各喊各的，自己的在這裡選
-        menu.addSeparator();
-        ButtonGroup calls = new ButtonGroup();
-        for (BambooCall call : BambooCall.values()) {
-            String suffix = call == BambooCall.DEFAULT ? "（預設）" : "";
-            JRadioButtonMenuItem item = new JRadioButtonMenuItem("條子喊「X" + call.word() + "」" + suffix,
-                    call == settings.bambooCall());
-            item.setFont(Theme.font(Font.PLAIN, 15f));
-            item.addActionListener(e -> changeBambooCall(call));
-            calls.add(item);
-            menu.add(item);
-        }
         return menu;
-    }
-
-    /** 選了就用自己的聲音喊一聲「三條」或「三索」，聽聽看。 */
-    private void changeBambooCall(BambooCall call) {
-        settings.setBambooCall(call);
-        saveSettings();
-        if (settings.voiceEnabled()) {
-            VoiceLines.play(Tile.parseAll("3s").get(0), settings.playerGender(), call);
-        }
     }
 
     private JMenu buildVoiceStyleMenu() {
@@ -593,6 +587,11 @@ public final class MainFrame extends JFrame {
     }
 
     private void editWaitSeconds() {
+        if (controller != null && waitFixed) {
+            JOptionPane.showMessageDialog(this, "專家模式的修業牌局每次等待固定 " + CareerProfile.EXPERT_WAIT_SECONDS
+                    + " 秒，不能調整。", "等待時間", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
         JSpinner spinner = new JSpinner(new SpinnerNumberModel(settings.waitSeconds(),
                 AppSettings.NO_WAIT_LIMIT, AppSettings.MAX_WAIT_SECONDS, 1));
         spinner.setFont(Theme.font(Font.PLAIN, 15f));
@@ -665,23 +664,30 @@ public final class MainFrame extends JFrame {
         }
     }
 
-    /** 擺好牌桌，還沒開始打。電腦的亂數也由種子決定，這樣整場才重現得出來。挑戰關卡不能用電腦代打。 */
+    /**
+     * 擺好牌桌，還沒開始打。電腦的亂數也由種子決定，這樣整場才重現得出來。
+     * 只有練習牌局能用電腦代打，修業模式的一般對戰與挑戰都不能用。專家修業每次等待固定 EXPERT_WAIT_SECONDS 秒。
+     */
     private GameController openTable(GameSession session, long seed) {
         GameConfig config = session.config();
         gameSeed = seed;
         gameOver = false;
         titlesEarned.clear();
+        danEarned = null;
+        waitFixed = mode != Mode.PRACTICE && career != null && career.expert();
         Bot bot = new SeatedBots(config.botLevels(), List.of(session.personality(1), session.personality(2), session.personality(3)),
                 config.basePay(), config.taiPay(), new Random(seed + 1));
         Bot proxy = new ComputerBot(BotLevel.PRO, config.basePay(), config.taiPay(), new Random(seed + 2));
-        controller = new GameController(session, bot, proxy, this::handleRoundEnd, settings, this::saveGame);
+        boolean fixed = waitFixed;
+        controller = new GameController(session, bot, proxy, this::handleRoundEnd, settings,
+                () -> fixed ? CareerProfile.EXPERT_WAIT_SECONDS : settings.waitSeconds(), this::saveGame);
         if (tablePanel != null) {
             root.remove(tablePanel);
         }
         GameController current = controller;
         closeHistory();
         tablePanel = new TablePanel(tile -> current.humanDiscard(tile), this::confirmLeave,
-                mode == Mode.CHALLENGE ? null : current::toggleAutoPlay, () -> showHistory(session));
+                mode == Mode.PRACTICE ? current::toggleAutoPlay : null, () -> showHistory(session));
         controller.attach(tablePanel);
         if (mode == Mode.CHALLENGE) {
             showMission(career.challenge().check(session));
@@ -693,8 +699,9 @@ public final class MainFrame extends JFrame {
 
     private void showMission(Challenge.Check check) {
         Challenge challenge = career.challenge();
-        tablePanel.showMission("第 " + challenge.number() + " 關　" + challenge.title(), challenge.goalText(),
-                check.progress());
+        List<String> extra = challenge.starTexts().subList(1, Challenge.MAX_STARS);
+        tablePanel.showMission("第 " + challenge.number() + " 關　" + challenge.title(),
+                challenge.goalText() + "（加星：" + String.join("、", extra) + "）", check.progress());
     }
 
     /** 練習牌局或修業檔案目前用的那套紀錄，選單上的成就、統計與榮譽榜看這套。 */
@@ -704,6 +711,42 @@ public final class MainFrame extends JFrame {
 
     private String recordsOwner() {
         return career == null ? "練習牌局" : "修業：" + career.name();
+    }
+
+    /** 目前那套紀錄的段位證照。已經開著同一套的就拿到前面，開著別套的就換掉。 */
+    private void showCertificate() {
+        Records records = records();
+        if (certificateDialog != null && certificateDialog.isDisplayable()) {
+            if (certificateDialog.shows(records)) {
+                certificateDialog.refresh();
+                certificateDialog.toFront();
+                return;
+            }
+            certificateDialog.dispose();
+        }
+        certificateDialog = new CertificateDialog(this, records, recordsOwner(), career == null ? "" : career.name(),
+                this::showDanRules);
+        certificateDialog.setVisible(true);
+    }
+
+    /** 九段的門檻與目前的成績。以前就打夠的人，這裡也先發證照，上面寫的段位才對得上表格。 */
+    private void showDanRules() {
+        Records records = records();
+        if (records.certificate().promote(records.stats(), LocalDate.now().toString()) != null) {
+            try {
+                records.saveCertificate();
+            } catch (IOException e) {
+                ErrorReporter.note("儲存段位證照", e);
+            }
+        }
+        helpDialog.showDans(records.stats(), records.certificate().dan(), recordsOwner());
+    }
+
+    private void closeCertificate() {
+        if (certificateDialog != null) {
+            certificateDialog.dispose();
+            certificateDialog = null;
+        }
     }
 
     /** 這場牌局的那套紀錄，存檔也在裡面。 */
@@ -717,6 +760,9 @@ public final class MainFrame extends JFrame {
     }
 
     private void leaveCareer() {
+        if (career != null) {
+            closeCertificate();
+        }
         careerSlot = null;
         career = null;
         careerRecords = null;
@@ -820,7 +866,7 @@ public final class MainFrame extends JFrame {
         saveCareer();
         mode = Mode.GENERAL;
         long seed = new Random().nextLong();
-        GameConfig config = new GameConfig(career.name(), chips, basePay, taiPay, levels);
+        GameConfig config = new GameConfig(career.name(), chips, basePay, taiPay, levels, career.expert());
         openTable(new GameSession(config, new Random(seed)), seed).startRound();
     }
 
@@ -829,7 +875,8 @@ public final class MainFrame extends JFrame {
         saveCareer();
         mode = Mode.CHALLENGE;
         long seed = new Random().nextLong();
-        openTable(new GameSession(challenge.config(career.name()), new Random(seed)), seed).startRound();
+        GameConfig config = challenge.config(career.name()).withExpert(career.expert());
+        openTable(new GameSession(config, new Random(seed)), seed).startRound();
     }
 
     private void resumeCareer() {
@@ -868,7 +915,7 @@ public final class MainFrame extends JFrame {
     }
 
     private void confirmRelief() {
-        if (JOptionPane.showConfirmDialog(this, "領救濟金把籌碼補到 " + CareerProfile.RELIEF_TO + "，會記一次破產。確定嗎？",
+        if (JOptionPane.showConfirmDialog(this, "領救濟金把籌碼補到 " + career.reliefTo() + "，會記一次破產。確定嗎？",
                 "救濟金", JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION) {
             career.takeRelief();
             saveCareer();
@@ -958,7 +1005,8 @@ public final class MainFrame extends JFrame {
         if (Files.exists(practice.saveFile())) {
             try {
                 GameSession saved = practice.loadGame().session();
-                summary = saved.config().playerName() + "：" + Tile.windName(saved.roundWind()) + "風圈，第 "
+                summary = saved.config().playerName() + (saved.config().expert() ? "（專家模式）" : "") + "："
+                        + Tile.windName(saved.roundWind()) + "風圈，第 "
                         + (saved.roundsPlayed() + 1) + " 局，籌碼 " + saved.player(0).chips();
                 hasSavedGame = true;
             } catch (IOException e) {
@@ -1059,6 +1107,7 @@ public final class MainFrame extends JFrame {
         boolean wholeGame = over && mode != Mode.CHALLENGE;
         gameOver = over;
         List<Achievement> earned = List.of();
+        Dan promoted = null;
         if (!controller.usedAutoPlay()) {
             earned = records.achievements().recordRound(session, LocalDate.now().toString());
             saveAchievements(records);
@@ -1067,6 +1116,7 @@ public final class MainFrame extends JFrame {
                 records.stats().recordGame(session);
             }
             saveStats(records);
+            promoted = recordDan(records, session);
         }
         String honorNote = wholeGame ? recordGame(records, session) : "";
         List<Achievement> gameEarned = wholeGame ? recordGameAchievements(records, session) : List.of();
@@ -1093,6 +1143,10 @@ public final class MainFrame extends JFrame {
             ending = new Ending(ending.headline(), join(ending.note(), "獲得稱號："
                     + titlesEarned.stream().map(title -> "「" + title.label() + "」").collect(Collectors.joining("、"))));
         }
+        if (over && danEarned != null) {
+            ending = new Ending(ending.headline(), join(ending.note(), "晉升段位：" + danEarned.label()
+                    + "，選單「統計」→「段位證照」可以看證書"));
+        }
         if (over) {
             deleteSavedGame(saveFile());
         } else {
@@ -1100,7 +1154,35 @@ public final class MainFrame extends JFrame {
         }
         List<Achievement> roundEarned = earned;
         Ending shown = ending;
-        return () -> showRoundEnd(session, round, settlement, roundEarned, over, shown, gameEarned, next);
+        String danNotice = promoted == null ? null
+                : "▲ 晉升" + promoted.label() + "！選單「統計」→「段位證照」可以看證書和分享";
+        return () -> showRoundEnd(session, round, settlement, roundEarned, danNotice, over, shown, gameEarned, next);
+    }
+
+    /** 記進統計之後看看能不能升段；證照還沒有名字就用這場的名字。升到的段位，沒升是 null。 */
+    private Dan recordDan(Records records, GameSession session) {
+        DanCertificate certificate = records.certificate();
+        boolean named = certificate.fillName(session.config().playerName());
+        Dan promoted = certificate.promote(records.stats(), LocalDate.now().toString());
+        if (named || promoted != null) {
+            try {
+                records.saveCertificate();
+            } catch (IOException e) {
+                ErrorReporter.note("儲存段位證照", e);
+                if (!certificateSaveWarned) {
+                    certificateSaveWarned = true;
+                    JOptionPane.showMessageDialog(this, "段位證照無法儲存，下次開啟時會不見。\n" + e.getMessage(),
+                            "段位證照", JOptionPane.WARNING_MESSAGE);
+                }
+            }
+        }
+        if (promoted != null) {
+            danEarned = promoted;
+            if (certificateDialog != null && certificateDialog.isDisplayable() && certificateDialog.shows(records)) {
+                certificateDialog.refresh();
+            }
+        }
+        return promoted;
     }
 
     private static String join(String first, String second) {
@@ -1115,19 +1197,31 @@ public final class MainFrame extends JFrame {
         return career.canTakeRelief() ? note + "\n籌碼不多了，回到修業檔案可以領救濟金。" : note;
     }
 
-    /** 過關就記下來、發獎金；失敗只是這場結束。 */
+    /** 過關就記下來、發獎金與加星獎金；失敗只是這場結束。 */
     private Ending finishChallenge(Challenge.Check check) {
         Challenge challenge = career.challenge();
         String name = "第 " + challenge.number() + " 關「" + challenge.title() + "」";
         if (check.status() == Challenge.Status.CLEARED) {
-            int reward = career.clearChallenge(challenge, LocalDate.now().toString());
-            String note = reward > 0 ? "獎金 " + reward + " 入帳，帳上籌碼 " + career.bankroll()
-                    : "這關之前就過了，這次沒有獎金。";
+            boolean first = !career.isCleared(challenge);
+            int before = career.stars(challenge);
+            int reward = career.clearChallenge(challenge, LocalDate.now().toString(), check.stars());
+            String note = "這次 " + CareerHubPanel.starMarks(check.starCount()) + "："
+                    + String.join("、", challenge.starTexts(check.stars()));
+            List<String> missing = challenge.starTexts(Challenge.ALL_STARS & ~career.starMask(challenge));
+            note += missing.isEmpty() ? "\n這關三顆星都拿到了！" : "\n還沒拿過的星：" + String.join("、", missing);
+            if (reward > 0) {
+                int bonus = reward - (first ? career.rewardFor(challenge) : 0);
+                String detail = first && bonus > 0 ? "（過關 " + career.rewardFor(challenge) + "、加星 " + bonus + "）"
+                        : !first ? "（新拿到 " + (career.stars(challenge) - before) + " 顆星）" : "";
+                note += "\n獎金 " + reward + detail + " 入帳，帳上籌碼 " + career.bankroll();
+            } else {
+                note += "\n這次沒有新的星，沒有獎金。";
+            }
             Challenge[] all = Challenge.values();
-            if (reward > 0 && challenge.ordinal() + 1 < all.length) {
+            if (first && challenge.ordinal() + 1 < all.length) {
                 Challenge after = all[challenge.ordinal() + 1];
                 note += "\n開放第 " + after.number() + " 關「" + after.title() + "」";
-            } else if (reward > 0) {
+            } else if (first) {
                 note += "\n全部關卡都過了，恭喜出師！";
             }
             return new Ending("挑戰成功：" + name, note);
@@ -1136,17 +1230,17 @@ public final class MainFrame extends JFrame {
         return new Ending("挑戰失敗：" + name, check.progress() + "\n回到修業檔案可以再挑戰一次。");
     }
 
-    private void showRoundEnd(GameSession session, Round round, Settlement settlement, List<Achievement> earned, boolean over,
-                              Ending ending, List<Achievement> gameEarned, Runnable next) {
+    private void showRoundEnd(GameSession session, Round round, Settlement settlement, List<Achievement> earned,
+                              String danNotice, boolean over, Ending ending, List<Achievement> gameEarned, Runnable next) {
         String finalLabel = mode == Mode.CHALLENGE ? "查看挑戰結果" : "查看最終排名";
-        new ResultDialog(this, session, round, settlement, earned, over ? finalLabel : "下一局",
+        new ResultDialog(this, session, round, settlement, earned, danNotice, over ? finalLabel : "下一局",
                 round.result().isDrawnGame() ? DRAWN_RESULT_SECONDS : RESULT_SECONDS).setVisible(true);
         if (controller == null) {
             return;
         }
         if (over) {
             new FinalDialog(this, session, ending.headline(), ending.note(), gameEarned,
-                    mode == Mode.PRACTICE ? "回到練習牌局" : "回到修業檔案").setVisible(true);
+                    mode == Mode.PRACTICE ? "回到練習牌局" : "回到修業檔案", "").setVisible(true);
             returnToStart();
         } else {
             next.run();
