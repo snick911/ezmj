@@ -30,6 +30,7 @@ public final class AllTests {
         WallRingTest.run();
         ReportTest.run();
         CertificateTest.run();
+        BadWordsTest.run();
         System.exit(T.report() == 0 ? 0 : 1);
     }
 }

@@ -17,6 +17,7 @@ import ezmj.engine.RoundResult;
 import ezmj.engine.RoundView;
 import ezmj.engine.Settlement;
 import ezmj.engine.TurnOptions;
+import ezmj.model.BadWords;
 import ezmj.model.Dice;
 import ezmj.model.GameRecord;
 import ezmj.model.Gender;
@@ -290,8 +291,10 @@ public final class OnlineGame implements GameView, RoundView {
     public record Chat(int seat, String name, String text) {
     }
 
+    /** 不雅字眼換成＊。自己這邊送出前就擋了，但舊版的程式與服務器都沒有擋，別人說的照樣要遮。 */
     public Chat parseChat(Map<String, Object> message) {
-        return new Chat(screen(Fields.integer(message, "seat")), Fields.string(message, "name"), Fields.string(message, "text"));
+        return new Chat(screen(Fields.integer(message, "seat")), Fields.string(message, "name"),
+                BadWords.mask(Fields.string(message, "text")));
     }
 
     /** canListen 訊息的編號：只送給打出牌後聽牌的那位，回覆 declareListen 時帶回去。 */

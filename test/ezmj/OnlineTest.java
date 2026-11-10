@@ -768,6 +768,8 @@ final class OnlineTest {
             eq(9, OnlineGame.parseListenOffer(parse("{\"type\":\"canListen\",\"listenId\":9}")), "報聽的編號");
             OnlineGame.Chat chat = game.parseChat(parse("{\"type\":\"chat\",\"seat\":2,\"name\":\"小花\",\"text\":\"你好\"}"));
             eq(new OnlineGame.Chat(0, "小花", "你好"), chat, "座位 2 是自己");
+            eq("＊＊打太慢", game.parseChat(parse("{\"type\":\"chat\",\"seat\":1,\"name\":\"小美\",\"text\":\"靠北打太慢\"}"))
+                    .text(), "別人說的不雅字眼遮起來");
             fails(IllegalArgumentException.class, () -> game.parseEvent(parse("{\"type\":\"event\",\"kind\":\"DANCE\",\"seat\":1}")),
                     "不認得的事件");
         });
