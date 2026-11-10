@@ -18,8 +18,6 @@ import javax.swing.JPanel;
 import javax.swing.SwingConstants;
 
 import ezmj.AppVersion;
-import ezmj.career.CareerSlot;
-import ezmj.career.Challenge;
 import ezmj.model.Suit;
 import ezmj.model.Tile;
 
@@ -53,10 +51,10 @@ public final class HomePanel extends JPanel {
         c.insets = new Insets(0, 0, 22, 0);
         card.add(title, c);
 
-        addMode(card, c, careerButton, "建立自己的檔案，籌碼一路帶著打，輸贏不會重來；還有 "
-                + Challenge.values().length + " 道挑戰關卡。最多 " + CareerSlot.COUNT + " 個檔案，紀錄各自分開。", onCareer);
-        addMode(card, c, practiceButton, "每場自訂籌碼、底台與電腦等級，打完就重來。", onPractice);
-        addMode(card, c, onlineButton, "開房間或加入房間，和其他玩家同桌。", onOnline);
+        // 這裡只寫一句開場白，怎麼玩寫在「說明」→「遊戲玩法」
+        addMode(card, c, careerButton, "從無名小卒練起，闖關累積籌碼，在麻將江湖混出名堂。", onCareer);
+        addMode(card, c, practiceButton, "自己擺一桌，隨時開打，練練手感、試試牌路。", onPractice);
+        addMode(card, c, onlineButton, "約三五好友上桌，在網路上一較高下。", onOnline);
         syncSizes();
 
         // 完整的授權聲明在「說明」→「關於」

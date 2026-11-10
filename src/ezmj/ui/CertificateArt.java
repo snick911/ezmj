@@ -31,6 +31,7 @@ import java.util.Random;
 import javax.imageio.ImageIO;
 
 import ezmj.AppVersion;
+import ezmj.career.CertificateNumber;
 import ezmj.career.Dan;
 import ezmj.career.DanCertificate;
 import ezmj.model.Suit;
@@ -55,7 +56,10 @@ public final class CertificateArt {
     private static final Color GOLD = new Color(0xB0802A);
     private static final Color GOLD_LIGHT = new Color(0xD8B35A);
     private static final Color INK = new Color(0x2A211A);
-    private static final Color MUTED_INK = new Color(0x7A6A55);
+    /** 次要的字，在米色紙上也要夠深，縮小看才清楚。 */
+    private static final Color MUTED_INK = new Color(0x5A4936);
+    /** 成績格的小標題：深紅褐，粗體，和下面的數字分得開又看得清楚。 */
+    private static final Color LABEL_INK = new Color(0x7A2418);
     private static final Color CRIMSON = new Color(0xB3261E);
     private static final Color SEAL = new Color(0xC23A2C);
     private static final Color STAT_FILL = new Color(0xF3E7CB);
@@ -269,7 +273,10 @@ public final class CertificateArt {
 
     // ---- 證書 ----
 
-    /** 整張證書。avatar 是正方形的個人圖像，name 是證書上的名字。 */
+    /**
+     * 整張證書。avatar 是正方形的個人圖像，name 是證書上的名字。
+     * 字要在縮小的預覽、LINE 的縮圖裡也看得清楚：名字 86、說明 38、成績 32 與 54、日期與證號 34 以上（證書寬 1600）。
+     */
     public static BufferedImage certificate(DanCertificate.Grant grant, String name, BufferedImage avatar) {
         BufferedImage image = new BufferedImage(WIDTH, HEIGHT, BufferedImage.TYPE_INT_RGB);
         Graphics2D g = graphics(image);
@@ -277,40 +284,42 @@ public final class CertificateArt {
         paintFrame(g);
 
         double middle = WIDTH / 2.0;
+        double width = COLUMN_RIGHT - COLUMN_LEFT;
         g.setColor(GOLD);
-        text(g, "EZMJ 台灣十六張麻將", false, 30, 22, 900, middle, 150, Align.CENTER);
+        text(g, "EZMJ 台灣十六張麻將", false, 38, 28, 900, middle, 132, Align.CENTER);
         g.setColor(INK);
-        spaced(g, "麻將段位證書", Theme.brushFont(92f), middle, 232, 22);
-        divider(g, middle, 300, 280);
+        spaced(g, "麻將段位證書", Theme.brushFont(100f), middle, 212, 22);
+        divider(g, middle, 278, 300);
 
-        paintAvatar(g, avatar, 345, 585, 185);
-        paintRibbon(g, grant.dan().label(), 345, 838);
+        paintAvatar(g, avatar, 345, 560, 185);
+        paintRibbon(g, grant.dan().label(), 345, 822);
 
         String shownName = name == null || name.isBlank() ? "雀友" : name.trim();
         g.setColor(INK);
-        text(g, shownName, Theme.fixedFont(Font.BOLD, 64f), 40, COLUMN_RIGHT - COLUMN_LEFT, COLUMN_LEFT, 392, Align.LEFT);
+        text(g, shownName, Theme.fixedFont(Font.BOLD, 86f), 50, width, COLUMN_LEFT, 352, Align.LEFT);
         g.setColor(GOLD_LIGHT);
         g.setStroke(new BasicStroke(1.5f));
-        g.draw(new Line2D.Double(COLUMN_LEFT, 436, COLUMN_RIGHT, 436));
+        g.draw(new Line2D.Double(COLUMN_LEFT, 404, COLUMN_RIGHT, 404));
         g.setColor(INK);
-        text(g, "於 EZMJ 台灣十六張麻將對局中成績優異，特此認定為", false, 30, 22, COLUMN_RIGHT - COLUMN_LEFT, COLUMN_LEFT,
-                470, Align.LEFT);
+        text(g, "於 EZMJ 對局中成績優異，特此認定為", false, 38, 28, width, COLUMN_LEFT, 448, Align.LEFT);
 
         double columnMiddle = (COLUMN_LEFT + COLUMN_RIGHT) / 2;
         g.setColor(CRIMSON);
-        double danWidth = spaced(g, grant.dan().label(), Theme.brushFont(170f), columnMiddle, 600, 40);
-        flourish(g, columnMiddle, 600, danWidth / 2);
+        double danWidth = spaced(g, grant.dan().label(), Theme.brushFont(170f), columnMiddle, 568, 40);
+        flourish(g, columnMiddle, 568, danWidth / 2);
 
-        paintStats(g, grant, 742);
+        paintStats(g, grant, 716);
 
         g.setColor(INK);
-        text(g, "認定日期　" + longDate(grant.date()), false, 30, 22, 620, COLUMN_LEFT, 960, Align.LEFT);
+        text(g, "認定日期　" + longDate(grant.date()), false, 36, 28, 640, COLUMN_LEFT, 925, Align.LEFT);
+        text(g, "證　　號　" + CertificateNumber.grouped(CertificateNumber.full(grant.serial(), name)), true, 34, 26,
+                640, COLUMN_LEFT, 973, Align.LEFT);
         g.setColor(MUTED_INK);
-        text(g, "證書編號　" + serial(grant), false, 22, 16, 620, COLUMN_LEFT, 1008, Align.LEFT);
-        paintSeal(g, 1350, 976, 148, serial(grant).hashCode());
+        text(g, "證書編號　" + serial(grant), false, 26, 20, 640, COLUMN_LEFT, 1015, Align.LEFT);
+        paintSeal(g, 1352, 978, 138, serial(grant).hashCode());
 
         g.setColor(MUTED_INK);
-        text(g, "EZMJ 電腦版 " + AppVersion.get(), false, 18, 14, 600, middle, HEIGHT - 86, Align.CENTER);
+        text(g, "EZMJ 電腦版 " + AppVersion.get(), false, 22, 16, 500, 345, 1015, Align.CENTER);
         g.dispose();
         return image;
     }
@@ -417,9 +426,9 @@ public final class CertificateArt {
 
     /** 圖像下面的紅色緞帶，寫著段位。 */
     private static void paintRibbon(Graphics2D g, String label, double cx, double cy) {
-        double w = 250;
-        double h = 66;
-        double notch = 22;
+        double w = 270;
+        double h = 74;
+        double notch = 24;
         Path2D.Double tail = new Path2D.Double();
         for (int side = -1; side <= 1; side += 2) {
             double outer = cx + side * (w / 2 + 34);
@@ -439,25 +448,27 @@ public final class CertificateArt {
         g.setStroke(new BasicStroke(2f));
         g.draw(new RoundRectangle2D.Double(cx - w / 2 + 6, cy - h / 2 + 6, w - 12, h - 12, 6, 6));
         g.setColor(AVATAR_INK);
-        spaced(g, label, Theme.brushFont(40f), cx, cy, 14);
+        spaced(g, label, Theme.brushFont(48f), cx, cy, 14);
     }
 
     /** 認定的成績：一排五格，上面寫這一段看的是哪些局。 */
     private static void paintStats(Graphics2D g, DanCertificate.Grant grant, double top) {
         Dan dan = grant.dan();
-        g.setColor(MUTED_INK);
-        text(g, "認定成績　" + dan.opponentsText() + "的局", false, 24, 18, COLUMN_RIGHT - COLUMN_LEFT, COLUMN_LEFT,
-                top - 30, Align.LEFT);
-        double height = 132;
+        g.setColor(INK);
+        text(g, "認定成績　" + dan.opponentsText() + "的局", true, 32, 24, COLUMN_RIGHT - COLUMN_LEFT, COLUMN_LEFT,
+                top - 28, Align.LEFT);
+        double height = 160;
         double width = COLUMN_RIGHT - COLUMN_LEFT;
         g.setColor(STAT_FILL);
         g.fill(new RoundRectangle2D.Double(COLUMN_LEFT, top, width, height, 18, 18));
         g.setColor(GOLD_LIGHT);
         g.setStroke(new BasicStroke(2f));
         g.draw(new RoundRectangle2D.Double(COLUMN_LEFT, top, width, height, 18, 18));
-        String[] labels = {"局數", "胡牌數", "自摸數", "胡牌率", "自摸率"};
+        // 放槍率是後來才加的，以前發的證照不知道放槍數，寫「—」
+        String[] labels = {"局數", "胡牌數", "自摸數", "胡牌率", "自摸率", "放槍率"};
         String[] values = {GameReport.grouped(grant.rounds()), GameReport.grouped(grant.wins()),
-            GameReport.grouped(grant.selfDraws()), percent(grant.winRate()), percent(grant.selfDrawRate())};
+            GameReport.grouped(grant.selfDraws()), percent(grant.winRate()), percent(grant.selfDrawRate()),
+            grant.knowsDealIns() ? percent(grant.dealInRate()) : "—"};
         double cell = width / labels.length;
         for (int i = 0; i < labels.length; i++) {
             double cx = COLUMN_LEFT + cell * (i + .5);
@@ -466,10 +477,10 @@ public final class CertificateArt {
                 g.setStroke(new BasicStroke(1.5f));
                 g.draw(new Line2D.Double(COLUMN_LEFT + cell * i, top + 22, COLUMN_LEFT + cell * i, top + height - 22));
             }
-            g.setColor(MUTED_INK);
-            text(g, labels[i], false, 24, 18, cell - 20, cx, top + 40, Align.CENTER);
+            g.setColor(LABEL_INK);
+            text(g, labels[i], true, 34, 26, cell - 14, cx, top + 46, Align.CENTER);
             g.setColor(INK);
-            text(g, values[i], true, 44, 26, cell - 20, cx, top + 92, Align.CENTER);
+            text(g, values[i], true, 46, 34, cell - 14, cx, top + 110, Align.CENTER);
         }
     }
 

@@ -46,7 +46,9 @@ import javax.swing.table.TableCellRenderer;
 import javax.swing.table.TableColumn;
 import javax.swing.text.AbstractDocument;
 
+import ezmj.model.BadWords;
 import ezmj.model.BotLevel;
+import ezmj.model.GameConfig;
 import ezmj.model.GameSpeed;
 import ezmj.online.OnlineProfile;
 import ezmj.online.RoomListing;
@@ -70,6 +72,7 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
     private static final Border CELL_PADDING = BorderFactory.createEmptyBorder(0, 8, 0, 8);
     private static final Border HEADER_PADDING = BorderFactory.createEmptyBorder(5, 8, 5, 8);
     private static final String LOADING = "正在讀取房間列表，服務器閒置後第一次可能要等一分鐘…";
+    private static final String TITLE = "連線對戰";
 
     /** 按鈕送出的要求。name 檢查過了。 */
     interface Actions {
@@ -187,7 +190,7 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
         StartPanel.addRow(right, c, "補位電腦等級", StartPanel.levelRow(levelBoxes));
         StartPanel.addRow(right, c, "等待秒數", waitSpinner);
         StartPanel.addRow(right, c, "電腦速度", speedBox);
-        expertBox.setToolTipText("房間裡每個人都照專家模式打");
+        expertBox.setToolTipText("房間裡每個人都照專家模式打，有哪些不一樣見「說明」→「遊戲玩法」");
         StartPanel.addRow(right, c, "專家模式", expertBox);
         addWide(right, c, payWarning, 2);
         addWide(right, c, createButton, 4);
@@ -223,8 +226,8 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
         card.add(status, layout);
         add(card);
 
-        createButton.addActionListener(e -> actions.create(name(), settings()));
-        joinButton.addActionListener(e -> actions.join(name(), code()));
+        createButton.addActionListener(e -> create(actions));
+        joinButton.addActionListener(e -> joinByCode(actions));
         listJoinButton.addActionListener(e -> joinSelected(actions));
         refreshButton.addActionListener(e -> refresh());
         resumeButton.addActionListener(e -> actions.resume(profile));
@@ -388,17 +391,47 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
         lobby.refresh();
     }
 
+    /** 按鈕都不因為名字或房號變灰，按下去才檢查，不行就跳出提醒。 */
+    private void create(Actions actions) {
+        if (busy || !StartPanel.nameAccepted(nameField, MAX_NAME_LENGTH, TITLE)) {
+            return;
+        }
+        if (BadWords.contains(roomNameField.getText())) {
+            StartPanel.warn(this, BadWords.ROOM_NAME_REJECTED, TITLE);
+            roomNameField.requestFocusInWindow();
+            return;
+        }
+        if (!StartPanel.paysFit(chipBox, baseBox, taiBox, payWarning)) {
+            StartPanel.warn(this, GameConfig.PAYS_TOO_HIGH + "。", TITLE);
+            return;
+        }
+        actions.create(name(), settings());
+    }
+
+    private void joinByCode(Actions actions) {
+        if (busy || !StartPanel.nameAccepted(nameField, MAX_NAME_LENGTH, TITLE)) {
+            return;
+        }
+        if (code().length() != ROOM_CODE_LENGTH) {
+            StartPanel.warn(this, "請輸入六碼房號。", TITLE);
+            codeField.requestFocusInWindow();
+            return;
+        }
+        actions.join(name(), code());
+    }
+
     private void joinSelected(Actions actions) {
+        if (busy) {
+            return;
+        }
         RoomListing room = selected();
-        if (room == null || busy) {
+        if (room == null) {
+            StartPanel.warn(this, "請先在列表選一間房間。", TITLE);
             return;
         }
-        if (!nameValid()) {
-            status.setText("先輸入名字再加入。");
-            nameField.requestFocusInWindow();
-            return;
+        if (StartPanel.nameAccepted(nameField, MAX_NAME_LENGTH, TITLE)) {
+            actions.join(name(), room.code());
         }
-        actions.join(name(), room.code());
     }
 
     private RoomListing selected() {
@@ -406,15 +439,12 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
         return row < 0 ? null : rooms.get(row);
     }
 
+    /** 只有正在連線時按鈕不能按；名字、房號與底台按下去才檢查，底台太大先在下面寫出來。 */
     private void syncButtons() {
-        boolean ready = !busy && nameValid();
-        if (ready) {
-            // 收掉「先輸入名字」的提示
-            status.setText(" ");
-        }
-        createButton.setEnabled(StartPanel.paysFit(chipBox, baseBox, taiBox, payWarning) && ready);
-        joinButton.setEnabled(ready && code().length() == ROOM_CODE_LENGTH);
-        listJoinButton.setEnabled(ready && selected() != null);
+        StartPanel.paysFit(chipBox, baseBox, taiBox, payWarning);
+        createButton.setEnabled(!busy);
+        joinButton.setEnabled(!busy);
+        listJoinButton.setEnabled(!busy);
         resumeButton.setEnabled(!busy);
         roomNameField.setPrompt((nameValid() ? name() : "你的名字") + "的房間");
     }

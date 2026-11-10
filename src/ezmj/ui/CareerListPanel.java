@@ -8,20 +8,14 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.io.IOException;
-import java.time.LocalDate;
 import java.util.List;
 
 import javax.swing.BorderFactory;
-import javax.swing.DefaultComboBoxModel;
 import javax.swing.JButton;
-import javax.swing.JCheckBox;
-import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
-import javax.swing.JTextField;
 import javax.swing.SwingConstants;
-import javax.swing.text.AbstractDocument;
 
 import ezmj.career.CareerProfile;
 import ezmj.career.CareerSlot;
@@ -63,12 +57,12 @@ final class CareerListPanel extends JPanel {
         title.setForeground(Theme.GOLD);
         card.add(title, c);
 
-        String intro = "建立檔案時選好起始籌碼，之後一般對戰的輸贏都從檔案的籌碼扣加，不會重來。"
-                + "另有 " + Challenge.values().length + " 道挑戰關卡，過了前一關才開放下一關，第一次過關有獎金。"
-                + "每個檔案的成就、統計與榮譽榜各自記錄，和練習牌局也分開。";
+        // 開場白；規則寫在「說明」→「遊戲玩法」
+        String intro = "<div align='center'>這是你自己的麻將修練。從初出茅廬的雀友練起，<br>"
+                + "一場一場累積籌碼、一關一關挑戰高手，在麻將江湖中混出一番名堂。</div>";
         JLabel introLabel = new JLabel();
-        introLabel.setFont(Theme.font(Font.PLAIN, 15f));
-        introLabel.setForeground(Theme.MUTED);
+        introLabel.setFont(Theme.font(Font.PLAIN, 16f));
+        introLabel.setForeground(Theme.TEXT);
         c.gridy++;
         c.insets = new Insets(0, 0, 16, 0);
         card.add(HomePanel.wrapped(introLabel, intro, 720), c);
@@ -177,49 +171,11 @@ final class CareerListPanel extends JPanel {
         return button;
     }
 
-    /**
-     * 問名字、起始籌碼與要不要專家模式；名字是空的就再問一次，按取消就算了。
-     * 勾了專家模式，起始籌碼固定是 EXPERT_STARTING_CHIPS，不能選。
-     */
+    /** 問名字、起始籌碼與要不要專家模式（CreateCareerDialog），按取消就算了。 */
     private void askCreate(CareerSlot slot) {
-        JTextField nameField = new JTextField(12);
-        nameField.setFont(Theme.font(Font.PLAIN, 16f));
-        ((AbstractDocument) nameField.getDocument()).setDocumentFilter(new LengthLimit(CareerProfile.MAX_NAME_LENGTH));
-        Integer[] normalChips = CareerProfile.STARTING_CHIPS.toArray(new Integer[0]);
-        JComboBox<Integer> chipBox = StartPanel.combo(normalChips, CareerProfile.DEFAULT_STARTING_CHIPS);
-        JCheckBox expertBox = new JCheckBox("專家模式（建立之後就不能改）");
-        expertBox.setFont(Theme.font(Font.PLAIN, 15f));
-        JLabel expertNote = new JLabel(HomePanel.wrapHtml(HomePanel.escape(StartPanel.EXPERT_SUMMARY + "。起始籌碼只有 "
-                + CareerProfile.EXPERT_STARTING_CHIPS + "，底台只要不大於帳上的籌碼就能選，每次等待固定 "
-                + CareerProfile.EXPERT_WAIT_SECONDS + " 秒。"), Theme.scaled(320)));
-        expertNote.setFont(Theme.font(Font.PLAIN, 13f));
-        expertBox.addActionListener(e -> {
-            boolean expert = expertBox.isSelected();
-            chipBox.setModel(new DefaultComboBoxModel<>(expert
-                    ? new Integer[] {CareerProfile.EXPERT_STARTING_CHIPS} : normalChips));
-            if (!expert) {
-                chipBox.setSelectedItem(CareerProfile.DEFAULT_STARTING_CHIPS);
-            }
-            chipBox.setEnabled(!expert);
-        });
-        Object[] message = {
-            "名字（最多 " + CareerProfile.MAX_NAME_LENGTH + " 字）", nameField,
-            "起始籌碼（建立之後就不能改）", chipBox,
-            expertBox, expertNote,
-        };
-        while (true) {
-            int answer = JOptionPane.showConfirmDialog(this, message, slot.label() + "：建立新檔案",
-                    JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
-            if (answer != JOptionPane.OK_OPTION) {
-                return;
-            }
-            String name = nameField.getText().strip();
-            if (!name.isEmpty()) {
-                actions.create(slot, new CareerProfile(name, (Integer) chipBox.getSelectedItem(),
-                        LocalDate.now().toString(), expertBox.isSelected()));
-                return;
-            }
-            JOptionPane.showMessageDialog(this, "請輸入名字。", "建立新檔案", JOptionPane.WARNING_MESSAGE);
+        CareerProfile profile = CreateCareerDialog.ask(this, slot.label());
+        if (profile != null) {
+            actions.create(slot, profile);
         }
     }
 

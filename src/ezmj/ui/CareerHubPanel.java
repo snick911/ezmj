@@ -265,10 +265,8 @@ final class CareerHubPanel extends JPanel {
         title.setText(shown.name() + " 的修業");
         subtitle.setText(slot.label() + "・" + (shown.expert() ? "專家模式・" : "") + shown.created() + " 建立");
         HomePanel.wrapped(reliefText, "補到 " + shown.reliefTo() + "，記一次破產。", 400);
-        HomePanel.wrapped(generalText, "打四圈，帶帳上的籌碼上桌，每局結算完就入帳。" + (shown.expert()
-                ? "專家模式：底與每台不大於帳上的籌碼就能選，每次等待固定 " + CareerProfile.EXPERT_WAIT_SECONDS + " 秒。"
-                : "底最多帳上的 1/" + CareerProfile.BASE_SHARE + "、每台最多 1/" + CareerProfile.TAI_SHARE + "。")
-                + "修業模式不能用電腦代打。", 400);
+        // 一句開場白；底台怎麼開放、專家模式的等待時間等規則寫在「說明」→「遊戲玩法」
+        HomePanel.wrapped(generalText, "帶著帳上的籌碼上桌，和三家電腦拚四圈，贏來的就是你闖蕩江湖的本錢。", 400);
         bankroll.setText(String.valueOf(shown.bankroll()));
         bankrollNote.setText("起始 " + shown.startingChips() + "・最高 " + shown.peak() + "・破產 "
                 + shown.bankruptcies() + " 次");
@@ -420,14 +418,12 @@ final class CareerHubPanel extends JPanel {
         line.gridx = 0;
         line.anchor = GridBagConstraints.WEST;
         int stars = profile.stars(challenge);
-        JLabel heading = label("第 " + challenge.number() + " 關　" + challenge.title(), Font.BOLD, 16f,
-                unlocked ? Theme.TEXT : Theme.MUTED);
-        if (unlocked) {
-            // 拿到的星是金色，還沒拿到的是灰色
-            heading.setText("<html>" + HomePanel.escape(heading.getText()) + "　<font color='" + hex(Theme.GOLD) + "'>"
-                    + "★".repeat(stars) + "</font><font color='" + hex(Theme.MUTED) + "'>"
-                    + "☆".repeat(Challenge.MAX_STARS - stars) + "</font></html>");
-        }
+        JLabel heading = label("", Font.BOLD, 16f, unlocked ? Theme.TEXT : Theme.MUTED);
+        String title = HomePanel.escape("第 " + challenge.number() + " 關　" + challenge.title());
+        // 拿到的星是金色，還沒拿到的是灰色；列表窄的時候標題和說明一樣折行，不會被截掉
+        heading.setText(HomePanel.wrapHtml(!unlocked ? title : title + "　<font color='" + hex(Theme.GOLD) + "'>"
+                + "★".repeat(stars) + "</font><font color='" + hex(Theme.MUTED) + "'>"
+                + "☆".repeat(Challenge.MAX_STARS - stars) + "</font>", goalPixels));
         text.add(heading, line);
         JLabel goal = new JLabel();
         goal.setFont(Theme.font(Font.PLAIN, 14f));
@@ -497,7 +493,8 @@ final class CareerHubPanel extends JPanel {
     void syncSizes() {
         // 高度只是起點，視窗多出來的高度都給列表；放不下時最矮到最小值，不會被擠成一條線
         challengeScroll.setPreferredSize(new Dimension(Theme.scaled(560), Theme.scaled(300)));
-        challengeScroll.setMinimumSize(new Dimension(Theme.scaled(400), Theme.scaled(150)));
+        // 最窄 340：字體 150% 時 1280 寬的視窗還放得下整個畫面，不用左右捲
+        challengeScroll.setMinimumSize(new Dimension(Theme.scaled(340), Theme.scaled(150)));
         generalButton.setPreferredSize(new Dimension(Theme.scaled(260), Theme.scaled(46)));
         if (profile != null) {
             fillChallenges(false);

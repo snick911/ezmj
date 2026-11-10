@@ -29,6 +29,7 @@ import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JRadioButtonMenuItem;
+import javax.swing.JScrollPane;
 import javax.swing.JSlider;
 import javax.swing.JSpinner;
 import javax.swing.SpinnerNumberModel;
@@ -194,7 +195,8 @@ public final class MainFrame extends JFrame {
     private TablePanel tablePanel;
     private GameController controller;
     private OnlineController online;
-    private RoomPanel roomPanel;
+    /** 連線房間的畫面，外面包了捲軸。 */
+    private JScrollPane roomCard;
     private HistoryDialog historyDialog;
     private CertificateDialog certificateDialog;
     private boolean achievementSaveWarned;
@@ -232,11 +234,12 @@ public final class MainFrame extends JFrame {
         ErrorReporter.setContext(this::describeGame);
         ErrorReporter.setUiHandler(this::recoverFromError);
         setIconImages(List.of(TilePainter.appIcon(32), TilePainter.appIcon(64)));
-        root.add(homePanel, CARD_HOME);
-        root.add(startPanel, CARD_START);
-        root.add(careerList, CARD_CAREER);
-        root.add(careerHub, CARD_CAREER_HUB);
-        root.add(onlinePanel, CARD_ONLINE);
+        // 視窗太小、字體太大放不下時可以捲動，不會被切掉
+        root.add(FitScroll.wrap(homePanel), CARD_HOME);
+        root.add(FitScroll.wrap(startPanel), CARD_START);
+        root.add(FitScroll.wrap(careerList), CARD_CAREER);
+        root.add(FitScroll.wrap(careerHub), CARD_CAREER_HUB);
+        root.add(FitScroll.wrap(onlinePanel), CARD_ONLINE);
         setContentPane(root);
         setJMenuBar(buildMenuBar());
         refreshResume();
@@ -316,6 +319,7 @@ public final class MainFrame extends JFrame {
         statsMenu.add(menuItem("段位證照", this::showCertificate));
 
         JMenu help = topMenu("說明");
+        help.add(menuItem("簡介", helpDialog::showIntro));
         help.add(menuItem("遊戲玩法", helpDialog::showGameplay));
         help.add(menuItem("基本規則", helpDialog::showRules));
         help.add(menuItem("台數計算", helpDialog::showScoring));
@@ -724,7 +728,7 @@ public final class MainFrame extends JFrame {
             }
             certificateDialog.dispose();
         }
-        certificateDialog = new CertificateDialog(this, records, recordsOwner(), career == null ? "" : career.name(),
+        certificateDialog = new CertificateDialog(this, records, recordsOwner(), career == null ? null : career.name(),
                 this::showDanRules);
         certificateDialog.setVisible(true);
     }
@@ -956,11 +960,11 @@ public final class MainFrame extends JFrame {
 
             @Override
             public void showRoom(RoomPanel room) {
-                if (roomPanel != null) {
-                    root.remove(roomPanel);
+                if (roomCard != null) {
+                    root.remove(roomCard);
                 }
-                roomPanel = room;
-                root.add(room, CARD_ROOM);
+                roomCard = FitScroll.wrap(room);
+                root.add(roomCard, CARD_ROOM);
                 cards.show(root, CARD_ROOM);
             }
 
@@ -1095,7 +1099,9 @@ public final class MainFrame extends JFrame {
 
     /**
      * 結算完先把該存的都存好，這時程式被關掉也不會少記。回傳的動作才跳出結果。
-     * 挑戰關卡的每局照算成就與統計，但不算整場：整場類的成就、場數、名次與榮譽榜只看練習牌局與一般對戰。
+     * 挑戰關卡的每局照算成就（整場類的除外），但不記進統計，所以也不影響段位證照：
+     * 挑戰的對手、籌碼與圈數都是關卡定好的，混進統計會讓胡牌率、放槍率不準。
+     * 整場類的成就、場數、名次與榮譽榜只看練習牌局與一般對戰。
      */
     private Runnable handleRoundEnd(GameSession session, Round round, Settlement settlement, Runnable next) {
         if (historyDialog != null && historyDialog.isDisplayable()) {
@@ -1111,12 +1117,14 @@ public final class MainFrame extends JFrame {
         if (!controller.usedAutoPlay()) {
             earned = records.achievements().recordRound(session, LocalDate.now().toString());
             saveAchievements(records);
-            records.stats().recordRound(session);
-            if (wholeGame) {
-                records.stats().recordGame(session);
+            if (mode != Mode.CHALLENGE) {
+                records.stats().recordRound(session);
+                if (wholeGame) {
+                    records.stats().recordGame(session);
+                }
+                saveStats(records);
+                promoted = recordDan(records, session);
             }
-            saveStats(records);
-            promoted = recordDan(records, session);
         }
         String honorNote = wholeGame ? recordGame(records, session) : "";
         List<Achievement> gameEarned = wholeGame ? recordGameAchievements(records, session) : List.of();
@@ -1159,10 +1167,14 @@ public final class MainFrame extends JFrame {
         return () -> showRoundEnd(session, round, settlement, roundEarned, danNotice, over, shown, gameEarned, next);
     }
 
-    /** 記進統計之後看看能不能升段；證照還沒有名字就用這場的名字。升到的段位，沒升是 null。 */
+    /**
+     * 記進統計之後看看能不能升段，回傳升到的段位，沒升是 null。
+     * 證書上的名字不能改：修業檔案一律用檔案的名字，練習牌局用第一次記進統計那一局的名字。
+     */
     private Dan recordDan(Records records, GameSession session) {
         DanCertificate certificate = records.certificate();
-        boolean named = certificate.fillName(session.config().playerName());
+        boolean named = mode == Mode.PRACTICE ? certificate.fillName(session.config().playerName())
+                : certificate.matchProfile(career.name());
         Dan promoted = certificate.promote(records.stats(), LocalDate.now().toString());
         if (named || promoted != null) {
             try {

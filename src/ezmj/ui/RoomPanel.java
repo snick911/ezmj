@@ -36,7 +36,6 @@ final class RoomPanel extends JPanel {
     private final JLabel listedLine = ResultDialog.line(" ", Font.PLAIN, 15f, Theme.MUTED);
     private final JLabel settingsLine = ResultDialog.line(" ", Font.PLAIN, 15f, Theme.MUTED);
     /** 專家模式的房間才有，說明哪些不一樣，房間裡每個人都照這個打。 */
-    private final JLabel expertLine = ResultDialog.line(" ", Font.PLAIN, 15f, Theme.MUTED);
     private final JPanel players = new JPanel(new BorderLayout());
     private final JLabel notice = ResultDialog.line(" ", Font.PLAIN, 15f, Theme.GOLD);
     private final JButton startButton = Theme.button("開始牌局", Theme.RED);
@@ -61,7 +60,7 @@ final class RoomPanel extends JPanel {
         expertBadge.setOpaque(true);
         expertBadge.setBackground(Theme.BUTTON);
         expertBadge.setBorder(BorderFactory.createEmptyBorder(2, 8, 2, 8));
-        expertBadge.setToolTipText(StartPanel.EXPERT_SUMMARY);
+        expertBadge.setToolTipText("這間照專家模式打，有哪些不一樣見「說明」→「遊戲玩法」");
         JPanel name = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         name.setOpaque(false);
         name.add(title);
@@ -84,7 +83,6 @@ final class RoomPanel extends JPanel {
         card.add(codeRow);
         card.add(Box.createVerticalStrut(4));
         card.add(settingsLine);
-        card.add(expertLine);
         card.add(Box.createVerticalStrut(14));
         players.setOpaque(false);
         players.setAlignmentX(LEFT_ALIGNMENT);
@@ -116,10 +114,8 @@ final class RoomPanel extends JPanel {
         // 名稱最長 30 字，用原本的大小會把房間撐得比視窗還寬
         title.setFont(Theme.font(Font.BOLD, name.codePointCount(0, name.length()) > LONG_NAME ? 22f : 30f));
         privateBadge.setVisible(settings.privateRoom());
+        // 標題旁的「專家模式」標籤就夠了，有哪些不一樣寫在說明
         expertBadge.setVisible(settings.expert());
-        expertLine.setVisible(settings.expert());
-        expertLine.setText(HomePanel.wrapHtml(HomePanel.escape("專家模式：" + StartPanel.EXPERT_SUMMARY + "。"),
-                Theme.scaled(520)));
         codeRow.setVisible(named);
         codeLine.setText("房號 " + code);
         listedLine.setText(settings.privateRoom() ? "不列在大廳，把房號告訴朋友就能加入。" : "列在大廳，也可以把房號告訴朋友。");

@@ -3,6 +3,7 @@ package ezmj.career;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Properties;
+import java.util.Random;
 
 import ezmj.engine.PlayerStats;
 import ezmj.model.PropertyFiles;
@@ -21,15 +22,39 @@ public final class DanCertificate {
     public static final String CUSTOM_AVATAR = "custom";
     /** 檔案的格式版本，見 PropertyFiles.FORMAT_KEY。 */
     private static final int FORMAT = 1;
+    private static final Random NUMBERS = new Random();
 
-    /** 拿到段位的那一天，與當時那一段看的局數、胡牌數、自摸數。 */
-    public record Grant(Dan dan, String date, int rounds, int wins, int selfDraws) {
+    /**
+     * 拿到段位的那一天、當時那一段看的局數、胡牌數、自摸數、放槍數，與證號的前 13 碼（serial）。
+     * 放槍數是後來才記的，以前發的證照不知道，是 UNKNOWN。
+     * 證號的規則見 CertificateNumber：serial 升段時決定，存起來之後不變；最後三碼驗證碼照證書上的名字算，見 number。
+     */
+    public record Grant(Dan dan, String date, int rounds, int wins, int selfDraws, int dealIns, String serial) {
+
+        /** 不知道的數字。 */
+        public static final int UNKNOWN = -1;
+
+        /** 沒有 serial 的（0.15.0 的存檔、測試）由段位、日期與成績算出一個，每次都一樣。 */
+        public Grant(Dan dan, String date, int rounds, int wins, int selfDraws, int dealIns) {
+            this(dan, date, rounds, wins, selfDraws, dealIns,
+                    CertificateNumber.derivedBody(dan, date, rounds, wins, selfDraws));
+        }
+
         public double winRate() {
             return rounds == 0 ? 0 : wins / (double) rounds;
         }
 
         public double selfDrawRate() {
             return rounds == 0 ? 0 : selfDraws / (double) rounds;
+        }
+
+        /** 放槍數不知道時是 false。 */
+        public boolean knowsDealIns() {
+            return dealIns >= 0;
+        }
+
+        public double dealInRate() {
+            return rounds == 0 || dealIns < 0 ? 0 : dealIns / (double) rounds;
         }
     }
 
@@ -47,28 +72,39 @@ public final class DanCertificate {
         return grant == null ? null : grant.dan();
     }
 
-    /** 證書上的名字，還不知道時是空字串。 */
+    /** 16 碼證號，還沒入段是 null。驗證碼照證書上的名字算，名字固定之後證號就不變。 */
+    public String number() {
+        return grant == null ? null : CertificateNumber.full(grant.serial(), name);
+    }
+
+    /** 證書上的名字，還不知道時是空字串。玩家不能改：練習牌局是第一局的名字，修業檔案是檔案的名字。 */
     public String name() {
         return name;
     }
 
-    /** 還沒有名字時才填，例如第一次記進統計的那一局。回傳有沒有改。 */
+    /** 練習牌局：還沒有名字時才填，用第一次記進統計那一局的名字，之後換名字打也不變。回傳有沒有改。 */
     public boolean fillName(String playerName) {
-        String trimmed = playerName == null ? "" : playerName.trim();
+        String trimmed = trimmed(playerName);
         if (!name.isEmpty() || trimmed.isEmpty()) {
             return false;
         }
-        name = trimmed.length() > MAX_NAME_LENGTH ? trimmed.substring(0, MAX_NAME_LENGTH) : trimmed;
+        name = trimmed;
         return true;
     }
 
-    /** 玩家自己改名字；空白或超過 MAX_NAME_LENGTH 字丟 IllegalArgumentException。 */
-    public void rename(String newName) {
-        String trimmed = newName == null ? "" : newName.trim();
-        if (trimmed.isEmpty() || trimmed.length() > MAX_NAME_LENGTH) {
-            throw new IllegalArgumentException("名字要 1 到 " + MAX_NAME_LENGTH + " 個字");
+    /** 修業檔案：一律是建立檔案時取的名字。回傳有沒有改。 */
+    public boolean matchProfile(String profileName) {
+        String trimmed = trimmed(profileName);
+        if (trimmed.isEmpty() || trimmed.equals(name)) {
+            return false;
         }
         name = trimmed;
+        return true;
+    }
+
+    private static String trimmed(String text) {
+        String trimmed = text == null ? "" : text.trim();
+        return trimmed.length() > MAX_NAME_LENGTH ? trimmed.substring(0, MAX_NAME_LENGTH) : trimmed;
     }
 
     public String avatar() {
@@ -89,8 +125,13 @@ public final class DanCertificate {
             return null;
         }
         PlayerStats.Totals pool = best.pool(stats);
-        grant = new Grant(best, date, pool.rounds(), pool.wins(), pool.selfDraws());
+        grant = new Grant(best, date, pool.rounds(), pool.wins(), pool.selfDraws(), pool.dealIns(),
+                CertificateNumber.body(best, date, NUMBERS));
         return best;
+    }
+
+    private static boolean isSerial(String text) {
+        return text.length() == CertificateNumber.BODY_LENGTH && text.startsWith(CertificateNumber.PREFIX);
     }
 
     /** 明碼的文字檔，測試用；遊戲裡用 Records 封存。 */
@@ -111,8 +152,12 @@ public final class DanCertificate {
         certificate.avatar = values.getProperty("avatar", "").trim();
         Dan dan = Dan.parse(values.getProperty("dan", "").trim());
         if (dan != null) {
-            certificate.grant = new Grant(dan, values.getProperty("date", "").trim(), number(values, "rounds"),
-                    number(values, "wins"), number(values, "selfDraws"));
+            int dealIns = values.getProperty("dealIns") == null ? Grant.UNKNOWN : number(values, "dealIns");
+            Grant grant = new Grant(dan, values.getProperty("date", "").trim(), number(values, "rounds"),
+                    number(values, "wins"), number(values, "selfDraws"), dealIns);
+            String saved = values.getProperty("serial", "").trim();
+            certificate.grant = isSerial(saved) ? new Grant(grant.dan(), grant.date(), grant.rounds(), grant.wins(),
+                    grant.selfDraws(), grant.dealIns(), saved) : grant;
         }
         return certificate;
     }
@@ -132,6 +177,10 @@ public final class DanCertificate {
             values.setProperty("rounds", String.valueOf(grant.rounds()));
             values.setProperty("wins", String.valueOf(grant.wins()));
             values.setProperty("selfDraws", String.valueOf(grant.selfDraws()));
+            if (grant.knowsDealIns()) {
+                values.setProperty("dealIns", String.valueOf(grant.dealIns()));
+            }
+            values.setProperty("serial", grant.serial());
         }
         store.write(values, file);
     }

@@ -1,5 +1,6 @@
 package ezmj.ui;
 
+import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
@@ -20,12 +21,12 @@ import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JTextField;
 import javax.swing.SwingConstants;
-import javax.swing.event.DocumentEvent;
-import javax.swing.event.DocumentListener;
 
+import ezmj.model.BadWords;
 import ezmj.model.BotLevel;
 import ezmj.model.GameConfig;
 
@@ -36,6 +37,7 @@ import ezmj.model.GameConfig;
 public final class StartPanel extends JPanel {
 
     static final int MAX_NAME_LENGTH = 8;
+    private static final String TITLE = "練習牌局";
     static final Integer[] CHIP_OPTIONS = {10_000, 20_000, 50_000, 100_000, 500_000, 1_000_000, 5_000_000, 10_000_000};
     static final Integer[] BASE_OPTIONS = {50, 100, 300, 500, 1_000, 5_000, 10_000, 50_000, 100_000, 500_000, 1_000_000};
     static final Integer[] TAI_OPTIONS = {10, 20, 50, 100, 200, 5_000, 10_000, 50_000, 100_000, 200_000, 500_000, 1_000_000};
@@ -76,7 +78,7 @@ public final class StartPanel extends JPanel {
         c.gridy++;
         c.insets = new Insets(0, 0, 4, 0);
         card.add(title, c);
-        JLabel subtitle = new JLabel("每場自訂籌碼、底台與電腦等級，成就、統計與榮譽榜和修業檔案分開記", SwingConstants.CENTER);
+        JLabel subtitle = new JLabel("自己擺一桌練練手，籌碼、底台與對手都由你作主。", SwingConstants.CENTER);
         subtitle.setFont(Theme.font(Font.PLAIN, 14f));
         subtitle.setForeground(Theme.MUTED);
         c.gridy++;
@@ -99,12 +101,11 @@ public final class StartPanel extends JPanel {
         c.insets = new Insets(8, 0, 0, 0);
         card.add(payWarning, c);
         for (JComboBox<Integer> box : List.of(chipBox, baseBox, taiBox)) {
-            box.addActionListener(e -> syncStartButton());
+            box.addActionListener(e -> paysFit(chipBox, baseBox, taiBox, payWarning));
         }
 
         startButton.setFont(Theme.font(Font.BOLD, 20f));
         syncSizes();
-        startButton.setEnabled(false);
         c.gridy++;
         c.insets = new Insets(8, 0, 0, 0);
         card.add(startButton, c);
@@ -130,27 +131,31 @@ public final class StartPanel extends JPanel {
 
         add(card);
 
+        // 按鈕一直可以按，名字沒填、太長、有不雅字眼或底台太大，按下去才跳出提醒
         Runnable submit = () -> {
-            String name = nameField.getText().trim();
-            if (startButton.isEnabled()) {
-                onStart.accept(new GameConfig(name, (Integer) chipBox.getSelectedItem(),
-                        (Integer) baseBox.getSelectedItem(), (Integer) taiBox.getSelectedItem(),
-                        levelBoxes.stream().map(box -> (BotLevel) box.getSelectedItem()).collect(Collectors.toList()),
-                        expertBox.isSelected()));
+            if (!nameAccepted(nameField, MAX_NAME_LENGTH, TITLE)) {
+                return;
             }
+            if (!paysFit(chipBox, baseBox, taiBox, payWarning)) {
+                warn(this, GameConfig.PAYS_TOO_HIGH + "。", TITLE);
+                return;
+            }
+            onStart.accept(new GameConfig(nameField.getText().strip(), (Integer) chipBox.getSelectedItem(),
+                    (Integer) baseBox.getSelectedItem(), (Integer) taiBox.getSelectedItem(),
+                    levelBoxes.stream().map(box -> (BotLevel) box.getSelectedItem()).collect(Collectors.toList()),
+                    expertBox.isSelected()));
         };
         startButton.addActionListener(e -> submit.run());
         nameField.addActionListener(e -> submit.run());
     }
 
-    /** 專家模式說的是哪些不一樣，開始畫面、修業建立檔案與說明都用這句。 */
+    /** 專家模式說的是哪些不一樣，說明的「遊戲玩法」與「基本規則」用這句；畫面上不寫，只在說明裡。 */
     static final String EXPERT_SUMMARY = "沒有聽牌提示，紀錄只留一筆，棄牌每家只看得到最後一張，也不顯示剩幾張";
 
-    /** 綠底畫面上的專家模式勾選框，旁邊寫著專家模式有哪些不一樣。 */
+    /** 綠底畫面上的專家模式勾選框，左邊的欄名已經寫「專家模式」，這裡只寫「開啟」；有哪些不一樣寫在說明。 */
     static JCheckBox expertCheckBox() {
-        // 說明比下拉選單長，折成兩行，畫面才不會被撐寬
-        JCheckBox box = new JCheckBox(HomePanel.wrapHtml(HomePanel.escape(EXPERT_SUMMARY), Theme.scaled(300)));
-        box.setFont(Theme.font(Font.PLAIN, 14f));
+        JCheckBox box = new JCheckBox("開啟");
+        box.setFont(Theme.font(Font.PLAIN, 16f));
         box.setForeground(Theme.TEXT);
         box.setOpaque(false);
         box.setFocusPainted(false);
@@ -187,28 +192,28 @@ public final class StartPanel extends JPanel {
 
     private void styleName() {
         nameField.setFont(Theme.font(Font.PLAIN, 17f));
-        nameField.getDocument().addDocumentListener(new DocumentListener() {
-            @Override
-            public void insertUpdate(DocumentEvent e) {
-                syncStartButton();
-            }
-
-            @Override
-            public void removeUpdate(DocumentEvent e) {
-                syncStartButton();
-            }
-
-            @Override
-            public void changedUpdate(DocumentEvent e) {
-                syncStartButton();
-            }
-        });
     }
 
-    private void syncStartButton() {
-        String name = nameField.getText().trim();
-        boolean paysFit = paysFit(chipBox, baseBox, taiBox, payWarning);
-        startButton.setEnabled(!name.isEmpty() && name.length() <= MAX_NAME_LENGTH && paysFit);
+    /**
+     * 名字沒填、超過 maxLength 字或有不雅字眼，就跳出提醒、把游標放回名字欄，回傳 false。
+     * 練習牌局與連線對戰的按鈕都不因為名字變灰，按下去才用這個檢查。
+     */
+    static boolean nameAccepted(JTextField field, int maxLength, String title) {
+        String name = field.getText().strip();
+        String problem = name.isEmpty() ? "請先輸入名字。"
+                : name.codePointCount(0, name.length()) > maxLength ? "名字最多 " + maxLength + " 字。"
+                : BadWords.contains(name) ? BadWords.NAME_REJECTED : null;
+        if (problem == null) {
+            return true;
+        }
+        warn(field, problem, title);
+        field.requestFocusInWindow();
+        return false;
+    }
+
+    /** 按了按鈕卻還不能做的提醒。 */
+    static void warn(Component parent, String text, String title) {
+        JOptionPane.showMessageDialog(parent, text, title, JOptionPane.WARNING_MESSAGE);
     }
 
     /** 底和每台不能大於籌碼本金的提示。沒事時是空白，位置先留著，選項一改畫面才不會跳。 */

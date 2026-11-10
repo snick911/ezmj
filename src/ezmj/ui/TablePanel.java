@@ -37,6 +37,7 @@ import javax.swing.text.AbstractDocument;
 import ezmj.engine.GameView;
 import ezmj.engine.RoundEvent;
 import ezmj.engine.RoundView;
+import ezmj.model.BadWords;
 import ezmj.model.Dice;
 import ezmj.model.Player;
 import ezmj.model.Tile;
@@ -442,9 +443,14 @@ public final class TablePanel extends JPanel {
         chatNotice.setText(safeLabel(text));
     }
 
+    /** 有不雅字眼就不送，字留在輸入框讓他改。 */
     private void sendChat() {
         String text = chatField.getText().strip();
         if (chatSender == null || text.isEmpty()) {
+            return;
+        }
+        if (BadWords.contains(text)) {
+            showChatNotice(BadWords.CHAT_REJECTED);
             return;
         }
         chatSender.accept(text);
