@@ -56,8 +56,9 @@ public final class GameReport {
     private static final Color[] MEDALS = {new Color(0xE8C05A), new Color(0xCFD8DC), new Color(0xD08C4E),
         new Color(0x7C948A)};
     private static final Color MEDAL_INK = new Color(0x1B1B1B);
-    private static final Color MINE_CARD = new Color(232, 192, 90, 41);
-    private static final Color OTHER_CARD = new Color(0, 0, 0, 77);
+    private static final Color MINE_ROW = new Color(232, 192, 90, 56);
+    private static final Color SHARE_PANEL = new Color(0, 0, 0, 77);
+    private static final Color SHARE_RULE = new Color(255, 255, 255, 26);
     private static final Color GOLD_FAINT = new Color(232, 192, 90, 89);
     /** 印出來的顏色：贏是紅字、輸是綠字，和看盤的習慣一樣。 */
     private static final Color INK = new Color(0x1E2A25);
@@ -80,6 +81,20 @@ public final class GameReport {
     private static final double RANK_TOP = 226;
     private static final double FIRST_TABLE_TOP = 514;
     private static final double NEXT_TABLE_TOP = 174;
+
+    /** 結果圖上成績表的左緣，右邊也留一樣寬。 */
+    public static final double SHARE_TABLE_X = 66;
+    private static final double SHARE_TABLE_TOP = 372;
+    private static final double SHARE_HEAD_H = 76;
+    public static final double SHARE_ROW_H = 172;
+    /** 自己那一列的金框比表格左右各寬這麼多。 */
+    public static final double MINE_OUTSET = 8;
+    /** 名次與玩家、胡牌、自摸、放槍、輸贏、籌碼，加起來是圖寬扣掉左右的 SHARE_TABLE_X。 */
+    private static final double[] SHARE_COLUMNS = {360, 80, 80, 80, 180, 168};
+    /** 數字放不下時縮到這麼小，比名字縮得多，數字不能截掉。 */
+    private static final double SHARE_MIN_NUMBER = 20;
+    private static final Align[] SHARE_ALIGNS = {Align.LEFT, Align.CENTER, Align.CENTER, Align.CENTER, Align.RIGHT,
+        Align.RIGHT};
 
     private final GameView game;
     private final String headline;
@@ -122,7 +137,7 @@ public final class GameReport {
 
     // ---- 結果圖 ----
 
-    /** 最終排名的圖，四家各一張卡片，自己的有金框。 */
+    /** 這一場的成績表，欄位和牌局結束視窗的表格一樣。自己那一列有金色的底、粗金框與金色名字，金框比表格左右各寬 MINE_OUTSET。 */
     public BufferedImage shareImage() {
         BufferedImage image = new BufferedImage(IMAGE_W, IMAGE_H, BufferedImage.TYPE_INT_RGB);
         Graphics2D g = graphics(image);
@@ -148,56 +163,79 @@ public final class GameReport {
         text(g, when() + (roomName.isEmpty() ? "" : "　" + roomName), false, 28, 20, IMAGE_W - 180, middle, 304,
                 Align.CENTER);
 
-        double top = 352;
-        double cardH = 196;
-        double gap = 22;
-        for (int i = 0; i < ranking.length; i++) {
-            paintRankCard(g, ranking[i], ranks[i], 90, top + i * (cardH + gap), 900, cardH);
-        }
+        paintShareTable(g, ranking, ranks);
         g.setColor(Theme.MUTED);
+        text(g, "胡牌次數包含自摸", false, 26, 20, IMAGE_W - 180, middle, shareRowTop(SEATS) + 44, Align.CENTER);
         text(g, footer(), false, 26, 18, IMAGE_W - 180, middle, IMAGE_H - 82, Align.CENTER);
         g.dispose();
         return image;
     }
 
-    private void paintRankCard(Graphics2D g, Player player, int rank, double x, double y, double w, double h) {
+    /** 結果圖上第 index 列（0 是第一名）的上緣；index 是 4 時是表格的下緣。 */
+    public static double shareRowTop(int index) {
+        return SHARE_TABLE_TOP + SHARE_HEAD_H + index * SHARE_ROW_H;
+    }
+
+    private void paintShareTable(Graphics2D g, Player[] ranking, int[] ranks) {
+        double width = sum(SHARE_COLUMNS);
+        g.setColor(SHARE_PANEL);
+        g.fill(new RoundRectangle2D.Double(SHARE_TABLE_X, SHARE_TABLE_TOP, width, shareRowTop(SEATS) - SHARE_TABLE_TOP,
+                30, 30));
+        String[] heads = {"名次　玩家", "胡牌", "自摸", "放槍", "輸贏", "籌碼"};
+        g.setColor(Theme.MUTED);
+        for (int i = 0; i < heads.length; i++) {
+            cell(g, heads[i], true, 28, 20, SHARE_TABLE_X, SHARE_COLUMNS, i, SHARE_ALIGNS[i],
+                    SHARE_TABLE_TOP + SHARE_HEAD_H / 2);
+        }
+        g.setColor(GOLD_FAINT);
+        g.fill(new Rectangle2D.Double(SHARE_TABLE_X, shareRowTop(0) - 1, width, 2));
+        for (int i = 0; i < ranking.length; i++) {
+            // 自己那一列有金框，上下就不畫分隔線
+            if (i + 1 < ranking.length && ranking[i].seat() != 0 && ranking[i + 1].seat() != 0) {
+                g.setColor(SHARE_RULE);
+                g.fill(new Rectangle2D.Double(SHARE_TABLE_X + 20, shareRowTop(i + 1) - 1, width - 40, 2));
+            }
+            paintShareRow(g, ranking[i], ranks[i], shareRowTop(i));
+        }
+    }
+
+    private void paintShareRow(Graphics2D g, Player player, int rank, double top) {
         boolean mine = player.seat() == 0;
         GameRecord record = game.record(player.seat(), "");
-        g.setColor(mine ? MINE_CARD : OTHER_CARD);
-        g.fill(new RoundRectangle2D.Double(x, y, w, h, 34, 34));
+        double middle = top + SHARE_ROW_H / 2;
         if (mine) {
+            RoundRectangle2D frame = new RoundRectangle2D.Double(SHARE_TABLE_X - MINE_OUTSET, top + 6,
+                    sum(SHARE_COLUMNS) + MINE_OUTSET * 2, SHARE_ROW_H - 12, 28, 28);
+            g.setColor(MINE_ROW);
+            g.fill(frame);
             g.setColor(Theme.GOLD);
-            g.setStroke(roundStroke(4));
-            g.draw(new RoundRectangle2D.Double(x, y, w, h, 34, 34));
+            g.setStroke(roundStroke(5));
+            g.draw(frame);
         }
 
-        double cx = x + 92;
-        double cy = y + h / 2;
+        double cx = SHARE_TABLE_X + 12 + 36;
         g.setColor(MEDALS[Math.min(rank, MEDALS.length) - 1]);
-        g.fill(new Ellipse2D.Double(cx - 50, cy - 50, 100, 100));
+        g.fill(new Ellipse2D.Double(cx - 36, middle - 36, 72, 72));
         g.setColor(MEDAL_INK);
-        text(g, String.valueOf(rank), true, 56, 56, 90, cx, cy + 2, Align.CENTER);
+        text(g, String.valueOf(rank), true, 42, 42, 64, cx, middle + 2, Align.CENTER);
 
-        double nameX = x + 172;
-        double nameMax = mine ? 300 : 360;
+        double nameX = cx + 36 + 20;
+        double nameMax = SHARE_TABLE_X + SHARE_COLUMNS[0] - 12 - nameX;
+        g.setColor(mine ? Theme.GOLD : Theme.TEXT);
+        text(g, player.name(), true, 44, 26, nameMax, nameX, middle, Align.LEFT);
+
         g.setColor(Theme.TEXT);
-        double nameWidth = text(g, player.name(), true, 46, 30, nameMax, nameX, y + 70, Align.LEFT);
-        if (mine) {
-            double tagX = nameX + nameWidth + 14;
-            g.setColor(Theme.GOLD);
-            g.fill(new RoundRectangle2D.Double(tagX, y + 50, 52, 40, 12, 12));
-            g.setColor(MEDAL_INK);
-            text(g, "你", true, 28, 28, 52, tagX + 26, y + 71, Align.CENTER);
+        int[] counts = {record.wins(), record.selfDraws(), record.dealIns()};
+        for (int i = 0; i < counts.length; i++) {
+            cell(g, String.valueOf(counts[i]), mine, 44, SHARE_MIN_NUMBER, SHARE_TABLE_X, SHARE_COLUMNS, 1 + i,
+                    Align.CENTER, middle);
         }
-        g.setColor(Theme.MUTED);
-        text(g, "胡 " + record.wins() + "　自摸 " + record.selfDraws() + "　放槍 " + record.dealIns(), false, 28, 20,
-                360, nameX, y + 140, Align.LEFT);
-
-        double right = x + w - 48;
         g.setColor(ResultDialog.moneyColor(record.winnings()));
-        text(g, signed(record.winnings()), true, 56, 32, 300, right, y + 72, Align.RIGHT);
-        g.setColor(Theme.MUTED);
-        text(g, "籌碼 " + grouped(player.chips()), false, 28, 20, 300, right, y + 140, Align.RIGHT);
+        cell(g, signed(record.winnings()), true, 42, SHARE_MIN_NUMBER, SHARE_TABLE_X, SHARE_COLUMNS, 4, Align.RIGHT,
+                middle);
+        g.setColor(Theme.TEXT);
+        cell(g, grouped(player.chips()), mine, 36, SHARE_MIN_NUMBER, SHARE_TABLE_X, SHARE_COLUMNS, 5, Align.RIGHT,
+                middle);
     }
 
     // ---- 輸贏歷程 PDF ----
@@ -391,10 +429,16 @@ public final class GameReport {
         }
     }
 
-    /** 第 column 欄的一格，左右各留 12 像素。放不下就縮小字，再放不下就截掉。 */
+    /** PDF 表格第 column 欄的一格。 */
     private static void cell(Graphics2D g, String value, boolean bold, double size, double[] columns, int column,
                              Align align, double middle) {
-        double left = MARGIN;
+        cell(g, value, bold, size, size * .75, MARGIN, columns, column, align, middle);
+    }
+
+    /** 從 tableLeft 開始的表格第 column 欄的一格，左右各留 12 像素。放不下就縮小字，縮到 minSize 還放不下就截掉。 */
+    private static void cell(Graphics2D g, String value, boolean bold, double size, double minSize, double tableLeft,
+                             double[] columns, int column, Align align, double middle) {
+        double left = tableLeft;
         for (int i = 0; i < column; i++) {
             left += columns[i];
         }
@@ -402,7 +446,7 @@ public final class GameReport {
         double width = columns[column] - pad * 2;
         double x = align == Align.LEFT ? left + pad : align == Align.RIGHT ? left + columns[column] - pad
                 : left + columns[column] / 2;
-        text(g, value, bold, size, size * .75, width, x, middle, align);
+        text(g, value, bold, size, minSize, width, x, middle, align);
     }
 
     private static double sum(double[] columns) {

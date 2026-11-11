@@ -33,7 +33,7 @@ final class ReportTest {
     static void run() {
         T.section("結果圖與輸贏 PDF");
         T.test("PDF 的目錄指得到每個物件、標題是中文", ReportTest::pdfStructure);
-        T.test("結果圖是 1080 × 1350", ReportTest::shareImage);
+        T.test("結果圖是 1080 × 1350，自己那一列有金框", ReportTest::shareImage);
         T.test("一頁放得下就一頁，放不下接到下一頁", ReportTest::pageCount);
         T.test("檔名用牌局結束的時間", ReportTest::fileNames);
     }
@@ -50,9 +50,32 @@ final class ReportTest {
     }
 
     private static void shareImage() {
-        BufferedImage image = new GameReport(playedGame(1), null, "", FINISHED).shareImage();
+        GameSession game = playedGame(1);
+        BufferedImage image = new GameReport(game, null, "", FINISHED).shareImage();
         T.eq(GameReport.IMAGE_W, image.getWidth(), "寬");
         T.eq(GameReport.IMAGE_H, image.getHeight(), "高");
+
+        // 照籌碼排名，籌碼一樣時座位小的在前面，所以排在自己（座位 0）前面的是籌碼比較多的
+        int mine = 0;
+        for (int seat = 1; seat < 4; seat++) {
+            if (game.player(seat).chips() > game.player(0).chips()) {
+                mine++;
+            }
+        }
+        int x = (int) (GameReport.SHARE_TABLE_X - GameReport.MINE_OUTSET);
+        for (int row = 0; row < 4; row++) {
+            int y = (int) (GameReport.shareRowTop(row) + GameReport.SHARE_ROW_H / 2);
+            T.eq(row == mine, isGold(image.getRGB(x, y)),
+                    "第 " + (row + 1) + " 列" + (row == mine ? "是自己，要有金框" : "不是自己，不該有金框"));
+        }
+    }
+
+    /** 和牌桌的金色 #E8C05A 差不多。 */
+    private static boolean isGold(int rgb) {
+        int r = rgb >> 16 & 0xFF;
+        int g = rgb >> 8 & 0xFF;
+        int b = rgb & 0xFF;
+        return Math.abs(r - 0xE8) < 16 && Math.abs(g - 0xC0) < 16 && Math.abs(b - 0x5A) < 16;
     }
 
     private static void pageCount() {
