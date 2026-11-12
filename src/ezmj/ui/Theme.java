@@ -37,6 +37,11 @@ final class Theme {
     private static final String BRUSH_FAMILY = pickFamily(FAMILY,
             "DFKai-SB", "標楷體", "BiauKai", "Kaiti TC", "AR PL UKai TW", "KaiTi");
 
+    /** 「字體大小」設定的比例。 */
+    private static float fontPercentScale = 1f;
+    /** 視窗比預設解析度大時，整個畫面跟著放大的比例，最小是 1，見 Resolution.zoomFor。 */
+    private static float zoom = 1f;
+    /** 字體大小乘上視窗放大的比例，font 與 scaled 用這個。 */
     private static float fontScale = 1f;
     private static double tileScale = 1;
 
@@ -59,9 +64,14 @@ final class Theme {
         return new Font(BRUSH_FAMILY, Font.BOLD, 1).deriveFont(size);
     }
 
-    /** 會隨字體大小設定縮放的字型。 */
+    /** 會隨字體大小設定與視窗大小縮放的字型。 */
     static Font font(int style, float size) {
         return fixedFont(style, size * fontScale);
+    }
+
+    /** 牌桌畫布上的字：畫布自己照視窗大小縮放，這裡只跟字體大小設定，不然視窗變大時會放大兩次。 */
+    static Font canvasFont(int style, float size) {
+        return fixedFont(style, size * fontPercentScale);
     }
 
     /** 不縮放的字型，用在要剛好塞進牌面的文字。 */
@@ -69,7 +79,7 @@ final class Theme {
         return new Font(FAMILY, style, 1).deriveFont(size);
     }
 
-    /** 依字體大小設定縮放的尺寸，用在要容納文字的固定寬高。 */
+    /** 依字體大小設定與視窗大小縮放的尺寸，用在要容納文字的固定寬高。 */
     static int scaled(int size) {
         return Math.round(size * fontScale);
     }
@@ -85,7 +95,22 @@ final class Theme {
 
     /** 改變字體大小，並套用到 roots 底下已經建立的元件。 */
     static void setFontPercent(int percent, Component... roots) {
-        float next = percent / 100f;
+        fontPercentScale = percent / 100f;
+        applyScale(roots);
+    }
+
+    static float zoom() {
+        return zoom;
+    }
+
+    /** 視窗大小改變時，整個畫面跟著放大縮小，套用到 roots 底下已經建立的元件。 */
+    static void setZoom(float next, Component... roots) {
+        zoom = next;
+        applyScale(roots);
+    }
+
+    private static void applyScale(Component... roots) {
+        float next = fontPercentScale * zoom;
         float ratio = next / fontScale;
         fontScale = next;
         UIManager.put("OptionPane.messageFont", font(Font.PLAIN, 15f));

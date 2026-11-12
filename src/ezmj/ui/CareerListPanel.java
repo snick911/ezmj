@@ -121,7 +121,8 @@ final class CareerListPanel extends JPanel {
                 name.setFont(Theme.font(Font.BOLD, 17f));
                 name.setForeground(Theme.TEXT);
                 text.add(name, line);
-                text.add(muted((profile.expert() ? "專家模式・" : "") + "挑戰 " + profile.clearedCount() + " / " + Challenge.values().length
+                text.add(muted((profile.expert() ? "專家模式・" : "") + "挑戰 " + profile.clearedCount(false) + " / " + Challenge.line(false).size()
+                        + "・修練 " + profile.clearedCount(true) + " / " + Challenge.line(true).size()
                         + "（★ " + profile.totalStars() + "）"
                         + "・起始 " + profile.startingChips() + "・破產 " + profile.bankruptcies() + " 次・"
                         + profile.created() + " 建立"

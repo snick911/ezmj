@@ -310,7 +310,16 @@ final class TablePresenter {
         return seat == SELF_SEAT ? BambooCall.TIAO : BambooCall.forName(table.round().player(seat).name());
     }
 
-    /** 喊牌和大字同時出現，打牌時喊出打的是什麼牌。用出聲那一家的聲音；流局沒有特定的人，用女聲。 */
+    /**
+     * 連莊的局開始時，司儀說「連莊，連N拉N」，和「連莊」的大字同時；沒有動畫時也說。語音關著時不說。
+     */
+    void announceStreak(int streak) {
+        if (streak > 0 && settings.voiceEnabled()) {
+            VoiceLines.announceStreak(streak);
+        }
+    }
+
+    /** 喊牌和大字同時出現，打牌時喊出打的是什麼牌。用出聲那一家的聲音；流局沒有特定的人，由司儀宣布。 */
     private void speak(RoundEvent event) {
         Gender gender = event.seat() < 0 ? Gender.FEMALE : voiceOf(event.seat());
         switch (event.type()) {
@@ -335,7 +344,7 @@ final class TablePresenter {
                 VoiceLines.play(VoiceLines.Line.SELF_WIN, gender);
                 break;
             case DRAWN_GAME:
-                VoiceLines.play(VoiceLines.Line.DRAWN_GAME, gender);
+                VoiceLines.announceDrawnGame();
                 break;
             case LISTEN:
                 VoiceLines.play(VoiceLines.Line.LISTEN, gender);

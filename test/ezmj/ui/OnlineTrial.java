@@ -46,6 +46,7 @@ import javax.swing.SwingUtilities;
 import ezmj.model.GameSpeed;
 import ezmj.online.RoomListing;
 import ezmj.online.ServerAddress;
+import ezmj.online.Substitution;
 
 /**
  * 實機試打：真的開一台服務器，開真的 Swing 視窗，用按按鈕和點牌的方式打連線牌局，再驗證斷線重連。
@@ -72,28 +73,40 @@ public final class OnlineTrial {
     private OnlineTrial() {
     }
 
+    /** 第三個參數可以只跑一項：local、reconnect、gameover 或 substitute；沒給就全部跑。 */
     public static void main(String[] args) throws Exception {
         if (args.length > 0 && args[0].equals("--client")) {
             new Client(args).run();
         } else {
-            orchestrate(Path.of(args[0]).toAbsolutePath().toString(), Path.of(args[1]).toAbsolutePath());
+            orchestrate(Path.of(args[0]).toAbsolutePath().toString(), Path.of(args[1]).toAbsolutePath(),
+                    args.length > 2 ? args[2] : null);
         }
     }
 
     // ---------------------------------------------------------------- 總指揮
 
-    private static void orchestrate(String serverClasspath, Path out) throws Exception {
+    private static void orchestrate(String serverClasspath, Path out, String only) throws Exception {
         Files.createDirectories(out);
         int failures = 0;
-        failures += singlePlayer(out.resolve("local"));
+        if (only == null || only.equals("local")) {
+            failures += singlePlayer(out.resolve("local"));
+        }
         int port = freePort();
         Process server = new ProcessBuilder(java(), "-Dfile.encoding=UTF-8", "-cp", serverClasspath,
                 "ezmj.server.EzmjServer", String.valueOf(port))
+                .directory(out.toFile())
                 .redirectErrorStream(true).redirectOutput(out.resolve("server.log").toFile()).start();
         try {
             Thread.sleep(1500);
-            failures += reconnect(out.resolve("reconnect"), port);
-            failures += gameOver(out.resolve("gameover"), port);
+            if (only == null || only.equals("reconnect")) {
+                failures += reconnect(out.resolve("reconnect"), port);
+            }
+            if (only == null || only.equals("gameover")) {
+                failures += gameOver(out.resolve("gameover"), port);
+            }
+            if (only == null || only.equals("substitute")) {
+                failures += substitute(out.resolve("substitute"), port);
+            }
         } finally {
             server.destroy();
         }
@@ -146,6 +159,19 @@ public final class OnlineTrial {
                 "--expert");
         Process guest = client(dir, "乙", "guest", port, "--secondGame", "--roomName", ROOM_NAME, "--fromLobby", "--chat",
                 "--expert");
+        return expect("甲", host, 0) + expect("乙", guest, 0);
+    }
+
+    /**
+     * 隨時補位（ezmjService 0.10.0 起）：房主開公開的隨時補位房間，一個人就開打；來賓從大廳看到「牌局中」的房間，
+     * 連點兩下、確認之後在大廳等上場，上場後雙方的牌桌都要有補位的公告，聊天區也要留一行。來賓打幾手就離開，房主跟著離開。
+     */
+    private static int substitute(Path dir, int port) throws Exception {
+        Files.createDirectories(dir);
+        Process host = client(dir, "甲", "host", port, "--roomName", ROOM_NAME, "--substitute", "--startAlone",
+                "--leaveWhen", "guest-done");
+        Process guest = client(dir, "乙", "guest", port, "--roomName", ROOM_NAME, "--substituteFromLobby",
+                "--leaveAfterSubstituted", "4");
         return expect("甲", host, 0) + expect("乙", guest, 0);
     }
 
@@ -222,6 +248,10 @@ public final class OnlineTrial {
         private boolean lobbyWaitLogged;
         private boolean chatSent;
         private boolean sawChat;
+        private boolean sawSubstituteConfirm;
+        private boolean sawSubstituteWaiting;
+        private boolean sawSubstituted;
+        private int decisionsAtSubstituted;
 
         Client(String[] args) throws IOException {
             role = args[1];
@@ -294,6 +324,12 @@ public final class OnlineTrial {
             if (options.containsKey("--chat") && !sawChat) {
                 fail("應該要看到房主說的話");
             }
+            if (options.containsKey("--substituteFromLobby") && !sawSubstituteConfirm) {
+                fail("加入牌局中的房間之前應該要先問一次");
+            }
+            if ((options.containsKey("--substituteFromLobby") || options.containsKey("--substitute")) && !sawSubstituted) {
+                fail("應該要看到補位的公告");
+            }
             log("通過，結果視窗 " + results + " 次，自己決定 " + decisions + " 次，本機紀錄檔 " + found);
             System.exit(0);
         }
@@ -304,10 +340,11 @@ public final class OnlineTrial {
                     return;
                 }
             }
-            for (Component card : ((Container) frame.getContentPane()).getComponents()) {
-                if (!card.isVisible()) {
+            for (Component shown : ((Container) frame.getContentPane()).getComponents()) {
+                if (!shown.isVisible()) {
                     continue;
                 }
+                Component card = unwrap(shown);
                 if (card instanceof HomePanel) {
                     onHome((HomePanel) card);
                 } else if (card instanceof StartPanel) {
@@ -321,6 +358,18 @@ public final class OnlineTrial {
                 }
                 return;
             }
+        }
+
+        /** 開始畫面、大廳這些外面包了 FitScroll：捲軸裡一層 View，裡面才是真正的畫面。房間的捲軸也一樣。 */
+        private static Component unwrap(Component card) {
+            if (!(card instanceof JScrollPane)) {
+                return card;
+            }
+            Component view = ((JScrollPane) card).getViewport().getView();
+            if (view instanceof Container && ((Container) view).getComponentCount() == 1) {
+                return ((Container) view).getComponent(0);
+            }
+            return view;
         }
 
         private boolean handleDialog(JDialog dialog) {
@@ -351,6 +400,11 @@ public final class OnlineTrial {
                 JButton discard = buttons.stream().filter(b -> b.getText().equals("不存檔離開")).findFirst().orElse(buttons.get(0));
                 click(discard);
             } else if (dialog.getTitle().equals("練習牌局")) {
+                click(buttons.get(0));
+            } else if (dialog.getTitle().equals("連線對戰") && text.startsWith("這間正在打牌")
+                    && options.containsKey("--substituteFromLobby")) {
+                sawSubstituteConfirm = true;
+                shotOf(dialog, "substitute-confirm");
                 click(buttons.get(0));
             } else {
                 shot("message");
@@ -393,6 +447,9 @@ public final class OnlineTrial {
             }
             shot("form");
             if (filledForm) {
+                if (options.containsKey("--substituteFromLobby")) {
+                    checkSubstituteWaiting(panel);
+                }
                 return;
             }
             List<JTextField> fields = all(panel, JTextField.class);
@@ -413,7 +470,9 @@ public final class OnlineTrial {
                         break;
                     }
                     String code = read(codeFile);
-                    if (options.containsKey("--fromLobby")) {
+                    if (options.containsKey("--substituteFromLobby")) {
+                        substituteFromLobby(panel, code);
+                    } else if (options.containsKey("--fromLobby")) {
                         joinFromLobby(panel, code);
                     } else if (!options.containsKey("--private") || hiddenFromLobby(panel, code)) {
                         fields.get(0).setText(name);
@@ -454,7 +513,76 @@ public final class OnlineTrial {
             }
             ((JCheckBox) field(panel, "privateBox")).setSelected(options.containsKey("--private"));
             ((JCheckBox) field(panel, "expertBox")).setSelected(options.containsKey("--expert"));
+            ((JCheckBox) field(panel, "substituteBox")).setSelected(options.containsKey("--substitute"));
             shot("form-filled");
+        }
+
+        /**
+         * 補位：等房間以「牌局中」出現在大廳（服務器只列給會補位的客戶端），「隨時補位」要打勾，選它再連點兩下，
+         * 接著會跳出確認，見 onOptionPane。
+         */
+        private void substituteFromLobby(OnlinePanel panel, String code) {
+            List<RoomListing> listed = listed(panel);
+            int row = -1;
+            for (int i = 0; i < listed.size(); i++) {
+                if (listed.get(i).code().equals(code) && listed.get(i).playing()) {
+                    row = i;
+                }
+            }
+            if (row < 0) {
+                if (!lobbyWaitLogged) {
+                    lobbyWaitLogged = true;
+                    log("等房間 " + code + " 以牌局中出現在大廳");
+                }
+                return;
+            }
+            RoomListing room = listed.get(row);
+            JTable table = (JTable) field(panel, "roomTable");
+            if (!room.settings().substitute() || !"✓".equals(table.getValueAt(row, 5))) {
+                fail("大廳列的補位房間不對：" + room);
+            }
+            all(panel, JTextField.class).get(0).setText(name);
+            table.setRowSelectionInterval(row, row);
+            filledForm = true;
+            shot("lobby-playing");
+            log("從大廳補位「" + room.name() + "」，還能換 " + room.openSeats() + " 家，列表：" + ((JLabel) field(panel, "listStatus")).getText());
+            Rectangle cell = table.getCellRect(row, 0, true);
+            SwingUtilities.invokeLater(() -> table.dispatchEvent(new MouseEvent(table, MouseEvent.MOUSE_CLICKED,
+                    System.currentTimeMillis(), 0, cell.x + 5, cell.y + cell.height / 2, 2, false, MouseEvent.BUTTON1)));
+        }
+
+        /** 還沒上場時留在大廳，下面寫著在等哪一家，有「取消」。上場很快的話可能看不到，只記下來。 */
+        private void checkSubstituteWaiting(OnlinePanel panel) {
+            String status = ((JLabel) field(panel, "status")).getText();
+            if (!sawSubstituteWaiting && status.startsWith(Substitution.WAITING_TITLE)) {
+                sawSubstituteWaiting = true;
+                if (!((JButton) field(panel, "cancelButton")).isShowing()) {
+                    fail("等補位時應該可以取消");
+                }
+                shot("substitute-waiting");
+                log("等上場：" + status + "／" + ((JLabel) field(panel, "statusDetail")).getText());
+            }
+        }
+
+        /** 補位上場：聊天區留一行，牌桌上方跳出公告。 */
+        private void checkSubstituted(TablePanel table) {
+            String chat = ((JTextArea) field(table, "chatArea")).getText();
+            int at = chat.indexOf("替換電腦（");
+            if (sawSubstituted || at < 0) {
+                return;
+            }
+            sawSubstituted = true;
+            decisionsAtSubstituted = decisions;
+            String line = chat.substring(chat.lastIndexOf('\n', at) + 1, chat.indexOf('\n', at));
+            String expected = role.equals("guest") ? "【你替換電腦（" : "【玩家 乙 替換電腦（";
+            if (!line.startsWith(expected)) {
+                fail("補位的那一行不對：" + line);
+            }
+            if (((List<?>) field(field(table, "canvas"), "announcements")).isEmpty()) {
+                fail("牌桌上應該要有補位的公告");
+            }
+            shot("substituted");
+            log("看到補位：" + line);
         }
 
         /** 等房間出現在大廳的列表，選它再連點兩下，就像玩家一樣。 */
@@ -531,6 +659,9 @@ public final class OnlineTrial {
             if (((JLabel) field(panel, "expertBadge")).isVisible() != options.containsKey("--expert")) {
                 fail("專家模式的標記不對");
             }
+            if (role.equals("host") && ((JLabel) field(panel, "substituteBadge")).isVisible() != options.containsKey("--substitute")) {
+                fail("隨時補位的標記不對");
+            }
             log("房間名稱「" + title + "」" + (options.containsKey("--private") ? "，標著私人" : "")
                     + (options.containsKey("--expert") ? "，標著專家模式" : ""));
         }
@@ -549,8 +680,9 @@ public final class OnlineTrial {
                 }
                 JButton start = findText(panel, "開始牌局");
                 boolean wantsStart = !startClicked || (sawFinal && games < 2);
-                if (start != null && start.isEnabled() && wantsStart && Files.exists(dir.resolve("joined.txt"))
-                        && roomHasTwoPlayers(panel)) {
+                boolean ready = options.containsKey("--startAlone")
+                        || (Files.exists(dir.resolve("joined.txt")) && roomHasTwoPlayers(panel));
+                if (start != null && start.isEnabled() && wantsStart && ready) {
                     startClicked = true;
                     log("開局");
                     click(start);
@@ -598,6 +730,23 @@ public final class OnlineTrial {
             if (options.containsKey("--chat")) {
                 checkChat(table);
             }
+            if (options.containsKey("--substitute") || options.containsKey("--substituteFromLobby")) {
+                checkSubstituted(table);
+            }
+            if (options.containsKey("--leaveAfterSubstituted") && sawSubstituted && !leaving
+                    && decisions - decisionsAtSubstituted >= Integer.parseInt(options.get("--leaveAfterSubstituted"))) {
+                leaving = true;
+                write(dir.resolve(role + "-done"), name);
+                log("補位之後自己決定了幾次，離開");
+                clickText(table, "離開牌局");
+                return;
+            }
+            if (options.containsKey("--leaveWhen") && Files.exists(dir.resolve(options.get("--leaveWhen"))) && !leaving) {
+                leaving = true;
+                log("對方離開了，跟著離開");
+                clickText(table, "離開牌局");
+                return;
+            }
 
             if (options.containsKey("--secondGame") && games >= 2 && !leaving) {
                 leaving = true;
@@ -627,7 +776,8 @@ public final class OnlineTrial {
         /** 第一次輪到自己時截圖，之後照提示決定。回傳這次有沒有做決定。 */
         private boolean decide(TablePanel table, String hint) {
             List<JButton> actions = actionButtons(table);
-            if (hint.startsWith("輪到你了") && actions.isEmpty()) {
+            // 吃碰之後的提示是「吃完了，要打一張牌出去：點一張手牌」，一樣要點牌
+            if ((hint.startsWith("輪到你了") || hint.contains("點一張手牌")) && actions.isEmpty()) {
                 shot("my-turn");
                 pressHand(table);
                 return countDecision();

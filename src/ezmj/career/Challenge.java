@@ -15,6 +15,10 @@ import ezmj.model.Player;
  * 籌碼不從檔案裡扣；任務成功或失敗一確定，這場就在那一局結束。第一次過關才有獎金，存進檔案的籌碼。
  * 每關最多三顆星：過關一顆，過關當下再達成兩個加星條件各一顆；已經過的關可以再打來多拿星。
  * 新增關卡只要在這裡加一項，記得給兩個加星條件。
+ * <p>
+ * 後面的「修練」關卡不是完整牌局（見 Drill）：記牌是打到一半停下來問答，看聽是看一手牌點出聽哪幾種。
+ * 修練自成一條線，過了前一個修練才開下一個，和完整牌局的關卡互不擋；獎金也少得多。
+ * 加星條件固定是「全部答對」與「平均幾秒內作答」，由 Drill.stars 判定，不用 check。
  */
 public enum Challenge {
 
@@ -47,10 +51,26 @@ public enum Challenge {
     SWEEP("高手", "掃地出門", "四圈內胡牌讓一家電腦輸光籌碼（被別家弄輸光的不算）", BotLevel.PRO, 4,
             5_000, 100, 50, 20_000, bust(), noDealIn(), withinCircles(2)),
     GRADUATE("高手", "出師", "打完四圈，贏過三家職業拿第一名（並列也算）", BotLevel.PRO, 4, 20_000, 100, 20, 50_000,
-            finishFirst(), dealInsAtMost(2), chipsAtLeast(30_000));
+            finishFirst(), dealInsAtMost(2), chipsAtLeast(30_000)),
+
+    // 修練：記牌與看聽交錯排，兩種都早點玩得到
+    MEMORY_1("修練", "記牌一", "照常打牌，牌河每家只看得到最後一張；打到第 2～3 輪停下來，問 3 題剛才打過哪些牌",
+            BotLevel.NORMAL, 600, Drill.memory(2, 3, 3, 15, 2, 8)),
+    WAITS_1("修練", "看聽一", "看一手聽牌的 16 張，牌蓋起來之後點出它聽哪幾種（聽 1～2 種）",
+            BotLevel.BEGINNER, 600, Drill.waits(1, 2, false, 15, 15, 5, 4, 8)),
+    MEMORY_2("修練", "記牌二", "照常打牌，牌河每家只看得到最後一張；打到第 3～5 輪停下來，問 4 題剛才打過哪些牌",
+            BotLevel.AMATEUR, 1_000, Drill.memory(3, 5, 4, 12, 3, 7)),
+    WAITS_2("修練", "看聽二", "看一手聽牌的 16 張，牌蓋起來之後點出它聽哪幾種（聽 2～4 種）",
+            BotLevel.BEGINNER, 1_000, Drill.waits(2, 4, false, 10, 12, 5, 4, 6)),
+    MEMORY_3("修練", "記牌三", "照常打牌，牌河每家只看得到最後一張；打到第 5～7 輪停下來，問 5 題剛才打過哪些牌",
+            BotLevel.PRO, 1_500, Drill.memory(5, 7, 5, 10, 4, 6)),
+    WAITS_3("修練", "看聽三", "看一手聽牌的 16 張，牌蓋起來之後點出它聽哪幾種（聽 3～6 種，多為一色牌）",
+            BotLevel.BEGINNER, 1_500, Drill.waits(3, 6, true, 8, 10, 5, 4, 5));
 
     /** 每關最多幾顆星：過關一顆，再加兩個加星條件。 */
     public static final int MAX_STARS = 3;
+    /** 修練關卡的章名。 */
+    public static final String DRILL_CHAPTER = "修練";
 
     /** 任務的狀態：還在打、成功或失敗。 */
     public enum Status {
@@ -137,9 +157,22 @@ public enum Challenge {
     private final Goal goal;
     /** 兩個加星條件，依序是第二顆與第三顆星。 */
     private final List<Star> extraStars;
+    /** 修練關卡的設定；完整牌局的關卡是 null。 */
+    private final Drill drill;
 
     Challenge(String chapter, String title, String goalText, BotLevel level, int circles, int chips, int basePay,
               int taiPay, int reward, Goal goal, Star second, Star third) {
+        this(chapter, title, goalText, level, circles, chips, basePay, taiPay, reward, goal, second, third, null);
+    }
+
+    /** 修練關卡：level 是記牌時三家電腦的等級；牌桌固定籌碼 10000、底 100／每台 20，只打到停下來為止。 */
+    Challenge(String chapter, String title, String goalText, BotLevel level, int reward, Drill drill) {
+        this(chapter, title, goalText, level, 1, 10_000, 100, 20, reward, null,
+                new Star(drill.allCorrectText(), null), new Star(drill.fastText(), null), drill);
+    }
+
+    private Challenge(String chapter, String title, String goalText, BotLevel level, int circles, int chips,
+                      int basePay, int taiPay, int reward, Goal goal, Star second, Star third, Drill drill) {
         this.chapter = chapter;
         this.title = title;
         this.goalText = goalText;
@@ -151,6 +184,7 @@ public enum Challenge {
         this.reward = reward;
         this.goal = goal;
         this.extraStars = List.of(second, third);
+        this.drill = drill;
     }
 
     /** 數值到 target 就成功，打完還沒到就失敗。 */
@@ -222,8 +256,11 @@ public enum Challenge {
         };
     }
 
-    /** 這場打到現在的任務狀態。每局結算完呼叫。過關時一併判定加星條件。 */
+    /** 這場打到現在的任務狀態。每局結算完呼叫。過關時一併判定加星條件。修練關卡不是牌局，不能用這個判定。 */
     public Check check(GameSession session) {
+        if (drill != null) {
+            throw new IllegalStateException("修練關卡用 Drill.stars 判定：" + this);
+        }
         ChallengeFacts facts = new ChallengeFacts(session, circles);
         Check check = goal.check(facts);
         if (check.status() != Status.CLEARED) {
@@ -259,18 +296,60 @@ public enum Challenge {
         return texts;
     }
 
+    /** 這關的牌桌。記牌的修練一律照專家模式顯示：牌河每家只留最後一張，要自己記。 */
     public GameConfig config(String playerName) {
-        return new GameConfig(playerName, chips, basePay, taiPay, level);
+        GameConfig config = new GameConfig(playerName, chips, basePay, taiPay, level);
+        return drill != null && drill.isMemory() ? config.withExpert(true) : config;
     }
 
-    /** 第幾關，從 1 起算。 */
+    /** 修練關卡：不是完整牌局，記牌或看聽。 */
+    public boolean isDrill() {
+        return drill != null;
+    }
+
+    /** 修練關卡的設定；完整牌局的關卡是 null。 */
+    public Drill drill() {
+        return drill;
+    }
+
+    /** 同一條線的關卡：完整牌局的是一條，修練是另一條，宣告順序就是開放順序。 */
+    public static List<Challenge> line(boolean drills) {
+        List<Challenge> line = new ArrayList<>();
+        for (Challenge challenge : values()) {
+            if (challenge.isDrill() == drills) {
+                line.add(challenge);
+            }
+        }
+        return line;
+    }
+
+    /** 在自己那條線上是第幾關，從 1 起算。 */
     public int number() {
-        return ordinal() + 1;
+        return line(isDrill()).indexOf(this) + 1;
     }
 
-    /** 過了前一關才能挑戰；第一關一開始就能挑戰。 */
+    /** 例如「第 3 關」「修練 2」。 */
+    public String label() {
+        return isDrill() ? DRILL_CHAPTER + " " + number() : "第 " + number() + " 關";
+    }
+
+    /** 過了同一條線的前一關才能挑戰；每條線的第一關一開始就能挑戰。 */
     public Challenge previous() {
-        return ordinal() == 0 ? null : values()[ordinal() - 1];
+        List<Challenge> line = line(isDrill());
+        int at = line.indexOf(this);
+        return at == 0 ? null : line.get(at - 1);
+    }
+
+    /** 同一條線的下一關；最後一關是 null。 */
+    public Challenge next() {
+        List<Challenge> line = line(isDrill());
+        int at = line.indexOf(this);
+        return at + 1 < line.size() ? line.get(at + 1) : null;
+    }
+
+    /** 列表上這一章的標題，例如「入門・三家初學者」「修練・記牌與看聽」。 */
+    public String chapterHeading() {
+        return isDrill() ? DRILL_CHAPTER + "・記牌與看聽" : chapter + "・三家" + level.label();
     }
 
     public String chapter() {
@@ -323,8 +402,14 @@ public enum Challenge {
         }
     }
 
-    /** 關卡的牌桌，例如「三家初學者・東風圈・籌碼 10000・底 100／每台 20」。 */
+    /**
+     * 關卡的牌桌，例如「三家初學者・東風圈・籌碼 10000・底 100／每台 20」；
+     * 修練是怎麼考，例如「三家一般・第 2～3 輪停下來問・3 題・每題 15 秒・答對 2 題過關」。
+     */
     public String setup() {
+        if (drill != null) {
+            return drill.setup(level.label());
+        }
         return "三家" + level.label() + "・" + lengthLabel() + "・籌碼 " + chips + "・底 " + basePay + "／每台 " + taiPay;
     }
 

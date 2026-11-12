@@ -136,6 +136,12 @@ final class TableCanvas extends JComponent {
     private static final int FRAME_MS = 16;
     private static final int RING_MS = 170;
     private static final int CLAIM_BANNER_MS = 800;
+    /** 牌桌上方的公告停多久、淡入淡出多久，外框發光幾次、每次多久。和網頁版的 .table-announce 一樣。 */
+    private static final int ANNOUNCE_MS = 8_000;
+    private static final int ANNOUNCE_IN_MS = 350;
+    private static final int ANNOUNCE_OUT_MS = 600;
+    private static final int ANNOUNCE_GLOWS = 3;
+    private static final int ANNOUNCE_GLOW_MS = 1_200;
     private static final double TILE_RATIO = 1.38;
     /** 寬度不夠時手牌可以互相疊住，牌最多畫成間距的這個倍數，牌面的字還看得清楚。 */
     private static final double MAX_OVERLAP = 1.22;
@@ -191,6 +197,13 @@ final class TableCanvas extends JComponent {
     /** 大字的樣子：吃碰槓、補花與流局只有字，三種胡牌在字的後面各有不同的效果，連莊和胡一樣有往外擴散的金圈。 */
     enum Style { PLAIN, WIN, SELF_DRAW, BIG_WIN, STREAK }
 
+    /** 牌桌上方的公告，例如有人補位上場。title 是金色粗體，detail 是下面一行白字，可以是 null。 */
+    private record Announcement(String title, String detail, long start) {
+        double elapsedMs(long now) {
+            return (now - start) / 1e6;
+        }
+    }
+
     /** 跳出來的大字。位置以牌桌中心為原點。detail 是大胡時寫在字下面的台數，其他時候是 null。 */
     record Banner(String text, String detail, double x, double y, double size, Color color, Style style,
                   long start, int durationMs) {
@@ -203,6 +216,8 @@ final class TableCanvas extends JComponent {
     private final List<HandHit> hits = new ArrayList<>();
     private final List<Flight> flights = new ArrayList<>();
     private final List<Banner> banners = new ArrayList<>();
+    /** 牌桌上方的公告，同時有好幾則就往下疊。換一局也不清掉，補位的人上場時常常剛好開新的一局。 */
+    private final List<Announcement> announcements = new ArrayList<>();
     private final Timer frameTimer = new Timer(FRAME_MS, e -> nextFrame());
     private RoundView round;
     private boolean discardEnabled;
@@ -505,6 +520,7 @@ final class TableCanvas extends JComponent {
         frameNow = now;
         flights.removeIf(flight -> flight.finished(now));
         banners.removeIf(banner -> banner.progress(now) >= 1);
+        announcements.removeIf(announcement -> announcement.elapsedMs(now) >= ANNOUNCE_MS);
         boolean listenAnimating = false;
         for (int seat = 0; seat < listenStart.length; seat++) {
             if (listenStart[seat] != 0 && listenProgress(seat) >= 1) {
@@ -512,8 +528,8 @@ final class TableCanvas extends JComponent {
             }
             listenAnimating |= listenStart[seat] != 0;
         }
-        if (flights.isEmpty() && banners.isEmpty() && !dealing() && !listenAnimating && !discardPrompt
-                && !pushing() && !settling()) {
+        if (flights.isEmpty() && banners.isEmpty() && announcements.isEmpty() && !dealing() && !listenAnimating
+                && !discardPrompt && !pushing() && !settling()) {
             frameTimer.stop();
         }
         repaint();
@@ -719,6 +735,23 @@ final class TableCanvas extends JComponent {
         addSeatBanner(seat, text, 58 * unit(), CLAIM_BANNER_MS);
     }
 
+    /** 不是牌局事件的大字，例如有人補位上場。畫面座位，0 是自己。還沒有局面時位置算不出來，就不跳。 */
+    void showSeatBanner(int seat, String text) {
+        if (round == null) {
+            return;
+        }
+        addSeatBanner(seat, text);
+        frameTimer.start();
+        repaint();
+    }
+
+    /** 牌桌上方跳出公告，停 ANNOUNCE_MS 再淡出。還沒有局面時也畫，補位的人上場時可能還沒發牌。 */
+    void announce(String title, String detail) {
+        announcements.add(new Announcement(title, detail, System.nanoTime()));
+        frameTimer.start();
+        repaint();
+    }
+
     /**
      * 結算：delayMs 之後籌碼從付錢的人飛向贏的人，每家付錢的人 CHIPS_PER_PAYER 顆，各家跳出「+1200」「−400」。
      * 付錢的人的數字一開始就出現，贏的人的數字等第一顆籌碼落地才跳出來。
@@ -918,6 +951,7 @@ final class TableCanvas extends JComponent {
         int width = getWidth();
         int height = getHeight();
         g.drawImage(felt(width, height), 0, 0, null);
+        AffineTransform origin = g.getTransform();
 
         if (round != null) {
             frameNow = System.nanoTime();
@@ -943,7 +977,86 @@ final class TableCanvas extends JComponent {
             }
             paintSettlement(g);
         }
+        g.setTransform(origin);
+        paintAnnouncements(g, origin, width, height);
         g.dispose();
+    }
+
+    /**
+     * 公告畫在牌桌上方正中間，深色底、金框、金色粗體字，下面一行白字；同時有好幾則就往下疊。
+     * 先從小放大淡入，外框發光 ANNOUNCE_GLOWS 次，最後淡出。太寬就把字縮小，放得進牌桌。
+     * origin 是元件原本的座標，Windows 的顯示比例也在裡面，所以位移與縮放要疊在它上面。
+     */
+    private void paintAnnouncements(Graphics2D g, AffineTransform origin, int width, int height) {
+        if (announcements.isEmpty()) {
+            return;
+        }
+        long now = System.nanoTime();
+        double unit = Math.max(.8, unit());
+        double y = height * .16;
+        Composite saved = g.getComposite();
+        for (Announcement announcement : announcements) {
+            double ms = announcement.elapsedMs(now);
+            double alpha = ms < ANNOUNCE_IN_MS ? ms / ANNOUNCE_IN_MS
+                    : ms > ANNOUNCE_MS - ANNOUNCE_OUT_MS ? (ANNOUNCE_MS - ms) / ANNOUNCE_OUT_MS : 1;
+            alpha = Math.min(1, Math.max(0, alpha));
+            double pop = ms < ANNOUNCE_IN_MS ? .8 + .2 * easeOut(ms / ANNOUNCE_IN_MS) : 1;
+
+            double padX = 18 * unit;
+            double padY = 9 * unit;
+            float titleSize = (float) (24 * unit);
+            float detailSize = (float) (14 * unit);
+            Font titleFont = Theme.fixedFont(Font.BOLD, titleSize);
+            Font detailFont = Theme.fixedFont(Font.PLAIN, detailSize);
+            double textW = Math.max(g.getFontMetrics(titleFont).stringWidth(announcement.title()),
+                    announcement.detail() == null ? 0 : g.getFontMetrics(detailFont).stringWidth(announcement.detail()));
+            double room = width * .92 - padX * 2;
+            if (textW > room && textW > 0) {
+                double shrink = room / textW;
+                titleFont = titleFont.deriveFont((float) (titleSize * shrink));
+                detailFont = detailFont.deriveFont((float) (detailSize * shrink));
+                textW = room;
+            }
+            FontMetrics titleMetrics = g.getFontMetrics(titleFont);
+            FontMetrics detailMetrics = announcement.detail() == null ? null : g.getFontMetrics(detailFont);
+            double boxW = textW + padX * 2;
+            double boxH = titleMetrics.getHeight() + (detailMetrics == null ? 0 : detailMetrics.getHeight()) + padY * 2;
+
+            AffineTransform at = new AffineTransform(origin);
+            at.translate(width / 2.0, y + boxH / 2);
+            at.scale(pop, pop);
+            g.setTransform(at);
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) alpha));
+            RoundRectangle2D box = new RoundRectangle2D.Double(-boxW / 2, -boxH / 2, boxW, boxH, 14 * unit, 14 * unit);
+            double glowing = ms - ANNOUNCE_IN_MS;
+            if (glowing > 0 && glowing < ANNOUNCE_GLOWS * ANNOUNCE_GLOW_MS) {
+                double glow = Math.sin(Math.PI * (glowing % ANNOUNCE_GLOW_MS) / ANNOUNCE_GLOW_MS);
+                for (int ring = 3; ring >= 1; ring--) {
+                    g.setColor(new Color(Theme.GOLD.getRed(), Theme.GOLD.getGreen(), Theme.GOLD.getBlue(),
+                            (int) (70 * glow / ring)));
+                    g.setStroke(new BasicStroke((float) (ring * 5 * unit)));
+                    g.draw(box);
+                }
+            }
+            g.setColor(new Color(0x0A, 0x1A, 0x14, 240));
+            g.fill(box);
+            g.setColor(Theme.GOLD);
+            g.setStroke(new BasicStroke((float) Math.max(2, 2 * unit)));
+            g.draw(box);
+            double top = -boxH / 2 + padY;
+            g.setFont(titleFont);
+            g.drawString(announcement.title(), (float) (-titleMetrics.stringWidth(announcement.title()) / 2.0),
+                    (float) (top + titleMetrics.getAscent()));
+            if (detailMetrics != null) {
+                g.setFont(detailFont);
+                g.setColor(Theme.TEXT);
+                g.drawString(announcement.detail(), (float) (-detailMetrics.stringWidth(announcement.detail()) / 2.0),
+                        (float) (top + titleMetrics.getHeight() + detailMetrics.getAscent()));
+            }
+            y += boxH + 8 * unit;
+        }
+        g.setComposite(saved);
+        g.setTransform(origin);
     }
 
     /** 整片漸層很花時間，大小沒變就重複用同一張。 */
@@ -1306,7 +1419,7 @@ final class TableCanvas extends JComponent {
         String wind = Tile.windName(round.seatWind(seat));
         String dealerMark = round.dealer() == seat ? "莊 " : "";
         String text = dealerMark + wind + "  " + player.name();
-        g.setFont(Theme.font(Font.BOLD, (float) (14 * unit)));
+        g.setFont(Theme.canvasFont(Font.BOLD, (float) (14 * unit)));
         g.setColor(active ? Color.BLACK : Theme.TEXT);
         // 報聽的標記放在右端、轉角的方格內側，名字往左讓開
         boolean listening = round.isListening(seat);
@@ -1668,27 +1781,27 @@ final class TableCanvas extends JComponent {
         int streak = round.streak();
         if (expert) {
             g.setColor(Theme.GOLD);
-            g.setFont(Theme.font(Font.BOLD, (float) (22 * unit)));
+            g.setFont(Theme.canvasFont(Font.BOLD, (float) (22 * unit)));
             fitWidth(g, roundLabel(round), half * 2 - 12 * unit);
             drawCenteredLine(g, roundLabel(round), (streak > 0 ? -10 : 8) * unit);
             if (streak > 0) {
                 g.setColor(TablePanel.DealerBadge.RED);
-                g.setFont(Theme.font(Font.BOLD, (float) (16 * unit)));
+                g.setFont(Theme.canvasFont(Font.BOLD, (float) (16 * unit)));
                 drawCenteredLine(g, "連" + streak + "拉" + streak, 24 * unit);
             }
             return;
         }
         g.setColor(Theme.GOLD);
-        g.setFont(Theme.font(Font.BOLD, (float) (22 * unit)));
+        g.setFont(Theme.canvasFont(Font.BOLD, (float) (22 * unit)));
         String label = roundLabel(round);
         fitWidth(g, label, half * 2 - 12 * unit);
         drawCenteredLine(g, label, (streak > 0 ? -26 : -14) * unit);
         g.setColor(Theme.TEXT);
-        g.setFont(Theme.font(Font.PLAIN, (float) (16 * unit)));
+        g.setFont(Theme.canvasFont(Font.PLAIN, (float) (16 * unit)));
         drawCenteredLine(g, "剩餘 " + (round.liveTiles() + undealtTiles()) + " 張", (streak > 0 ? 8 : 22) * unit);
         if (streak > 0) {
             g.setColor(TablePanel.DealerBadge.RED);
-            g.setFont(Theme.font(Font.BOLD, (float) (16 * unit)));
+            g.setFont(Theme.canvasFont(Font.BOLD, (float) (16 * unit)));
             drawCenteredLine(g, "連" + streak + "拉" + streak, 40 * unit);
         }
     }

@@ -134,7 +134,15 @@ public final class OnlineClient {
      */
     public void browse() {
         browsing = true;
-        connect(Fields.object("type", "listRooms"));
+        connect(listRoomsMessage());
+    }
+
+    /**
+     * 說會補位，列表才有隨時補位、正在打的牌局（ezmjService 0.10.0 起）。舊服務器不理 supports。
+     * 不說的話服務器只列等人的房間，加入牌局中的房間也會被拒絕（substituteNotSupported）。
+     */
+    private static Map<String, Object> listRoomsMessage() {
+        return Fields.object("type", "listRooms", "supports", List.of("substitute"));
     }
 
     /**
@@ -174,7 +182,7 @@ public final class OnlineClient {
 
     /** 要大廳的房間列表，不用登入，回應從 Listener.rooms 通知。 */
     public void listRooms() {
-        send(Fields.object("type", "listRooms"));
+        send(listRoomsMessage());
     }
 
     public void createRoom(RoomSettings settings) {
@@ -183,9 +191,13 @@ public final class OnlineClient {
         send(message);
     }
 
-    /** 帶 supports 說明看得懂專家模式，服務器 0.7.0 起沒帶的話不讓加入專家模式的房間（expertNotSupported）。 */
+    /**
+     * 帶 supports 說明看得懂專家模式與補位：服務器 0.7.0 起沒帶 expert 的話不讓加入專家模式的房間（expertNotSupported），
+     * 0.10.0 起沒帶 substitute 的話不讓中途加入隨時補位的牌局（substituteNotSupported）。
+     * 加入牌局中的房間時，服務器先送 substituteWaiting，上場時才送 room，見 Substitution。
+     */
     public void joinRoom(String code) {
-        send(Fields.object("type", "joinRoom", "code", code, "supports", List.of("expert")));
+        send(Fields.object("type", "joinRoom", "code", code, "supports", List.of("expert", "substitute")));
     }
 
     public void leave() {

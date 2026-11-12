@@ -5,6 +5,7 @@
 #   ezmj-<version>.jar                       runnable jar (needs Java 17+)
 #   EZMJ-<version>-windows-portable\         portable app, run EZMJ.exe (bundles its own Java)
 #   EZMJ-<version>-windows-portable.zip      the same folder, zipped
+#   EZMJ-windows-portable.zip                the same zip again without the version, so its name never changes
 #   EZMJ-<version>-setup.exe                 installer, only when WiX 3 is in tools\wix314 or on PATH
 #
 # The version comes from src\ezmj\version.properties.
@@ -91,6 +92,8 @@ Copy-Item 'LICENSE' 'build\image\EZMJ\LICENSE.txt'
 $portableName = "EZMJ-$version-windows-portable"
 Copy-Item -Recurse 'build\image\EZMJ' "dist\$portableName"
 Compress-Archive -Path "dist\$portableName" -DestinationPath "dist\$portableName.zip"
+# The same zip without the version in its name, so a link to the latest portable app never changes.
+Copy-Item "dist\$portableName.zip" 'dist\EZMJ-windows-portable.zip'
 
 $localWix = Join-Path $PSScriptRoot 'tools\wix314'
 if (Test-Path (Join-Path $localWix 'candle.exe')) {

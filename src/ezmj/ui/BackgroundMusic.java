@@ -1,5 +1,7 @@
 package ezmj.ui;
 
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -10,14 +12,15 @@ import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.Clip;
 import javax.sound.sampled.LineUnavailableException;
+import javax.sound.sampled.UnsupportedAudioFileException;
 
 import ezmj.model.MusicTrack;
 import ezmj.ui.MusicScores.Score;
 import ezmj.ui.MusicScores.Voice;
 
 /**
- * 背景音樂：依 MusicScores 的樂譜即時合成，不需要音樂檔。
- * 合成與播放都在背景執行緒，不會卡住畫面；電腦沒有音效裝置時就安靜地不出聲。
+ * 背景音樂：大部分依 MusicScores 的樂譜即時合成，不需要音樂檔；錄好的曲子由 RecordedMusic 從 MP3 轉成 WAV 再播。
+ * 合成、轉檔與播放都在背景執行緒，不會卡住畫面；電腦沒有音效裝置或轉不了檔時就安靜地不出聲。
  */
 public final class BackgroundMusic {
 
@@ -37,8 +40,9 @@ public final class BackgroundMusic {
     private BackgroundMusic() {
     }
 
-    public static void select(MusicTrack track) {
-        PLAYER.execute(() -> switchTo(track));
+    /** 換曲子，循環播放。錄好的曲子第一次要先轉成 WAV，存在 recordingDir（.ezmj\music），要等一兩秒才響。 */
+    public static void select(MusicTrack track, Path recordingDir) {
+        PLAYER.execute(() -> switchTo(track, recordingDir));
     }
 
     public static void setVolume(int percent) {
@@ -50,7 +54,7 @@ public final class BackgroundMusic {
         });
     }
 
-    private static void switchTo(MusicTrack track) {
+    private static void switchTo(MusicTrack track, Path recordingDir) {
         if (track == current) {
             return;
         }
@@ -63,13 +67,20 @@ public final class BackgroundMusic {
             return;
         }
         try {
-            byte[] samples = render(track);
+            AudioFormat format = track.isRecorded() ? RecordedMusic.FORMAT : FORMAT;
+            byte[] samples = track.isRecorded()
+                    ? RecordedMusic.load(RecordedMusic.prepare(track, recordingDir))
+                    : render(track);
             Clip next = AudioSystem.getClip();
-            next.open(FORMAT, samples, 0, samples.length);
+            next.open(format, samples, 0, samples.length);
             SoundEffects.applyVolume(next, volume);
             next.loop(Clip.LOOP_CONTINUOUSLY);
             clip = next;
-        } catch (LineUnavailableException | IllegalArgumentException | SecurityException e) {
+        } catch (IOException | UnsupportedAudioFileException | LineUnavailableException
+                 | IllegalArgumentException | SecurityException e) {
+            clip = null;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
             clip = null;
         }
     }

@@ -438,6 +438,22 @@ public final class TablePanel extends JPanel {
         chatNotice.setText(" ");
     }
 
+    /** 聊天區裡不是誰說的話，例如有人補位上場，前後加上括號和別人說的話分開。 */
+    void appendSystemLine(String text) {
+        chatArea.append("【" + text + "】\n");
+        chatArea.setCaretPosition(chatArea.getDocument().getLength());
+    }
+
+    /** 牌桌上方跳出醒目的公告，停幾秒再淡出，例如有人補位上場。detail 是下面一行小字，可以是 null。 */
+    void announce(String title, String detail) {
+        canvas.announce(title, detail);
+    }
+
+    /** 這一家旁邊跳出大字，seat 是畫面座位，0 是自己。 */
+    void showSeatBanner(int seat, String text) {
+        canvas.showSeatBanner(seat, text);
+    }
+
     /** 聊天送不出去的原因，例如說太快或舊服務器不能聊天。 */
     void showChatNotice(String text) {
         chatNotice.setText(safeLabel(text));

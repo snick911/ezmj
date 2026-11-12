@@ -31,6 +31,7 @@ final class RoomPanel extends JPanel {
     private final JLabel title = ResultDialog.line(" ", Font.BOLD, 30f, Theme.GOLD);
     private final JLabel privateBadge = ResultDialog.line("私人", Font.BOLD, 15f, Color.WHITE);
     private final JLabel expertBadge = ResultDialog.line("專家模式", Font.BOLD, 15f, Color.WHITE);
+    private final JLabel substituteBadge = ResultDialog.line("隨時補位", Font.BOLD, 15f, Color.WHITE);
     private final JPanel codeRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
     private final JLabel codeLine = ResultDialog.line(" ", Font.BOLD, 18f, Theme.TEXT);
     private final JLabel listedLine = ResultDialog.line(" ", Font.PLAIN, 15f, Theme.MUTED);
@@ -61,6 +62,11 @@ final class RoomPanel extends JPanel {
         expertBadge.setBackground(Theme.BUTTON);
         expertBadge.setBorder(BorderFactory.createEmptyBorder(2, 8, 2, 8));
         expertBadge.setToolTipText("這間照專家模式打，有哪些不一樣見「說明」→「遊戲玩法」");
+        substituteBadge.setOpaque(true);
+        substituteBadge.setBackground(Theme.BUTTON);
+        substituteBadge.setBorder(BorderFactory.createEmptyBorder(2, 8, 2, 8));
+        substituteBadge.setToolTipText("開打之後，電腦在打的座位別人也能中途加入替換，中途加入的不列入榮譽榜。"
+                + "詳見「說明」→「連線對戰」");
         JPanel name = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         name.setOpaque(false);
         name.add(title);
@@ -68,6 +74,8 @@ final class RoomPanel extends JPanel {
         name.add(privateBadge);
         name.add(Box.createHorizontalStrut(8));
         name.add(expertBadge);
+        name.add(Box.createHorizontalStrut(8));
+        name.add(substituteBadge);
         JPanel heading = new JPanel(new BorderLayout(24, 0));
         heading.setOpaque(false);
         heading.setAlignmentX(LEFT_ALIGNMENT);
@@ -116,6 +124,7 @@ final class RoomPanel extends JPanel {
         privateBadge.setVisible(settings.privateRoom());
         // 標題旁的「專家模式」標籤就夠了，有哪些不一樣寫在說明
         expertBadge.setVisible(settings.expert());
+        substituteBadge.setVisible(settings.substitute());
         codeRow.setVisible(named);
         codeLine.setText("房號 " + code);
         listedLine.setText(settings.privateRoom() ? "不列在大廳，把房號告訴朋友就能加入。" : "列在大廳，也可以把房號告訴朋友。");
@@ -136,7 +145,8 @@ final class RoomPanel extends JPanel {
 
         startButton.setEnabled(room.isHost());
         startButton.setText(room.isHost() ? "開始牌局" : "等房主開局");
-        notice.setText(room.isHost() ? "不到四人時由電腦補滿。" : " ");
+        notice.setText(!room.isHost() ? " " : settings.substitute()
+                ? "不到四人時由電腦補滿，開打後別人還能加入替換電腦。" : "不到四人時由電腦補滿。");
     }
 
     private static void addSeat(ResultDialog.GridTable table, RoomInfo room, int seat) {

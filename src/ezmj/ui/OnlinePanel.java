@@ -14,8 +14,7 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.awt.RenderingHints;
-import java.awt.event.ComponentAdapter;
-import java.awt.event.ComponentEvent;
+import java.awt.event.HierarchyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.List;
@@ -29,6 +28,7 @@ import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JList;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JSpinner;
@@ -60,15 +60,22 @@ import ezmj.online.RoomSettings;
  */
 final class OnlinePanel extends JPanel implements LobbyBrowser.View {
 
-    private static final int MAX_NAME_LENGTH = 16;
+    /** 連線對戰的名字最多幾個字，說明也照這個寫。 */
+    static final int MAX_NAME_LENGTH = 16;
     private static final int ROOM_CODE_LENGTH = 6;
     private static final int DEFAULT_WAIT_SECONDS = 30;
     private static final int SEATS = 4;
     private static final int VISIBLE_ROOMS = 7;
-    private static final String[] COLUMNS = {"房間名稱", "房主", "人數", "籌碼／底／台", "等待"};
+    private static final String[] COLUMNS = {"房間名稱", "房主", "人數", "籌碼／底／台", "等待", "隨時補位", "專家"};
     /** 數字欄從這一欄開始，靠右對齊。 */
     private static final int FIRST_NUMBER_COLUMN = 2;
-    private static final int[] COLUMN_WIDTHS = {124, 80, 46, 140, 64};
+    /** 最後兩欄有開就打勾，置中。 */
+    private static final int FIRST_CHECK_COLUMN = 5;
+    private static final int[] COLUMN_WIDTHS = {124, 80, 46, 140, 64, 76, 48};
+    private static final String CHECK = "✓";
+    /** 加入牌局中的房間之前先說清楚：要等一下才上場，也不列入榮譽榜。和網頁版一樣。 */
+    static final String SUBSTITUTE_CONFIRM = "這間正在打牌。加入會替換一家電腦，等它打完這一手就換你上場；"
+            + "這一局先結束的話，下一局開始時上場。\n\n中途加入的不列入榮譽榜。要加入嗎？";
     private static final Border CELL_PADDING = BorderFactory.createEmptyBorder(0, 8, 0, 8);
     private static final Border HEADER_PADDING = BorderFactory.createEmptyBorder(5, 8, 5, 8);
     private static final String LOADING = "正在讀取房間列表，服務器閒置後第一次可能要等一分鐘…";
@@ -82,6 +89,9 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
 
         void resume(OnlineProfile profile);
 
+        /** 不等了：正在連線或等補位上場時按「取消」，留在大廳。 */
+        void cancel();
+
         void back();
     }
 
@@ -90,6 +100,8 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
     private final PromptField roomNameField = new PromptField(16);
     private final JCheckBox privateBox = new JCheckBox("不列在大廳，只能用房號加入");
     private final JCheckBox expertBox = StartPanel.expertCheckBox();
+    /** 和專家模式一樣只寫「開啟」，怎麼補位、榮譽榜怎麼算寫在說明。 */
+    private final JCheckBox substituteBox = StartPanel.expertCheckBox();
     private final JComboBox<Integer> chipBox = StartPanel.combo(StartPanel.CHIP_OPTIONS, 20_000);
     private final JComboBox<Integer> baseBox = StartPanel.combo(StartPanel.BASE_OPTIONS, 100);
     private final JComboBox<Integer> taiBox = StartPanel.combo(StartPanel.TAI_OPTIONS, 20);
@@ -108,10 +120,15 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
     private final JButton joinButton = Theme.button("加入房間", Theme.RED);
     private final JButton resumeButton = Theme.button("接回牌局", Theme.BUTTON);
     private final JButton backButton = Theme.button("返回", Theme.PANEL_LIGHT);
+    private final JButton cancelButton = Theme.button("取消", Theme.PANEL_LIGHT);
     private final JLabel status = new JLabel(" ", SwingConstants.CENTER);
+    /** 狀態下面的說明，例如等補位時在等哪一家；沒有就藏起來。 */
+    private final JLabel statusDetail = new JLabel(" ", SwingConstants.CENTER);
     private final LobbyBrowser lobby = new LobbyBrowser(this);
     private OnlineProfile profile;
     private boolean busy;
+    /** 勾專家模式時等待秒數比上限長，就記在這裡，取消勾選時還原；沒有就是 null。 */
+    private Integer waitBeforeExpert;
 
     OnlinePanel(Actions actions) {
         super(new GridBagLayout());
@@ -184,13 +201,20 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
         addSection(right, c, "或開一間新房間");
         StartPanel.addRow(right, c, "房間名稱", roomNameField);
         StartPanel.addRow(right, c, "私人房間", privateBox);
+        substituteBox.setToolTipText("開打之後，電腦在打的座位別人也能中途加入替換，中途加入的不列入榮譽榜。"
+                + "詳見「說明」→「連線對戰」");
+        StartPanel.addRow(right, c, "隨時補位", substituteBox);
         StartPanel.addRow(right, c, "籌碼本金", chipBox);
         StartPanel.addRow(right, c, "底", baseBox);
         StartPanel.addRow(right, c, "每台", taiBox);
         StartPanel.addRow(right, c, "補位電腦等級", StartPanel.levelRow(levelBoxes));
+        waitSpinner.setToolTipText(RoomSettings.MIN_WAIT_SECONDS + " 到 " + RoomSettings.MAX_WAIT_SECONDS
+                + " 秒，專家模式最多 " + GameConfig.EXPERT_MAX_WAIT_SECONDS + " 秒");
         StartPanel.addRow(right, c, "等待秒數", waitSpinner);
         StartPanel.addRow(right, c, "電腦速度", speedBox);
-        expertBox.setToolTipText("房間裡每個人都照專家模式打，有哪些不一樣見「說明」→「遊戲玩法」");
+        expertBox.setToolTipText("房間裡每個人都照專家模式打，每次最多等 " + GameConfig.EXPERT_MAX_WAIT_SECONDS
+                + " 秒，有哪些不一樣見「說明」→「遊戲玩法」");
+        expertBox.addActionListener(e -> syncWaitLimit());
         StartPanel.addRow(right, c, "專家模式", expertBox);
         addWide(right, c, payWarning, 2);
         addWide(right, c, createButton, 4);
@@ -201,9 +225,13 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
         JPanel bottom = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 0));
         bottom.setOpaque(false);
         bottom.add(resumeButton);
+        bottom.add(cancelButton);
         bottom.add(backButton);
         status.setFont(Theme.font(Font.PLAIN, 14f));
         status.setForeground(Theme.MUTED);
+        statusDetail.setFont(Theme.font(Font.PLAIN, 13f));
+        statusDetail.setForeground(Theme.MUTED);
+        statusDetail.setVisible(false);
 
         GridBagConstraints layout = new GridBagConstraints();
         layout.gridwidth = 2;
@@ -224,6 +252,9 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
         layout.gridy = 3;
         layout.insets = new Insets(8, 0, 0, 0);
         card.add(status, layout);
+        layout.gridy = 4;
+        layout.insets = new Insets(4, 0, 0, 0);
+        card.add(statusDetail, layout);
         add(card);
 
         createButton.addActionListener(e -> create(actions));
@@ -231,6 +262,7 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
         listJoinButton.addActionListener(e -> joinSelected(actions));
         refreshButton.addActionListener(e -> refresh());
         resumeButton.addActionListener(e -> actions.resume(profile));
+        cancelButton.addActionListener(e -> actions.cancel());
         backButton.addActionListener(e -> actions.back());
         codeField.addActionListener(e -> joinButton.doClick());
         roomTable.getSelectionModel().addListSelectionListener(e -> syncButtons());
@@ -242,16 +274,16 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
                 }
             }
         });
-        // 列表只在大廳畫面看得到的時候更新，換到房間或牌桌就關掉那條連線
-        addComponentListener(new ComponentAdapter() {
-            @Override
-            public void componentShown(ComponentEvent e) {
+        // 列表只在大廳畫面看得到的時候更新，換到房間或牌桌就關掉那條連線。
+        // 大廳外面包了 FitScroll，換畫面時顯示、隱藏的是外面的捲軸，這裡收不到 componentShown，所以看 SHOWING_CHANGED
+        addHierarchyListener(e -> {
+            if ((e.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) == 0) {
+                return;
+            }
+            if (isShowing()) {
                 rooms.set(List.of());
                 refresh();
-            }
-
-            @Override
-            public void componentHidden(ComponentEvent e) {
+            } else {
                 lobby.stop();
             }
         });
@@ -357,11 +389,27 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
         setBusy(null);
     }
 
-    /** text 不是 null 時表示正在連線，顯示這段文字，只能按返回。列表照樣更新。 */
+    /** text 不是 null 時表示正在連線，顯示這段文字，只能按取消或返回。列表照樣更新。 */
     void setBusy(String text) {
+        setBusy(text, null);
+    }
+
+    /**
+     * 和上面一樣，detail 是下面一行小字，例如等補位時在等哪一家，太長就折行。
+     * 名字來自網路，雖然 OnlineClient 擋掉了 &lt;html&gt; 開頭，這裡自己包 HTML，所以要跳脫。
+     */
+    void setBusy(String text, String detail) {
         busy = text != null;
         status.setText(busy ? text : " ");
+        boolean hasDetail = busy && detail != null && !detail.isBlank();
+        statusDetail.setVisible(hasDetail);
+        statusDetail.setText(hasDetail ? "<html><div style='text-align:center;width:" + Theme.scaled(520) + "px'>"
+                + escapeHtml(detail) + "</div></html>" : " ");
         syncButtons();
+    }
+
+    static String escapeHtml(String text) {
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     @Override
@@ -372,9 +420,21 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
         if (row >= 0) {
             roomTable.setRowSelectionInterval(row, row);
         }
-        listStatus.setText(list.isEmpty() ? "目前沒有等人的公開房間，可以自己開一間。"
-                : list.size() + " 間等人中，選一間按「加入」或連點兩下。");
+        listStatus.setText(listStatus(list));
         syncButtons();
+    }
+
+    /** 等人的與可以補位的分開算，和網頁版一樣。 */
+    static String listStatus(List<RoomListing> list) {
+        if (list.isEmpty()) {
+            return "目前沒有等人的公開房間，可以自己開一間。";
+        }
+        long playing = list.stream().filter(RoomListing::playing).count();
+        long waiting = list.size() - playing;
+        String counts = playing == 0 ? waiting + " 間等人中"
+                : waiting == 0 ? playing + " 間牌局可以補位"
+                : waiting + " 間等人中、" + playing + " 間牌局可以補位";
+        return counts + "，選一間按「加入」或連點兩下。";
     }
 
     @Override
@@ -429,7 +489,14 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
             StartPanel.warn(this, "請先在列表選一間房間。", TITLE);
             return;
         }
-        if (StartPanel.nameAccepted(nameField, MAX_NAME_LENGTH, TITLE)) {
+        if (!StartPanel.nameAccepted(nameField, MAX_NAME_LENGTH, TITLE)) {
+            return;
+        }
+        if (room.playing() && JOptionPane.showConfirmDialog(this, SUBSTITUTE_CONFIRM, TITLE,
+                JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) {
+            return;
+        }
+        if (!busy) {
             actions.join(name(), room.code());
         }
     }
@@ -446,6 +513,7 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
         joinButton.setEnabled(!busy);
         listJoinButton.setEnabled(!busy);
         resumeButton.setEnabled(!busy);
+        cancelButton.setVisible(busy);
         roomNameField.setPrompt((nameValid() ? name() : "你的名字") + "的房間");
     }
 
@@ -467,8 +535,34 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
         return new RoomSettings((Integer) chipBox.getSelectedItem(), (Integer) baseBox.getSelectedItem(),
                 (Integer) taiBox.getSelectedItem(),
                 levelBoxes.stream().map(box -> (BotLevel) box.getSelectedItem()).collect(Collectors.toList()),
-                (Integer) waitSpinner.getValue(), (GameSpeed) speedBox.getSelectedItem(),
-                roomNameField.getText().strip(), privateBox.isSelected(), expertBox.isSelected());
+                Math.min((Integer) waitSpinner.getValue(), maxWaitSeconds()), (GameSpeed) speedBox.getSelectedItem(),
+                roomNameField.getText().strip(), privateBox.isSelected(), expertBox.isSelected(),
+                substituteBox.isSelected());
+    }
+
+    private int maxWaitSeconds() {
+        return expertBox.isSelected() ? GameConfig.EXPERT_MAX_WAIT_SECONDS : RoomSettings.MAX_WAIT_SECONDS;
+    }
+
+    /**
+     * 專家模式的房間每次最多等 GameConfig.EXPERT_MAX_WAIT_SECONDS 秒：勾了就把上限降下來，比較長的改成上限並記著；
+     * 取消勾選時把上限放回去，秒數沒動過就還原成原本的。服務器也會把比較長的改成上限。
+     */
+    private void syncWaitLimit() {
+        SpinnerNumberModel model = (SpinnerNumberModel) waitSpinner.getModel();
+        int seconds = (Integer) model.getValue();
+        model.setMaximum(maxWaitSeconds());
+        if (expertBox.isSelected()) {
+            if (seconds > GameConfig.EXPERT_MAX_WAIT_SECONDS) {
+                waitBeforeExpert = seconds;
+                model.setValue(GameConfig.EXPERT_MAX_WAIT_SECONDS);
+            }
+        } else if (waitBeforeExpert != null) {
+            if (seconds == GameConfig.EXPERT_MAX_WAIT_SECONDS) {
+                model.setValue(waitBeforeExpert);
+            }
+            waitBeforeExpert = null;
+        }
     }
 
     @Override
@@ -524,7 +618,9 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
                 case 1:  return room.host();
                 case 2:  return room.humans() + "/" + SEATS;
                 case 3:  return settings.chips() + "/" + settings.basePay() + "/" + settings.taiPay();
-                default: return settings.waitSeconds() + " 秒";
+                case 4:  return settings.waitSeconds() + " 秒";
+                case 5:  return settings.substitute() ? CHECK : "";
+                default: return settings.expert() ? CHECK : "";
             }
         }
     }
@@ -551,21 +647,26 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
             }
             RoomListing room = ((RoomTableModel) getModel()).get(row);
             return room.name() + "　房主 " + room.host() + "　電腦速度" + room.settings().speed().label()
-                    + (room.settings().expert() ? "　專家模式" : "");
+                    + (room.settings().substitute() ? "　隨時補位" : "") + (room.settings().expert() ? "　專家模式" : "")
+                    + (room.playing() ? "　牌局中，加入就替換一家電腦" : "");
         }
     }
 
-    /** 房間名稱那一格：專家模式的房間在名稱右邊標「專家」，名稱太長時只截名稱，標記一直看得到。 */
+    /**
+     * 房間名稱那一格：牌局中、可以補位的房間在名稱右邊標綠色的「牌局中」，名稱太長時只截名稱，標記一直看得到。
+     * 專家模式改成自己一欄打勾，和網頁版一樣。
+     */
     private static final class NameRenderer extends JPanel implements TableCellRenderer {
+        private static final Color PLAYING = new Color(0x2C, 0x6E, 0x58);
         private final CellRenderer name = new CellRenderer();
-        private final JLabel badge = new JLabel("專家");
+        private final JLabel badge = new JLabel("牌局中");
         private final JPanel badgeHolder = new JPanel(new GridBagLayout());
 
         NameRenderer() {
             super(new BorderLayout());
             badge.setOpaque(true);
             badge.setForeground(Color.WHITE);
-            badge.setBackground(Theme.RED);
+            badge.setBackground(PLAYING);
             badge.setBorder(BorderFactory.createEmptyBorder(1, 5, 1, 5));
             badgeHolder.setOpaque(false);
             badgeHolder.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 6));
@@ -579,7 +680,7 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
                                                        int row, int column) {
             name.getTableCellRendererComponent(table, value, selected, focused, row, column);
             badge.setFont(table.getFont().deriveFont(Font.BOLD, table.getFont().getSize2D() * 0.8f));
-            badgeHolder.setVisible(((RoomTableModel) table.getModel()).get(row).settings().expert());
+            badgeHolder.setVisible(((RoomTableModel) table.getModel()).get(row).playing());
             setBackground(name.getBackground());
             // 同一欄的大小不變，標記出現或消失時要自己重新排
             invalidate();
@@ -593,9 +694,22 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
                                                        int row, int column) {
             super.getTableCellRendererComponent(table, value, selected, false, row, column);
             setBorder(CELL_PADDING);
-            setHorizontalAlignment(column < FIRST_NUMBER_COLUMN ? SwingConstants.LEFT : SwingConstants.RIGHT);
+            setHorizontalAlignment(alignment(column));
+            boolean check = column >= FIRST_CHECK_COLUMN;
+            setFont(check ? table.getFont().deriveFont(Font.BOLD) : table.getFont());
+            if (check && !selected) {
+                setForeground(Theme.GOLD);
+            } else if (!selected) {
+                setForeground(table.getForeground());
+            }
             return this;
         }
+    }
+
+    /** 名稱與房主靠左，數字靠右，打勾的欄置中。 */
+    private static int alignment(int column) {
+        return column < FIRST_NUMBER_COLUMN ? SwingConstants.LEFT
+                : column < FIRST_CHECK_COLUMN ? SwingConstants.RIGHT : SwingConstants.CENTER;
     }
 
     /** 和結果視窗的表頭同一個樣子。 */
@@ -608,7 +722,7 @@ final class OnlinePanel extends JPanel implements LobbyBrowser.View {
             setForeground(Theme.MUTED);
             setBackground(Theme.PANEL);
             setBorder(HEADER_PADDING);
-            setHorizontalAlignment(column < FIRST_NUMBER_COLUMN ? SwingConstants.LEFT : SwingConstants.RIGHT);
+            setHorizontalAlignment(alignment(column));
             return this;
         }
     }

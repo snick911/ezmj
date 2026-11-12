@@ -347,7 +347,8 @@ final class CareerHubPanel extends JPanel {
 
     /** 重新排挑戰列表。scrollToCurrent 時捲到第一個還沒過的關；只是視窗變寬變窄就不捲。 */
     private void fillChallenges(boolean scrollToCurrent) {
-        challengeTitle.setText("挑戰關卡　已過 " + profile.clearedCount() + " / " + Challenge.values().length
+        challengeTitle.setText("挑戰關卡　已過 " + profile.clearedCount(false) + " / " + Challenge.line(false).size()
+                + "　修練 " + profile.clearedCount(true) + " / " + Challenge.line(true).size()
                 + "　★ " + profile.totalStars() + " / " + Challenge.values().length * Challenge.MAX_STARS);
         int goalPixels = goalPixels();
         challengeRows.removeAll();
@@ -361,7 +362,7 @@ final class CareerHubPanel extends JPanel {
         for (Challenge challenge : Challenge.values()) {
             if (!challenge.chapter().equals(chapter)) {
                 chapter = challenge.chapter();
-                JLabel heading = label(chapter + "・三家" + challenge.level().label(), Font.BOLD, 15f, Theme.GOLD);
+                JLabel heading = label(challenge.chapterHeading(), Font.BOLD, 15f, Theme.GOLD);
                 heading.setBorder(BorderFactory.createEmptyBorder(10, 12, 4, 12));
                 c.insets = new Insets(0, 0, 0, 0);
                 challengeRows.add(heading, c);
@@ -419,7 +420,7 @@ final class CareerHubPanel extends JPanel {
         line.anchor = GridBagConstraints.WEST;
         int stars = profile.stars(challenge);
         JLabel heading = label("", Font.BOLD, 16f, unlocked ? Theme.TEXT : Theme.MUTED);
-        String title = HomePanel.escape("第 " + challenge.number() + " 關　" + challenge.title());
+        String title = HomePanel.escape(challenge.label() + "　" + challenge.title());
         // 拿到的星是金色，還沒拿到的是灰色；列表窄的時候標題和說明一樣折行，不會被截掉
         heading.setText(HomePanel.wrapHtml(!unlocked ? title : title + "　<font color='" + hex(Theme.GOLD) + "'>"
                 + "★".repeat(stars) + "</font><font color='" + hex(Theme.MUTED) + "'>"
@@ -448,7 +449,8 @@ final class CareerHubPanel extends JPanel {
         JButton start = CareerListPanel.small(cleared ? "再挑戰" : "挑戰", color, () -> actions.startChallenge(challenge));
         start.setEnabled(enabled);
         if (!unlocked) {
-            start.setToolTipText("過了第 " + (challenge.number() - 1) + " 關才開放");
+            Challenge previous = challenge.previous();
+            start.setToolTipText(previous.label() + "「" + previous.title() + "」過了才開放");
         } else if (profile.game() != CareerProfile.Game.NONE) {
             start.setToolTipText("先把沒打完的牌局打完或放棄");
         }

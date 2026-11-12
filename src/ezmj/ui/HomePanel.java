@@ -24,6 +24,9 @@ import ezmj.model.Tile;
 /** 開始畫面：選修業模式、練習牌局或連線對戰。 */
 public final class HomePanel extends JPanel {
 
+    /** wrapped 記下原文與寬度的 client property，字型改變時重新折行用。 */
+    private static final String WRAP_KEY = "ezmj.wrap";
+
     private final JButton careerButton = Theme.button("修業模式", Theme.RED);
     private final JButton practiceButton = Theme.button("練習牌局", Theme.BUTTON);
     private final JButton onlineButton = Theme.button("連線對戰", Theme.BUTTON);
@@ -91,8 +94,18 @@ public final class HomePanel extends JPanel {
         card.add(wrapped(label, text, 430), c);
     }
 
-    /** 說明太長時折行，width 是畫面上的寬度，跟著字體大小。text 會當成 HTML，從檔案或使用者來的字要先 escape。 */
+    /**
+     * 說明太長時折行，width 是畫面上的寬度，跟著字體大小與視窗放大的比例；之後字型改變時照新的比例重新折行。
+     * text 會當成 HTML，從檔案或使用者來的字要先 escape。
+     */
     static JComponent wrapped(JLabel label, String text, int width) {
+        if (label.getClientProperty(WRAP_KEY) == null) {
+            label.addPropertyChangeListener("font", e -> {
+                Object[] wrap = (Object[]) label.getClientProperty(WRAP_KEY);
+                label.setText(wrapHtml((String) wrap[0], Theme.scaled((Integer) wrap[1])));
+            });
+        }
+        label.putClientProperty(WRAP_KEY, new Object[] {text, width});
         label.setText(wrapHtml(text, Theme.scaled(width)));
         return label;
     }

@@ -13,6 +13,7 @@ import java.util.Set;
 
 import ezmj.model.AppSettings;
 import ezmj.model.BambooCall;
+import ezmj.model.GameConfig;
 import ezmj.model.GameSpeed;
 import ezmj.model.Gender;
 import ezmj.model.MusicTrack;
@@ -74,6 +75,15 @@ final class SettingsTest {
     static void run() {
         T.section("環境設定");
 
+        test("專家模式每次最多等 10 秒，不限時也當作 10 秒", () -> {
+            eq(10, GameConfig.EXPERT_MAX_WAIT_SECONDS, "上限");
+            eq(10, GameConfig.expertWaitSeconds(AppSettings.NO_WAIT_LIMIT), "不限時");
+            eq(10, GameConfig.expertWaitSeconds(0), "0 也是不限時");
+            eq(10, GameConfig.expertWaitSeconds(30), "比較長的");
+            eq(10, GameConfig.expertWaitSeconds(10), "剛好 10 秒");
+            eq(7, GameConfig.expertWaitSeconds(7), "比較短的照舊");
+        });
+
         test("檔案不存在時用預設值，等待時間預設 -1", () -> {
             Path dir = Files.createTempDirectory("ezmj-settings");
             try {
@@ -122,6 +132,23 @@ final class SettingsTest {
                 Files.deleteIfExists(file);
                 Files.deleteIfExists(nested);
                 Files.delete(dir);
+            }
+        });
+
+        test("解析度：視窗比預設大時畫面等比例放大，以 5% 為一級往下取，比預設小時不縮小", () -> {
+            eq(1f, Resolution.zoomFor(1360, 900), "預設");
+            eq(1.2f, Resolution.zoomFor(1920, 1080), "1920 × 1080 照高度放大 20%");
+            eq(1.15f, Resolution.zoomFor(1920, 1040), "螢幕放不下 1080 高時往下取");
+            eq(1f, Resolution.zoomFor(1600, 900), "高度一樣就不放大");
+            eq(1.5f, Resolution.zoomFor(2560, 1350), "寬高取比較小的比例");
+            eq(1f, Resolution.zoomFor(1280, 720), "比預設小不縮小");
+            eq(1f, Resolution.zoomFor(1366, 768), "比預設矮不縮小");
+            for (Resolution resolution : Resolution.OPTIONS) {
+                float zoom = Resolution.zoomFor(resolution.width(), resolution.height());
+                if (!resolution.isMaximized() && zoom > 1) {
+                    check(Resolution.DEFAULT.width() * zoom <= resolution.width()
+                            && Resolution.DEFAULT.height() * zoom <= resolution.height(), resolution.label() + " 放大後放得進視窗");
+                }
             }
         });
 
@@ -263,7 +290,8 @@ final class SettingsTest {
 
         test("背景音樂：每個聲部都對齊，長度合理，循環接得起來", () -> {
             for (MusicTrack track : MusicTrack.values()) {
-                if (track == MusicTrack.OFF) {
+                // 錄好的曲子沒有樂譜，見 AudioTest
+                if (track == MusicTrack.OFF || track.isRecorded()) {
                     continue;
                 }
                 for (double beats : BackgroundMusic.voiceBeats(track)) {

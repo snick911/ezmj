@@ -288,6 +288,11 @@ public final class CareerProfile {
         return cleared.size();
     }
 
+    /** 其中一條線過了幾關：drills 是修練，不然是完整牌局的關卡。 */
+    public int clearedCount(boolean drills) {
+        return (int) Challenge.line(drills).stream().filter(cleared::containsKey).count();
+    }
+
     /** 過了前一關才開放。已經過的關一直開放，以後在中間插入新關卡時，舊檔過過的關也不會被鎖起來。 */
     public boolean isUnlocked(Challenge stage) {
         return stage.previous() == null || cleared.containsKey(stage.previous()) || cleared.containsKey(stage);

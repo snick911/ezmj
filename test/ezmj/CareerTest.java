@@ -92,7 +92,13 @@ final class CareerTest {
                 titles.add(achievement.title());
             }
             Set<String> seen = new HashSet<>();
-            for (Challenge challenge : Challenge.values()) {
+            for (Challenge drill : Challenge.line(true)) {
+                check(seen.add(drill.title()), "關卡名稱重複：" + drill.title());
+                check(!titles.contains(drill.title()), "和成就同名：" + drill.title());
+                eq(drill, Challenge.fromKey(drill.name()), "讀檔用的名稱");
+            }
+            // 修練關卡不是牌局，設定與判定在 DrillTest
+            for (Challenge challenge : Challenge.line(false)) {
                 GameConfig config = challenge.config("測試");
                 check(GameConfig.paysFit(config.startingChips(), config.basePay(), config.taiPay()), challenge + " 底台");
                 check(challenge.circles() >= 1 && challenge.circles() <= 4, challenge + " 圈數");

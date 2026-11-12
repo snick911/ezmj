@@ -17,9 +17,11 @@ public final class AllTests {
         SessionTest.flowerWins();
         SessionTest.bigSettings();
         SettingsTest.run();
+        AudioTest.run();
         HonorRollTest.run();
         AchievementTest.run();
         CareerTest.run();
+        DrillTest.run();
         SealTest.run();
         SaveTest.run();
         RefereeTest.run();

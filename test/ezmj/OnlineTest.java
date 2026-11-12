@@ -52,6 +52,7 @@ import ezmj.online.RoomInfo;
 import ezmj.online.RoomListing;
 import ezmj.online.RoomSettings;
 import ezmj.online.ServerAddress;
+import ezmj.online.Substitution;
 
 /** 連線層：走真的 TCP 與 WebSocket，對面是測試自己開的假服務器；局面的轉換直接餵服務器格式的訊息。 */
 final class OnlineTest {
@@ -253,18 +254,24 @@ final class OnlineTest {
                 eq("週五牌搭子", named.get("name"), "房間名稱");
                 eq(true, named.get("private"), "私人房間");
                 eq(true, named.get("expert"), "專家模式");
+                eq(false, named.get("substitute"), "沒給就沒有隨時補位");
+                probe.client.createRoom(new RoomSettings(500, 10, 2,
+                        List.of(BotLevel.PRO, BotLevel.BEGINNER, BotLevel.AMATEUR), 15, GameSpeed.FAST, "", false,
+                        false, true));
+                eq(true, connection.next("createRoom").get("substitute"), "隨時補位");
                 probe.client.joinRoom("ABC234");
                 Map<String, Object> join = connection.next("joinRoom");
                 eq("ABC234", join.get("code"), "房號");
-                // 服務器 0.7.0 起沒帶這個就不讓加入專家模式的房間
-                eq(List.of("expert"), join.get("supports"), "看得懂專家模式");
+                // 服務器 0.7.0 起沒帶 expert 就不讓加入專家模式的房間，0.10.0 起沒帶 substitute 就不讓中途補位
+                eq(List.of("expert", "substitute"), join.get("supports"), "看得懂專家模式與補位");
             }
         });
         test(name + "只看大廳：不登入，第一則就是 listRooms，之後再要一次", () -> {
             try (FakeServer server = new FakeServer(webSocket); Probe probe = new Probe(server)) {
                 probe.client.browse();
                 FakeConnection connection = server.accept();
-                eq("{\"type\":\"listRooms\"}", connection.nextLine(), "沒有 hello");
+                eq("{\"type\":\"listRooms\",\"supports\":[\"substitute\"]}", connection.nextLine(),
+                        "沒有 hello，說會補位才列出牌局中的房間");
                 connection.send(rooms(LISTING, LISTING.replace("ABC234", "XYZ789")
                         .replace("\"name\":\"週五牌搭子\",\"host\":\"小明\"", "\"name\":\"<html><b>x\",\"host\":\"<HTML>y\"")));
                 eq("rooms:2", probe.next(), "收到列表");
@@ -573,6 +580,33 @@ final class OnlineTest {
             RoomListing expert = RoomListing.parse(parse(rooms(LISTING.replace("\"speed\":\"FAST\"",
                     "\"speed\":\"FAST\",\"expert\":true")))).get(0);
             check(expert.settings().expert(), "專家模式的房間");
+            check(!first.playing(), "舊服務器沒有 playing，就是等人中");
+            eq(2, first.openSeats(), "舊服務器沒有 openSeats，用 4 減真人數");
+            check(!first.settings().substitute(), "舊服務器沒有隨時補位");
+            RoomListing running = RoomListing.parse(parse(rooms(LISTING.replace("\"humans\":2,",
+                    "\"humans\":2,\"playing\":true,\"openSeats\":1,").replace("\"speed\":\"FAST\"",
+                    "\"speed\":\"FAST\",\"substitute\":true")))).get(0);
+            check(running.playing(), "牌局中、可以補位");
+            eq(1, running.openSeats(), "還能替換一家電腦");
+            check(running.settings().substitute(), "隨時補位");
+        });
+        test("隨時補位：等待與上場的訊息，公告照「玩家 ○○ 替換電腦（××）加入」寫", () -> {
+            Substitution waiting = Substitution.waiting(parse(
+                    "{\"type\":\"substituteWaiting\",\"seat\":3,\"replacing\":\"阿土伯\",\"computer\":true}"));
+            eq(3, waiting.seat(), "保留的座位");
+            check(waiting.waitingDetail().contains("等電腦（阿土伯）打完這一手"), "說明在等哪一家");
+            check(waiting.waitingDetail().contains("不列入榮譽榜"), "說明不列入榮譽榜");
+            Substitution bot = Substitution.substituted(parse(
+                    "{\"type\":\"substituted\",\"seat\":2,\"name\":\"小明\",\"replaced\":\"阿土伯\",\"computer\":true}"));
+            eq("玩家 小明 替換電腦（阿土伯）加入", bot.announcement(false), "別人上場");
+            eq("你替換電腦（阿土伯）加入", bot.announcement(true), "自己上場");
+            Substitution left = Substitution.substituted(parse(
+                    "{\"type\":\"substituted\",\"seat\":1,\"name\":\"小明\",\"replaced\":\"小花\",\"computer\":false}"));
+            eq("玩家 小明 替換電腦（代打「小花」的座位）加入", left.announcement(false), "離開的人留下的座位");
+            fails(IllegalArgumentException.class, () -> Substitution.substituted(parse(
+                    "{\"type\":\"substituted\",\"seat\":9,\"name\":\"x\",\"replaced\":\"y\"}")), "座位不對");
+            fails(IllegalArgumentException.class, () -> Substitution.waiting(parse(
+                    "{\"type\":\"substituteWaiting\",\"seat\":1}")), "沒有名字");
         });
         test("大廳：缺欄位要拒絕", () -> {
             for (String key : List.of("code", "name", "host", "humans", "options")) {

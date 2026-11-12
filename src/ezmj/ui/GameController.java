@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.function.IntSupplier;
 
 import ezmj.bot.Bot;
@@ -44,6 +45,8 @@ public final class GameController implements TableFlow.Listener, TablePresenter.
     private final Runnable checkpoint;
     private final Random diceRandom = new Random();
     private TablePanel view;
+    /** 牌局裡的每個事件也交給這裡，修練的記牌用來記下打出的牌；平常什麼都不做。 */
+    private Consumer<RoundEvent> eventWatcher = event -> { };
     private boolean usedAutoPlay;
     /** 正在接回存檔的一局，這局的骰子不寫進紀錄。 */
     private boolean resuming;
@@ -235,10 +238,14 @@ public final class GameController implements TableFlow.Listener, TablePresenter.
         }
     }
 
-    /** 骰子與發牌的動畫演完才開始行牌，這段時間誰都不能動作。 */
+    /** 骰子與發牌的動畫演完才開始行牌，這段時間誰都不能動作。連莊時司儀先說「連莊，連N拉N」，有沒有動畫都說。 */
     @Override
     public int dealt(Round round) {
-        if (!settings.animationEnabled() || round.phase() == Round.Phase.FINISHED) {
+        if (round.phase() == Round.Phase.FINISHED) {
+            return 0;
+        }
+        presenter.announceStreak(round.streak());
+        if (!settings.animationEnabled()) {
             return 0;
         }
         return presenter.showDeal(true);
@@ -247,6 +254,12 @@ public final class GameController implements TableFlow.Listener, TablePresenter.
     @Override
     public void event(RoundEvent event) {
         presenter.event(event);
+        eventWatcher.accept(event);
+    }
+
+    /** 每個事件演出之後再交給 watcher，例如修練的記牌記下誰打了什麼。 */
+    void watchEvents(Consumer<RoundEvent> watcher) {
+        eventWatcher = watcher;
     }
 
     @Override

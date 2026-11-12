@@ -26,6 +26,7 @@ import ezmj.online.RoomInfo;
 import ezmj.online.RoomListing;
 import ezmj.online.RoomSettings;
 import ezmj.online.ServerAddress;
+import ezmj.online.Substitution;
 
 /**
  * 連線牌局：把服務器的訊息演到畫面上，再把自己的決定送回去，全部在 EDT 上執行。
@@ -54,6 +55,9 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
 
         /** 這次連線結束，回到輸入名字的畫面。message 不是 null 時告訴玩家發生什麼事。 */
         void backToForm(String message);
+
+        /** 加入隨時補位的牌局，服務器保留了座位、還沒上場：還在大廳，寫出在等哪一家，可以取消。 */
+        void showSubstituteWaiting(String text, String detail);
     }
 
     private final Host host;
@@ -84,6 +88,8 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
     private boolean finishing;
     private JDialog openDialog;
     private boolean shutDown;
+    /** 加入隨時補位的牌局，服務器保留了座位，還沒上場。這時還沒有 room，也收不到牌桌的訊息。 */
+    private boolean awaitingSubstitute;
 
     OnlineController(Host host, AppSettings settings, Path profileFile) {
         this.host = host;
@@ -195,7 +201,10 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
         finishedState = null;
         dealPending = false;
         waiting = false;
-        if (presenter != null) {
+        if (awaitingSubstitute) {
+            // 服務器發現斷線就會讓出座位，接回來時 token 已經失效，見 loginRejected
+            host.showSubstituteWaiting("連線中斷，正在重新連線…", null);
+        } else if (presenter != null) {
             presenter.showIdle("連線中斷，正在重新連線…");
         } else if (roomPanel != null) {
             roomPanel.setNotice("連線中斷，正在重新連線…");
@@ -204,7 +213,9 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
 
     @Override
     public void loginRejected(String code, String message) {
-        if (code.equals("unknownToken")) {
+        if (code.equals("unknownToken") && awaitingSubstitute) {
+            end("連線中斷了，保留的座位已經讓出來，請重新加入。");
+        } else if (code.equals("unknownToken")) {
             forgetGame();
             end("這場牌局已經結束，或這個座位已經不在了。");
         } else {
@@ -260,9 +271,18 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
                 forgetGame();
                 end(null);
                 break;
-            case "roomClosed":
+            case "roomClosed": {
                 forgetGame();
-                end(closeReason(String.valueOf(message.get("reason"))));
+                String reason = closeReason(String.valueOf(message.get("reason")));
+                // 自己離開時不用說，等補位時卻是房間裡的人都走了
+                end(reason == null && awaitingSubstitute ? "房間裡的玩家都離開了，房間關閉了。" : reason);
+                break;
+            }
+            case "substituteWaiting":
+                onSubstituteWaiting(Substitution.waiting(message));
+                break;
+            case "substituted":
+                onSubstituted(Substitution.substituted(message));
                 break;
             case "roundStart":
                 onRoundStart(message);
@@ -306,6 +326,9 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
 
     private void onRoom(RoomInfo info) {
         room = info;
+        // 補位上場了（換成牌桌），或整場在上場前就打完、坐進了等人的房間
+        boolean wasAwaiting = awaitingSubstitute;
+        awaitingSubstitute = false;
         if (info.playing()) {
             if (game == null || game.isOver()) {
                 closeOpenDialog();
@@ -322,7 +345,34 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
         } else if (!finishing) {
             closeTable();
             showRoom();
+            if (wasAwaiting) {
+                roomPanel.setNotice("這一場在你上場前就打完了，你已經坐進房間，等房主開下一場。");
+            }
         }
+    }
+
+    /** 服務器保留了座位，牌局照走不等我們。還在大廳畫面，寫出在等哪一家，可以取消。 */
+    private void onSubstituteWaiting(Substitution waiting) {
+        awaitingSubstitute = true;
+        host.showSubstituteWaiting(Substitution.WAITING_TITLE, waiting.waitingDetail());
+    }
+
+    /**
+     * 有人補位上場，全桌都收到，自己上場時也是（在 room 與 state 之後，牌桌已經開好）。
+     * 要寫得明顯：牌桌上方跳出公告，那一家旁邊跳「補位」，紀錄與聊天區也各留一行。和網頁版一樣。
+     */
+    private void onSubstituted(Substitution substitution) {
+        if (view == null || room == null) {
+            return;
+        }
+        boolean mine = substitution.seat() == room.yourSeat();
+        String text = substitution.announcement(mine);
+        view.announce(text, Substitution.honorNote(mine));
+        if (!mine) {
+            view.showSeatBanner(Math.floorMod(substitution.seat() - room.yourSeat(), 4), "補位");
+        }
+        view.appendLog(text);
+        view.appendSystemLine(text);
     }
 
     private void showRoom() {
@@ -436,6 +486,8 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
         if (dealPending) {
             dealPending = false;
             view.appendLog(WallRing.announce(game, game.dice()));
+            // 大字不演，司儀照樣說，不佔服務器給的時間
+            presenter.announceStreak(game.streak());
             if (settings.animationEnabled()) {
                 // 服務器只留 3 秒給骰子和發牌，連莊的大字先不演
                 presenter.showDeal(false);

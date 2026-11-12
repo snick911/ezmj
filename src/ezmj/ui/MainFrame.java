@@ -5,7 +5,13 @@ import java.awt.Dialog;
 import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.Frame;
+import java.awt.GraphicsConfiguration;
+import java.awt.GraphicsEnvironment;
+import java.awt.Insets;
+import java.awt.Rectangle;
 import java.awt.Toolkit;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.IOException;
@@ -34,6 +40,7 @@ import javax.swing.JSlider;
 import javax.swing.JSpinner;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingUtilities;
+import javax.swing.Timer;
 
 import ezmj.AppVersion;
 import ezmj.bot.Bot;
@@ -45,12 +52,16 @@ import ezmj.career.CareerTitle;
 import ezmj.career.Challenge;
 import ezmj.career.Dan;
 import ezmj.career.DanCertificate;
+import ezmj.career.Drill;
+import ezmj.career.MemoryQuiz;
 import ezmj.career.Records;
+import ezmj.career.WaitsQuiz;
 import ezmj.engine.Achievement;
 import ezmj.engine.GameSave;
 import ezmj.engine.GameSession;
 import ezmj.engine.GameView;
 import ezmj.engine.Round;
+import ezmj.engine.RoundEvent;
 import ezmj.engine.Settlement;
 import ezmj.model.AppSettings;
 import ezmj.model.BotLevel;
@@ -81,11 +92,19 @@ public final class MainFrame extends JFrame {
     private static final Path HOME_DIR = Path.of(System.getProperty("user.home"), ".ezmj");
     private static final Path SETTINGS_FILE = HOME_DIR.resolve("settings.properties");
     private static final Path VOICE_DIR = HOME_DIR.resolve("voice");
+    /** 錄好的背景音樂從 MP3 轉成的 WAV。 */
+    private static final Path MUSIC_DIR = HOME_DIR.resolve("music");
     private static final Path ONLINE_FILE = HOME_DIR.resolve("online.properties");
+    private static final int SEATS = 4;
+    /** 拖拉視窗邊框時，停手這麼久才重新放大縮小畫面，不會每動一下就重排。 */
+    private static final int ZOOM_DELAY_MILLIS = 200;
 
-    /** 牌桌上這場是哪一種：練習牌局、修業的一般對戰或挑戰關卡。 */
+    /**
+     * 牌桌上這場是哪一種：練習牌局、修業的一般對戰或挑戰關卡，或修練的記牌。
+     * 記牌不是完整牌局：不記統計、成就、榮譽榜與段位，也不存牌局，打到停下來就問答。
+     */
     private enum Mode {
-        PRACTICE, GENERAL, CHALLENGE
+        PRACTICE, GENERAL, CHALLENGE, DRILL
     }
 
     // 要在建立任何畫面之前讀取，字型才會一開始就是設定的大小
@@ -184,6 +203,13 @@ public final class MainFrame extends JFrame {
             connecting().resume(profile);
         }
 
+        /** 關掉連線就好：服務器發現斷線就讓出補位保留的座位。留在大廳。 */
+        @Override
+        public void cancel() {
+            leaveOnline();
+            onlinePanel.setBusy(null);
+        }
+
         @Override
         public void back() {
             leaveOnline();
@@ -192,6 +218,7 @@ public final class MainFrame extends JFrame {
     });
     private final HelpDialog helpDialog = new HelpDialog(this);
     private final JCheckBoxMenuItem voiceItem = checkItem("語音", settings.voiceEnabled(), this::changeVoice);
+    private final Timer zoomTimer = new Timer(ZOOM_DELAY_MILLIS, e -> applyZoom());
     private TablePanel tablePanel;
     private GameController controller;
     private OnlineController online;
@@ -213,10 +240,20 @@ public final class MainFrame extends JFrame {
     private boolean gameOver;
     /** 牌桌上這場的等待秒數固定，不能從選單調整：專家模式的修業牌局。 */
     private boolean waitFixed;
+    /** 牌桌上這場是專家模式的練習牌局：照環境設定，但最多 GameConfig.EXPERT_MAX_WAIT_SECONDS 秒，不限時也當作這個。 */
+    private boolean waitCapped;
     /** 這場拿到的修業稱號，牌局結束時一起告訴玩家。 */
     private final List<CareerTitle> titlesEarned = new ArrayList<>();
     /** 這場升到的段位，牌局結束時再說一次最高的那個。 */
     private Dan danEarned;
+    /** 正在打的記牌修練；不是記牌時是 null。 */
+    private Challenge drillStage;
+    /** 記牌：這局照順序打出的牌，被吃碰槓走的也算。 */
+    private final List<MemoryQuiz.Discard> drillDiscards = new ArrayList<>();
+    /** 記牌：打出這麼多張就停下來問。 */
+    private int drillStopAt;
+    /** 記牌：已經開始問了，之後的事件不再記。 */
+    private boolean drillAsked;
     /** 進入的修業檔案；在開始畫面、練習牌局或檔案列表時都是 null。練習牌局時一定是 null。 */
     private CareerSlot careerSlot;
     private CareerProfile career;
@@ -246,12 +283,20 @@ public final class MainFrame extends JFrame {
 
         setMinimumSize(new Dimension(1100, 720));
         applyResolution(settings.resolution());
+        // 換解析度、拖拉邊框或最大化時，畫面照新的視窗大小放大縮小
+        zoomTimer.setRepeats(false);
+        addComponentListener(new ComponentAdapter() {
+            @Override
+            public void componentResized(ComponentEvent e) {
+                zoomTimer.restart();
+            }
+        });
         SoundEffects.setVolume(settings.soundVolume());
         if (settings.soundEnabled()) {
             SoundEffects.preload();
         }
         BackgroundMusic.setVolume(settings.musicVolume());
-        BackgroundMusic.select(settings.music());
+        BackgroundMusic.select(settings.music(), MUSIC_DIR);
         VoiceLines.setVolume(settings.voiceVolume());
         if (settings.voiceEnabled()) {
             prepareVoice();
@@ -267,13 +312,37 @@ public final class MainFrame extends JFrame {
 
     /** 比螢幕大時縮到螢幕內。最大化之前先設好一般大小，還原視窗時才有合理的大小。 */
     private void applyResolution(Resolution resolution) {
-        Resolution normal = resolution.isMaximized() ? Resolution.DEFAULT : resolution;
-        Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();
         setExtendedState(NORMAL);
-        setSize(Math.min(normal.width(), screen.width), Math.min(normal.height(), screen.height - 40));
+        setSize(normalSize(resolution));
         setLocationRelativeTo(null);
         if (resolution.isMaximized()) {
             setExtendedState(MAXIMIZED_BOTH);
+        }
+    }
+
+    /** 這個解析度沒有最大化時的視窗大小：比螢幕大時縮到螢幕內，最大化的一般大小是預設解析度。 */
+    private static Dimension normalSize(Resolution resolution) {
+        Resolution normal = resolution.isMaximized() ? Resolution.DEFAULT : resolution;
+        Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();
+        return new Dimension(Math.min(normal.width(), screen.width), Math.min(normal.height(), screen.height - 40));
+    }
+
+    /** 最大化的視窗大小：螢幕扣掉工作列。 */
+    private static Dimension maximizedSize(GraphicsConfiguration screen) {
+        Rectangle bounds = screen.getBounds();
+        Insets taskbar = Toolkit.getDefaultToolkit().getScreenInsets(screen);
+        return new Dimension(bounds.width - taskbar.left - taskbar.right,
+                bounds.height - taskbar.top - taskbar.bottom);
+    }
+
+    /** 照現在的視窗大小放大縮小畫面，和現在一樣就不動。 */
+    private void applyZoom() {
+        boolean maximized = (getExtendedState() & MAXIMIZED_BOTH) == MAXIMIZED_BOTH;
+        Dimension size = maximized ? maximizedSize(getGraphicsConfiguration()) : getSize();
+        float zoom = Resolution.zoomFor(size.width, size.height);
+        if (zoom != Theme.zoom()) {
+            Theme.setZoom(zoom, getRootPane(), helpDialog);
+            syncScaledSizes();
         }
     }
 
@@ -281,6 +350,12 @@ public final class MainFrame extends JFrame {
         AppSettings loaded = AppSettings.load(SETTINGS_FILE);
         Theme.setFontPercent(loaded.fontPercent());
         Theme.setTilePercent(loaded.tilePercent());
+        // 一開始就照設定的解析度放大，畫面建好之後不用再重排一次
+        Dimension size = loaded.resolution().isMaximized()
+                ? maximizedSize(GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice()
+                        .getDefaultConfiguration())
+                : normalSize(loaded.resolution());
+        Theme.setZoom(Resolution.zoomFor(size.width, size.height));
         return loaded;
     }
 
@@ -440,7 +515,13 @@ public final class MainFrame extends JFrame {
         JMenu menu = new JMenu("背景音樂");
         menu.setFont(Theme.font(Font.PLAIN, 15f));
         ButtonGroup group = new ButtonGroup();
+        boolean recorded = false;
         for (MusicTrack track : MusicTrack.values()) {
+            // 合成的曲子與錄好的曲子中間隔一條線
+            if (track.isRecorded() && !recorded) {
+                menu.addSeparator();
+                recorded = true;
+            }
             JRadioButtonMenuItem item = new JRadioButtonMenuItem(track.label(), track == settings.music());
             item.setFont(Theme.font(Font.PLAIN, 15f));
             item.addActionListener(e -> changeMusic(track));
@@ -504,10 +585,11 @@ public final class MainFrame extends JFrame {
         }
     }
 
+    /** 錄好的曲子第一次選要先轉檔，一兩秒後才響。 */
     private void changeMusic(MusicTrack track) {
         settings.setMusic(track);
         saveSettings();
-        BackgroundMusic.select(track);
+        BackgroundMusic.select(track, MUSIC_DIR);
     }
 
     /** 拉動時立刻生效；音效與語音拉完會響一聲，聽聽看大小。 */
@@ -581,6 +663,11 @@ public final class MainFrame extends JFrame {
         settings.setFontPercent(percent);
         saveSettings();
         Theme.setFontPercent(percent, getRootPane(), helpDialog);
+        syncScaledSizes();
+    }
+
+    /** 字體大小或視窗放大的比例改變後，讓各畫面照 Theme.scaled 算的寬高跟著調整。 */
+    private void syncScaledSizes() {
         homePanel.syncSizes();
         startPanel.syncSizes();
         careerHub.syncSizes();
@@ -602,6 +689,10 @@ public final class MainFrame extends JFrame {
         Object[] message = {
             "每次等待的秒數，-1 表示不限時。",
             "時間到還沒決定：吃、碰、槓、胡視為放棄，輪到出牌則打出最右邊的手牌。",
+            controller != null && waitCapped
+                    ? "這場是專家模式，每次最多等 " + GameConfig.EXPERT_MAX_WAIT_SECONDS + " 秒，設得比較長或不限時也只等 "
+                            + GameConfig.EXPERT_MAX_WAIT_SECONDS + " 秒。"
+                    : "專家模式的牌局每次最多等 " + GameConfig.EXPERT_MAX_WAIT_SECONDS + " 秒。",
             spinner,
         };
         int answer = JOptionPane.showConfirmDialog(this, message, "等待時間", JOptionPane.OK_CANCEL_OPTION,
@@ -670,7 +761,8 @@ public final class MainFrame extends JFrame {
 
     /**
      * 擺好牌桌，還沒開始打。電腦的亂數也由種子決定，這樣整場才重現得出來。
-     * 只有練習牌局能用電腦代打，修業模式的一般對戰與挑戰都不能用。專家修業每次等待固定 EXPERT_WAIT_SECONDS 秒。
+     * 只有練習牌局能用電腦代打，修業模式的一般對戰與挑戰都不能用。專家修業每次等待固定 EXPERT_WAIT_SECONDS 秒；
+     * 其他專家模式的牌局照環境設定，但最多 GameConfig.EXPERT_MAX_WAIT_SECONDS 秒，不限時也當作這個。
      */
     private GameController openTable(GameSession session, long seed) {
         GameConfig config = session.config();
@@ -679,12 +771,16 @@ public final class MainFrame extends JFrame {
         titlesEarned.clear();
         danEarned = null;
         waitFixed = mode != Mode.PRACTICE && career != null && career.expert();
+        waitCapped = !waitFixed && config.expert();
         Bot bot = new SeatedBots(config.botLevels(), List.of(session.personality(1), session.personality(2), session.personality(3)),
                 config.basePay(), config.taiPay(), new Random(seed + 1));
         Bot proxy = new ComputerBot(BotLevel.PRO, config.basePay(), config.taiPay(), new Random(seed + 2));
         boolean fixed = waitFixed;
+        boolean capped = waitCapped;
         controller = new GameController(session, bot, proxy, this::handleRoundEnd, settings,
-                () -> fixed ? CareerProfile.EXPERT_WAIT_SECONDS : settings.waitSeconds(), this::saveGame);
+                () -> fixed ? CareerProfile.EXPERT_WAIT_SECONDS
+                        : capped ? GameConfig.expertWaitSeconds(settings.waitSeconds()) : settings.waitSeconds(),
+                this::saveGame);
         if (tablePanel != null) {
             root.remove(tablePanel);
         }
@@ -829,7 +925,7 @@ public final class MainFrame extends JFrame {
             try {
                 GameSession saved = careerRecords.loadGame().session();
                 String what = career.game() == CareerProfile.Game.GENERAL ? "一般對戰"
-                        : "第 " + career.challenge().number() + " 關「" + career.challenge().title() + "」";
+                        : career.challenge().label() + "「" + career.challenge().title() + "」";
                 pending = what + "：" + Tile.windName(saved.roundWind()) + "風圈第 " + (saved.roundsPlayed() + 1)
                         + " 局，桌上籌碼 " + saved.player(0).chips();
             } catch (IOException e) {
@@ -875,12 +971,119 @@ public final class MainFrame extends JFrame {
     }
 
     private void startCareerChallenge(Challenge challenge) {
+        if (challenge.isDrill()) {
+            startDrill(challenge);
+            return;
+        }
         career.startChallenge(challenge);
         saveCareer();
         mode = Mode.CHALLENGE;
         long seed = new Random().nextLong();
         GameConfig config = challenge.config(career.name()).withExpert(career.expert());
         openTable(new GameSession(config, new Random(seed)), seed).startRound();
+    }
+
+    /**
+     * 修練關卡。不是完整牌局：不記統計、成就、榮譽榜與段位，也不留打到一半的牌局，中途離開就是沒過關。
+     * 看聽直接開作答視窗；記牌照專家模式打一局，打出 第幾輪 × 4 張（輪數隨機）就停下來，蓋住牌桌問答。
+     */
+    private void startDrill(Challenge stage) {
+        if (!career.isUnlocked(stage) || career.game() != CareerProfile.Game.NONE) {
+            throw new IllegalStateException("現在不能挑戰：" + stage);
+        }
+        long seed = new Random().nextLong();
+        Random random = new Random(seed);
+        Drill drill = stage.drill();
+        if (!drill.isMemory()) {
+            List<DrillDialog.Item> items = new ArrayList<>();
+            for (WaitsQuiz.Hand hand : WaitsQuiz.hands(drill, random)) {
+                items.add(DrillDialog.Item.of(hand));
+            }
+            runDrill(stage, items);
+            showCareerHub();
+            return;
+        }
+        mode = Mode.DRILL;
+        drillStage = stage;
+        drillDiscards.clear();
+        drillAsked = false;
+        drillStopAt = (drill.minRounds() + random.nextInt(drill.maxRounds() - drill.minRounds() + 1)) * SEATS;
+        GameController table = openTable(new GameSession(stage.config(career.name()), new Random(seed)), seed);
+        table.watchEvents(this::drillEvent);
+        showDrillMission();
+        table.startRound();
+    }
+
+    /** 牌桌右邊的任務框：記住打出的牌，第幾輪會停下來問。 */
+    private void showDrillMission() {
+        Drill drill = drillStage.drill();
+        tablePanel.showMission(drillStage.label() + "　" + drillStage.title(), "記住每家打出的牌，第 " + drill.minRounds()
+                + "～" + drill.maxRounds() + " 輪會停下來問 " + drill.questions() + " 題", "已經打出 " + drillDiscards.size()
+                + " 張");
+    }
+
+    /** 記牌：記下每張打出的牌，打到停下來的那張就準備問答（等這個事件演完再停）。 */
+    private void drillEvent(RoundEvent event) {
+        if (mode != Mode.DRILL || drillAsked || event.type() != RoundEvent.Type.DISCARD) {
+            return;
+        }
+        drillDiscards.add(new MemoryQuiz.Discard(event.seat(), event.tile()));
+        showDrillMission();
+        if (drillDiscards.size() >= drillStopAt) {
+            drillAsked = true;
+            SwingUtilities.invokeLater(this::askMemoryQuiz);
+        }
+    }
+
+    /** 記牌：牌局停下來，照這局的門風叫各家，出題、作答，答完回到修業檔案。 */
+    private void askMemoryQuiz() {
+        if (mode != Mode.DRILL || controller == null) {
+            return;
+        }
+        drillAsked = true;
+        Round round = controller.round();
+        controller.stop();
+        gameOver = true;
+        Challenge stage = drillStage;
+        if (round == null || drillDiscards.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "這局一張牌都還沒打出就結束了，回到修業檔案再挑戰一次。", stage.title(),
+                    JOptionPane.INFORMATION_MESSAGE);
+            returnToStart();
+            return;
+        }
+        String[] labels = new String[SEATS];
+        List<Integer> order = new ArrayList<>();
+        for (int seat = 0; seat < SEATS; seat++) {
+            labels[seat] = Tile.windName(round.seatWind(seat)) + "家（" + round.player(seat).name()
+                    + (seat == 0 ? "，你" : "") + "）";
+            order.add(seat);
+        }
+        order.sort((a, b) -> Integer.compare(round.seatWind(a), round.seatWind(b)));
+        List<DrillDialog.Item> items = new ArrayList<>();
+        for (MemoryQuiz.Question question : MemoryQuiz.questions(drillDiscards, labels, order,
+                stage.drill().questions(), new Random(gameSeed + 3))) {
+            items.add(DrillDialog.Item.of(question));
+        }
+        runDrill(stage, items);
+        returnToStart();
+    }
+
+    /** 開作答視窗；答完照成績過關、給星與獎金，寫在視窗的成績頁。 */
+    private void runDrill(Challenge stage, List<DrillDialog.Item> items) {
+        new DrillDialog(this, stage, items, outcome -> settleDrill(stage, outcome)).setVisible(true);
+    }
+
+    /** 修練的成績：過關就記下來、發獎金與加星獎金，回傳要告訴玩家的話。 */
+    private String settleDrill(Challenge stage, DrillDialog.Outcome outcome) {
+        int stars = stage.drill().stars(outcome.correct(), outcome.averageSeconds());
+        if (stars == 0) {
+            return "要答對 " + stage.drill().passCount() + " 題才過關，回到修業檔案可以再挑戰一次。";
+        }
+        boolean first = !career.isCleared(stage);
+        int before = career.stars(stage);
+        int reward = career.clearChallenge(stage, LocalDate.now().toString(), stars);
+        saveCareer();
+        return clearedNote(stage, stars, first, before, reward);
     }
 
     private void resumeCareer() {
@@ -999,6 +1202,12 @@ public final class MainFrame extends JFrame {
             public void backToForm(String message) {
                 showOnlineForm(message);
             }
+
+            /** 還在大廳畫面，狀態列改寫成在等補位，按「取消」就不等了。 */
+            @Override
+            public void showSubstituteWaiting(String text, String detail) {
+                onlinePanel.setBusy(text, detail);
+            }
         };
     }
 
@@ -1020,9 +1229,9 @@ public final class MainFrame extends JFrame {
         startPanel.setResume(summary);
     }
 
-    /** 每次輪到真人決定時都會存，存不了只提醒一次。 */
+    /** 每次輪到真人決定時都會存，存不了只提醒一次。記牌的修練不存，中途離開就是沒過關。 */
     private void saveGame() {
-        if (controller == null) {
+        if (controller == null || mode == Mode.DRILL) {
             return;
         }
         try {
@@ -1050,7 +1259,8 @@ public final class MainFrame extends JFrame {
             return online.describe();
         }
         return controller == null ? "不在牌局中" : "種子 " + gameSeed + "，" + mode
-                + (mode == Mode.CHALLENGE ? " " + career.challenge() : "") + "，" + controller.describe();
+                + (mode == Mode.CHALLENGE ? " " + career.challenge() : mode == Mode.DRILL ? " " + drillStage : "")
+                + "，" + controller.describe();
     }
 
     /** 畫面執行緒出錯時牌局的流程已經斷了。回到開始畫面，存檔還是上一次輪到真人時的狀態，可以接著打。 */
@@ -1106,6 +1316,12 @@ public final class MainFrame extends JFrame {
     private Runnable handleRoundEnd(GameSession session, Round round, Settlement settlement, Runnable next) {
         if (historyDialog != null && historyDialog.isDisplayable()) {
             historyDialog.refresh();
+        }
+        if (mode == Mode.DRILL) {
+            // 記牌還沒到停下來的那一輪就有人胡了或流局：不算統計、成就，直接用打出過的牌問
+            gameOver = true;
+            drillAsked = true;
+            return this::askMemoryQuiz;
         }
         Records records = records();
         Challenge.Check check = mode == Mode.CHALLENGE ? career.challenge().check(session) : null;
@@ -1212,34 +1428,41 @@ public final class MainFrame extends JFrame {
     /** 過關就記下來、發獎金與加星獎金；失敗只是這場結束。 */
     private Ending finishChallenge(Challenge.Check check) {
         Challenge challenge = career.challenge();
-        String name = "第 " + challenge.number() + " 關「" + challenge.title() + "」";
+        String name = challenge.label() + "「" + challenge.title() + "」";
         if (check.status() == Challenge.Status.CLEARED) {
             boolean first = !career.isCleared(challenge);
             int before = career.stars(challenge);
             int reward = career.clearChallenge(challenge, LocalDate.now().toString(), check.stars());
-            String note = "這次 " + CareerHubPanel.starMarks(check.starCount()) + "："
-                    + String.join("、", challenge.starTexts(check.stars()));
-            List<String> missing = challenge.starTexts(Challenge.ALL_STARS & ~career.starMask(challenge));
-            note += missing.isEmpty() ? "\n這關三顆星都拿到了！" : "\n還沒拿過的星：" + String.join("、", missing);
-            if (reward > 0) {
-                int bonus = reward - (first ? career.rewardFor(challenge) : 0);
-                String detail = first && bonus > 0 ? "（過關 " + career.rewardFor(challenge) + "、加星 " + bonus + "）"
-                        : !first ? "（新拿到 " + (career.stars(challenge) - before) + " 顆星）" : "";
-                note += "\n獎金 " + reward + detail + " 入帳，帳上籌碼 " + career.bankroll();
-            } else {
-                note += "\n這次沒有新的星，沒有獎金。";
-            }
-            Challenge[] all = Challenge.values();
-            if (first && challenge.ordinal() + 1 < all.length) {
-                Challenge after = all[challenge.ordinal() + 1];
-                note += "\n開放第 " + after.number() + " 關「" + after.title() + "」";
-            } else if (first) {
-                note += "\n全部關卡都過了，恭喜出師！";
-            }
-            return new Ending("挑戰成功：" + name, note);
+            return new Ending("挑戰成功：" + name, clearedNote(challenge, check.stars(), first, before, reward));
         }
         career.endGame();
         return new Ending("挑戰失敗：" + name, check.progress() + "\n回到修業檔案可以再挑戰一次。");
+    }
+
+    /**
+     * 過關之後要說的話：這次拿到哪幾顆星、還差哪幾顆、獎金，第一次過關再說開放了哪一關。
+     * stars 是這次拿到的星，first 是第一次過關，before 是這次之前拿過幾顆星，reward 是這次入帳的獎金。
+     */
+    private String clearedNote(Challenge challenge, int stars, boolean first, int before, int reward) {
+        String note = "這次 " + CareerHubPanel.starMarks(Integer.bitCount(stars)) + "："
+                + String.join("、", challenge.starTexts(stars));
+        List<String> missing = challenge.starTexts(Challenge.ALL_STARS & ~career.starMask(challenge));
+        note += missing.isEmpty() ? "\n這關三顆星都拿到了！" : "\n還沒拿過的星：" + String.join("、", missing);
+        if (reward > 0) {
+            int bonus = reward - (first ? career.rewardFor(challenge) : 0);
+            String detail = first && bonus > 0 ? "（過關 " + career.rewardFor(challenge) + "、加星 " + bonus + "）"
+                    : !first ? "（新拿到 " + (career.stars(challenge) - before) + " 顆星）" : "";
+            note += "\n獎金 " + reward + detail + " 入帳，帳上籌碼 " + career.bankroll();
+        } else {
+            note += "\n這次沒有新的星，沒有獎金。";
+        }
+        Challenge after = challenge.next();
+        if (first && after != null) {
+            note += "\n開放" + after.label() + "「" + after.title() + "」";
+        } else if (first) {
+            note += challenge.isDrill() ? "\n修練關卡全部都過了！" : "\n全部關卡都過了，恭喜出師！";
+        }
+        return note;
     }
 
     private void showRoundEnd(GameSession session, Round round, Settlement settlement, List<Achievement> earned,
@@ -1313,13 +1536,17 @@ public final class MainFrame extends JFrame {
             return "";
         }
         return "登上榮譽榜：" + ranks.entrySet().stream()
-                .map(entry -> entry.getKey().label() + "第 " + entry.getValue() + " 名")
+                .map(entry -> entry.getKey().rankLabel(record) + "第 " + entry.getValue() + " 名")
                 .collect(Collectors.joining("、"));
     }
 
     private void confirmLeave() {
         if (gameOver) {
             returnToStart();
+        } else if (mode == Mode.DRILL) {
+            if (confirmQuitDrill("離開修練")) {
+                returnToStart();
+            }
         } else if (mode == Mode.PRACTICE) {
             if (askToSave("離開牌局", "要存檔之後再離開嗎？之後可以從練習牌局繼續。", "存檔並離開", "不存檔離開")) {
                 returnToStart();
@@ -1337,6 +1564,8 @@ public final class MainFrame extends JFrame {
         boolean leave;
         if (controller == null || gameOver) {
             leave = true;
+        } else if (mode == Mode.DRILL) {
+            leave = confirmQuitDrill("關閉遊戲");
         } else if (mode == Mode.PRACTICE) {
             leave = askToSave("關閉遊戲", "要存檔之後再關閉嗎？下次可以從練習牌局繼續。", "存檔並關閉", "不存檔關閉");
         } else {
@@ -1347,6 +1576,12 @@ public final class MainFrame extends JFrame {
             dispose();
             System.exit(0);
         }
+    }
+
+    /** 修練中途離開：沒有存檔，離開就是沒過關。 */
+    private boolean confirmQuitDrill(String title) {
+        return JOptionPane.showConfirmDialog(this, "修練還沒做完，現在離開這關算沒有過關。要離開嗎？", title,
+                JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION;
     }
 
     /** 問要不要存，照選的存好或結束這場；回傳是否真的要離開，按取消就是 false。 */
