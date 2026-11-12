@@ -8,13 +8,15 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import ezmj.model.BotLevel;
 import ezmj.model.GameRecord;
 import ezmj.model.HonorRoll;
 import ezmj.model.HonorRoll.Category;
+import ezmj.model.HonorRoll.Stakes;
 
-/** 榮譽榜：排序、名額、各類別獨立與存檔。 */
+/** 榮譽榜：排序、名額、各類別獨立、贏錢照底台分榜與存檔。 */
 final class HonorRollTest {
 
     private HonorRollTest() {
@@ -22,6 +24,22 @@ final class HonorRollTest {
 
     private static GameRecord record(String name, int wins, int selfDraws, int winnings, int dealIns) {
         return new GameRecord(name, "2026-10-31", wins, selfDraws, winnings, dealIns, BotLevel.PRO, 100, 20);
+    }
+
+    /** 只有贏錢的一場，其他類別都是 0，名次只看贏錢榜。 */
+    private static GameRecord game(String name, int basePay, int taiPay, int winnings, String date) {
+        return new GameRecord(name, date, 0, 0, winnings, 0, BotLevel.PRO, basePay, taiPay);
+    }
+
+    private static List<String> names(List<GameRecord> records) {
+        return records.stream().map(GameRecord::name).collect(Collectors.toList());
+    }
+
+    /** 第 1 版檔案裡的一筆，胡牌與放槍都是 1。 */
+    private static String oldEntry(String prefix, String name, int winnings, int basePay, int taiPay) {
+        return String.join("\n", List.of(prefix + ".name=" + name, prefix + ".date=2026-10-31", prefix + ".wins=1",
+                prefix + ".selfDraws=0", prefix + ".winnings=" + winnings, prefix + ".dealIns=1",
+                prefix + ".botLevel=PRO", prefix + ".basePay=" + basePay, prefix + ".taiPay=" + taiPay));
     }
 
     static void run() {
@@ -66,6 +84,97 @@ final class HonorRollTest {
             roll.add(record("乙", 0, 0, 900, 0));
             eq("乙", roll.top(Category.WINNINGS).get(0).name(), "贏錢榜");
             eq(1, roll.top(Category.WINS).size(), "胡牌榜不受影響");
+        });
+
+        test("贏錢金額照底台分榜，名次看同底台的榜", () -> {
+            HonorRoll roll = new HonorRoll();
+            eq(Map.of(Category.WINNINGS, 1), roll.add(game("小底", 100, 20, 900, "2026-11-01")), "第一筆");
+            eq(Map.of(Category.WINNINGS, 1), roll.add(game("大底", 1000, 200, 90000, "2026-11-01")),
+                    "大底台的贏得多，也是自己那個榜的第一名");
+            eq(Map.of(Category.WINNINGS, 1), roll.add(game("每台不同", 100, 50, 500, "2026-11-01")),
+                    "底一樣、每台不同也是另一個榜");
+            eq(Map.of(Category.WINNINGS, 2), roll.add(game("小底二", 100, 20, 300, "2026-11-01")), "同底台的第二名");
+            eq(List.of(new Stakes(100, 20), new Stakes(100, 50), new Stakes(1000, 200)), roll.stakes(), "由小到大");
+            eq(List.of("小底", "小底二"), names(roll.top(new Stakes(100, 20))), "同底台的榜");
+            eq(List.of("大底"), names(roll.top(new Stakes(1000, 200))), "大底台的榜");
+            check(roll.top(new Stakes(50, 10)).isEmpty(), "沒打過的底台是空的");
+            eq(List.of("大底", "小底", "每台不同", "小底二"), names(roll.top(Category.WINNINGS)), "舊版看的不分底台");
+            eq("贏錢金額（底 100／每台 20）", Category.WINNINGS.rankLabel(game("x", 100, 20, 1, "2026-11-01")), "名次的說法");
+            eq("胡牌數", Category.WINS.rankLabel(game("x", 100, 20, 1, "2026-11-01")), "其他類別不用說底台");
+        });
+
+        test("預設看最近有新紀錄的底台，同一天的看底台大的", () -> {
+            HonorRoll roll = new HonorRoll();
+            check(roll.latestStakes() == null, "還沒有紀錄");
+            roll.add(game("甲", 1000, 200, 900, "2026-11-02"));
+            roll.add(game("乙", 100, 20, 900, "2026-11-05"));
+            eq(new Stakes(100, 20), roll.latestStakes(), "最近的");
+            roll.add(game("丙", 300, 50, 900, "2026-11-05"));
+            eq(new Stakes(300, 50), roll.latestStakes(), "同一天取底台大的");
+        });
+
+        test("底台最多留 " + HonorRoll.MAX_STAKES + " 組，拿掉最久沒有新紀錄的那組，剛打完的不會被拿掉", () -> {
+            HonorRoll roll = new HonorRoll();
+            for (int i = 1; i <= HonorRoll.MAX_STAKES; i++) {
+                roll.add(game("P" + i, i, 1, 100, i == 5 ? "2026-10-01" : "2026-11-01"));
+            }
+            eq(HonorRoll.MAX_STAKES, roll.stakes().size(), "剛好滿");
+            eq(Map.of(Category.WINNINGS, 1), roll.add(game("新", 999, 1, 100, "2026-11-02")), "新的底台第一名");
+            eq(HonorRoll.MAX_STAKES, roll.stakes().size(), "還是滿的");
+            check(!roll.stakes().contains(new Stakes(5, 1)), "最久沒有新紀錄的拿掉");
+            check(roll.stakes().contains(new Stakes(999, 1)), "新的留著");
+
+            roll.add(game("日期舊", 1000, 1, 100, "2026-10-01"));
+            check(roll.stakes().contains(new Stakes(1000, 1)), "就算日期最舊，剛打完的也不拿掉");
+            check(!roll.stakes().contains(new Stakes(1, 1)), "拿掉另一組最舊的，同一天的先拿底台小的");
+        });
+
+        test("分底台的榜存檔後讀回來不變，舊版讀得到不分底台的那份", () -> {
+            Path dir = Files.createTempDirectory("ezmj-honor");
+            Path file = dir.resolve("honor.properties");
+            try {
+                HonorRoll roll = new HonorRoll();
+                roll.add(game("小底", 100, 20, 900, "2026-11-01"));
+                roll.add(game("大底", 1000, 200, 90000, "2026-11-01"));
+                roll.add(game("小底二", 100, 20, 300, "2026-11-01"));
+                roll.save(file);
+
+                HonorRoll loaded = HonorRoll.load(file);
+                eq(roll.stakes(), loaded.stakes(), "底台");
+                for (Stakes stakes : roll.stakes()) {
+                    eq(roll.top(stakes), loaded.top(stakes), stakes.label());
+                }
+                for (Category category : Category.values()) {
+                    eq(roll.top(category), loaded.top(category), category.label());
+                }
+                String text = Files.readString(file);
+                check(text.contains("WINNINGS.0.name=") && text.contains("WINNINGS.100x20.1.name="), "兩份都有存");
+            } finally {
+                Files.deleteIfExists(file);
+                Files.delete(dir);
+            }
+        });
+
+        test("第 1 版的檔案：各類別留下的紀錄照底台排進贏錢榜", () -> {
+            Path dir = Files.createTempDirectory("ezmj-honor");
+            Path file = dir.resolve("honor.properties");
+            try {
+                // 存檔是 Properties 的格式，中文會跳脫成 \\u，這裡直接寫英文名字
+                Files.writeString(file, String.join("\n", List.of(
+                        oldEntry("WINNINGS.0", "big", 90000, 1000, 200),
+                        oldEntry("WINNINGS.1", "small", 900, 100, 20),
+                        // 舊的贏錢榜擠不進去，但胡牌榜上有，而且有贏錢
+                        oldEntry("WINS.0", "winsOnly", 300, 100, 20),
+                        oldEntry("WINS.1", "small", 900, 100, 20),
+                        oldEntry("DEAL_INS.0", "lost", -500, 50, 10))));
+                HonorRoll loaded = HonorRoll.load(file);
+                eq(List.of(new Stakes(100, 20), new Stakes(1000, 200)), loaded.stakes(), "輸錢的底台沒有榜");
+                eq(List.of("small", "winsOnly"), names(loaded.top(new Stakes(100, 20))), "同一場只排一次");
+                eq(List.of("big", "small"), names(loaded.top(Category.WINNINGS)), "不分底台的照舊");
+            } finally {
+                Files.deleteIfExists(file);
+                Files.delete(dir);
+            }
         });
 
         test("存檔後可以讀回來，包含特殊字元的姓名", () -> {
