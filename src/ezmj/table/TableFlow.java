@@ -245,7 +245,7 @@ public final class TableFlow {
         }
     }
 
-    /** 打出這張牌並立刻報聽：單機的聽牌按鈕先選牌再打，舊的連線客戶端也用這個。 */
+    /** 打出這張牌並立刻報聽：打牌前的聽牌按鈕先選牌再打，單機與連線都用這個。 */
     public void declareListening(int seat, int id, Tile tile) {
         if (!isWaiting(seat, id)) {
             return;

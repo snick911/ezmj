@@ -260,7 +260,8 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
                 onError(String.valueOf(message.get("code")), String.valueOf(message.get("message")));
                 break;
             case "canListen":
-                if (presenter != null) {
+                // 在打牌前用聽牌按鈕選牌報聽，沒按就打出去的，打完不再問；專家模式沒有打牌前的提示，打完才問
+                if (presenter != null && isExpert()) {
                     presenter.canListen(OnlineGame.parseListenOffer(message));
                 }
                 break;
@@ -482,6 +483,12 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
         List<RoundEvent> events = takeEvents();
         game.applyState(state, events);
         bindRoundOnce();
+        if (stillAsked(events)) {
+            // 別家在自己決定的時候聽牌，服務器只是補送局面，還在等自己，按鈕與點牌都留著
+            view.refresh(game, game);
+            playEvents(events);
+            return;
+        }
         waiting = false;
         if (dealPending) {
             dealPending = false;
@@ -500,6 +507,23 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
         view.refresh(game, game);
         playEvents(events);
         presenter.showIdle(idleHint());
+    }
+
+    /**
+     * 這份局面之後，服務器還在等自己這次的決定。多人房間裡別家隨時可以按聽牌，服務器聽牌後只補送局面，
+     * 不會再問一次，所以只有別家聽牌（或什麼事都沒有）的局面不能把等待收掉，不然輪到自己時就打不出牌。
+     * 自己聽牌的話，服務器改成自動決定，這次的宣告就不用了。
+     */
+    private boolean stillAsked(List<RoundEvent> events) {
+        if (!waiting || dealPending) {
+            return false;
+        }
+        for (RoundEvent event : events) {
+            if (event.type() != RoundEvent.Type.LISTEN || event.seat() == 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private List<RoundEvent> takeEvents() {
@@ -538,8 +562,8 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
         OnlineGame.TurnAsk ask = OnlineGame.parseTurn(message);
         waitId = ask.waitId();
         waiting = true;
-        // 連線還是打完牌才問要不要報聽，聽牌按鈕先不在打牌前出現
-        presenter.askTurn(ask.waitId(), ask.options(), Map.of());
+        // 和單機牌局一樣，聽牌按鈕在打牌前就出現；專家模式服務器不給打哪張會聽牌，打完牌才問
+        presenter.askTurn(ask.waitId(), ask.options(), isExpert() ? Map.of() : ask.readyDiscards());
     }
 
     private void onAskClaim(Map<String, Object> message) {
@@ -688,7 +712,7 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
 
     /**
      * 開房間時選的專家模式，從 room 訊息的 options.expert 來，舊服務器沒有這個設定就不是。
-     * 連線本來就是打完牌才問要不要報聽，專家模式另外不列出聽哪些牌，紀錄與棄牌照專家模式顯示。
+     * 專家模式打完牌才問要不要報聽，不列出聽哪些牌，紀錄與棄牌照專家模式顯示。
      */
     @Override
     public boolean isExpert() {
