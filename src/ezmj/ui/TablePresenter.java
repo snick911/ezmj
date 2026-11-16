@@ -63,6 +63,10 @@ final class TablePresenter {
 
         /** null 表示過。 */
         void answerClaim(int waitId, Claim claim);
+
+        /** 聽牌之後等的牌來了，按了「胡」或「自摸」。連線對戰由服務器自動胡，用不到。 */
+        default void declareListeningWin(int waitId, boolean selfDraw) {
+        }
     }
 
     private final Table table;
@@ -166,7 +170,18 @@ final class TablePresenter {
                 }
             }
         }
-        return TableCanvas.endAnimationMs(round.result(), deltas);
+        int end = TableCanvas.endAnimationMs(round.result(), deltas);
+        if (round.result() != null && round.result().isDrawnGame()) {
+            // 流局：牌牆剩下的牌一張一張翻完才跳出結果，每翻一張有一聲
+            int left = round.remainingWall().size();
+            if (settings.soundEnabled()) {
+                for (int tile = 0; tile < left; tile++) {
+                    playSound(SoundEffects.Cue.DEAL, TableCanvas.REVEAL_DELAY_MS + tile * TableCanvas.REVEAL_INTERVAL_MS);
+                }
+            }
+            end = Math.max(end, TableCanvas.drawnRevealMs(left));
+        }
+        return end;
     }
 
     /** 骰子丟出去：提示寫「擲骰子…」，骰子停下來後改成「發牌中…」。 */
@@ -381,6 +396,27 @@ final class TablePresenter {
         showClaimActions(options);
     }
 
+    /**
+     * 聽牌之後等的牌來了：動作列只有一個火焰的「胡」或「自摸」讓自己按，不能放棄；
+     * TableFlow.LISTENING_WIN_SECONDS 秒內沒按，流程會自動胡。
+     */
+    void askListeningWin(int waitId, boolean selfDraw) {
+        promptId = waitId;
+        claimAsked = false;
+        String verb = selfDraw ? "自摸" : "胡";
+        Tile drawn = table.round().drawn();
+        String hint = "【聽牌中】" + (selfDraw ? (drawn == null ? "摸到等的牌" : "摸到 " + drawn.label()) : claimHint())
+                + "，等的牌來了！按「" + verb + "」，沒按也會自動" + verb;
+        shownActions = null;
+        view.setDiscardPrompt(false);
+        view.showActions(hint, false, List.of(TablePanel.ActionItem.flaming(verb, Theme.RED, () -> {
+            if (table.isWaiting(waitId)) {
+                table.declareListeningWin(waitId, selfDraw);
+            }
+        })));
+        updatePromptHint(hint);
+    }
+
     /** 打出牌後聽牌了，可以報聽。按鈕一直留著，直到自己摸牌、吃碰槓、報聽或這局結束。 */
     void canListen(int listenId) {
         listenOffer = listenId;
@@ -391,7 +427,7 @@ final class TablePresenter {
     private void showTurnActions(TurnOptions options) {
         List<TablePanel.ActionItem> actions = new ArrayList<>();
         if (options.canSelfWin()) {
-            actions.add(promptAction("自摸", Theme.RED, () -> table.declareSelfWin(promptId)));
+            actions.add(flamingAction("自摸", () -> table.declareSelfWin(promptId)));
         }
         if (!options.concealedKongs().isEmpty() || !options.addKongs().isEmpty()) {
             actions.add(promptAction("槓", Theme.BUTTON, () -> pickTurnKong(options)));
@@ -495,6 +531,16 @@ final class TablePresenter {
         }, translucent);
     }
 
+    /** 胡與自摸的按鈕：紅色，外面一圈火焰。和 promptAction 一樣只在這次等待有作用。 */
+    private TablePanel.ActionItem flamingAction(String label, Runnable action) {
+        int id = promptId;
+        return TablePanel.ActionItem.flaming(label, Theme.RED, () -> {
+            if (table.isWaiting(id)) {
+                action.run();
+            }
+        });
+    }
+
     void secondsLeft(int seconds) {
         secondsLeft = seconds;
         showPromptHint();
@@ -524,8 +570,9 @@ final class TablePresenter {
                 continue;
             }
             Claim first = ofType.get(0);
-            actions.add(promptAction(first.verb(), type == Claim.Type.WIN ? Theme.RED : Theme.BUTTON,
-                    ofType.size() == 1 ? () -> declareClaim(first) : () -> pickClaim(options, ofType, null)));
+            Runnable run = ofType.size() == 1 ? () -> declareClaim(first) : () -> pickClaim(options, ofType, null);
+            actions.add(type == Claim.Type.WIN ? flamingAction(first.verb(), run)
+                    : promptAction(first.verb(), Theme.BUTTON, run));
         }
         actions.add(promptAction("過", Theme.PANEL_LIGHT, () -> declareClaim(null)));
         String hint = claimHint() + "，要宣告嗎？";

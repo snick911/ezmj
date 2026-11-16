@@ -57,7 +57,7 @@ final class DrillTest {
         });
 
         test("修練的設定：記牌三關、看聽三關，題數、秒數、過關門檻與獎金", () -> {
-            int[] rewards = {600, 600, 1_000, 1_000, 1_500, 1_500};
+            int[] rewards = {600, 600, 800, 800, 1_000, 1_000};
             for (int i = 0; i < DRILLS.size(); i++) {
                 Challenge stage = DRILLS.get(i);
                 Drill drill = stage.drill();
@@ -117,8 +117,10 @@ final class DrillTest {
             eq(20_000L + 600 + 2 * bonus, profile.bankroll(), "入帳");
             eq(CareerProfile.Game.NONE, profile.game(), "修練不留打到一半的牌局");
             CareerProfile expert = new CareerProfile("阿明", CareerProfile.EXPERT_STARTING_CHIPS, DATE, true);
-            eq(List.of(30, 30, 50, 50, 75, 75), DRILLS.stream().map(expert::rewardFor).toList(), "專家獎金");
-            eq(30 + 6, expert.clearChallenge(Challenge.MEMORY_1, DATE, 0b011), "專家的加星獎金");
+            eq(List.of(30, 30, 40, 40, 50, 50), DRILLS.stream().map(expert::rewardFor).toList(), "專家獎金");
+            eq(List.of(10, 10, 10, 10, 10, 10), DRILLS.stream().map(expert::starBonus).toList(), "專家的加星獎金最少 10");
+            check(DRILLS.stream().allMatch(stage -> stage.reward() <= CareerProfile.DRILL_REWARD_MAX), "修練獎金最高 1000");
+            eq(30 + 10, expert.clearChallenge(Challenge.MEMORY_1, DATE, 0b011), "專家的加星獎金");
         });
 
         test("修練的過關與星存讀得回來", () -> {

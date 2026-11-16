@@ -48,6 +48,9 @@ public final class CareerProfile {
     public static final int EXPERT_REWARD_SHARE = 20;
     /** 第一次拿到第二、第三顆星，各再多給過關獎金的幾分之一。 */
     public static final int STAR_BONUS_SHARE = 5;
+    /** 修練的獎金（過關與加星）最多、最少這麼多：不是完整的牌局，最高 1000；專家檔案除下來再少，一次也有 10。 */
+    public static final int DRILL_REWARD_MAX = 1_000;
+    public static final int DRILL_REWARD_MIN = 10;
     public static final int MAX_NAME_LENGTH = 8;
     /** 檔案的格式版本，見 PropertyFiles.FORMAT_KEY。 */
     private static final int FORMAT = 1;
@@ -213,14 +216,16 @@ public final class CareerProfile {
         challenge = next;
     }
 
-    /** 這個檔案第一次過這關拿得到的獎金：專家模式是原本的 1/EXPERT_REWARD_SHARE。 */
+    /** 這個檔案第一次過這關拿得到的獎金：專家模式是原本的 1/EXPERT_REWARD_SHARE。修練限制在 DRILL_REWARD_MIN 到 DRILL_REWARD_MAX。 */
     public int rewardFor(Challenge stage) {
-        return expert ? stage.reward() / EXPERT_REWARD_SHARE : stage.reward();
+        int reward = expert ? stage.reward() / EXPERT_REWARD_SHARE : stage.reward();
+        return stage.isDrill() ? Math.max(DRILL_REWARD_MIN, Math.min(DRILL_REWARD_MAX, reward)) : reward;
     }
 
-    /** 第一次拿到這關的第二或第三顆星，各多給這麼多：過關獎金的 1/STAR_BONUS_SHARE。 */
+    /** 第一次拿到這關的第二或第三顆星，各多給這麼多：過關獎金的 1/STAR_BONUS_SHARE；修練最少 DRILL_REWARD_MIN。 */
     public int starBonus(Challenge stage) {
-        return rewardFor(stage) / STAR_BONUS_SHARE;
+        int bonus = rewardFor(stage) / STAR_BONUS_SHARE;
+        return stage.isDrill() ? Math.max(DRILL_REWARD_MIN, bonus) : bonus;
     }
 
     /** 這關拿過哪幾顆星，第 i 個位元是第 i+1 顆；還沒過關是 0。 */

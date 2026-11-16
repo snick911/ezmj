@@ -50,9 +50,18 @@ public final class TablePanel extends JPanel {
     private static final int PROMPT_BLINK_MS = 450;
 
     /** 動作列上的一個按鈕。translucent 的按鈕半透明，表示可以用但不一定要按。 */
-    record ActionItem(String label, Color color, Runnable run, boolean translucent) {
+    record ActionItem(String label, Color color, Runnable run, boolean translucent, boolean flame) {
         ActionItem(String label, Color color, Runnable run) {
-            this(label, color, run, false);
+            this(label, color, run, false, false);
+        }
+
+        ActionItem(String label, Color color, Runnable run, boolean translucent) {
+            this(label, color, run, translucent, false);
+        }
+
+        /** 胡與自摸的按鈕：外面一圈跳動的火焰。 */
+        static ActionItem flaming(String label, Color color, Runnable run) {
+            return new ActionItem(label, color, run, false, true);
         }
     }
 
@@ -133,7 +142,8 @@ public final class TablePanel extends JPanel {
 
     /** 字體大小改變後，讓側欄與動作列跟著調整。 */
     void syncSizes() {
-        actionBar.setPreferredSize(new Dimension(0, Theme.scaled(84)));
+        // 胡牌按鈕外面的火焰要多一點高度，所以比按鈕本身高
+        actionBar.setPreferredSize(new Dimension(0, Theme.scaled(104)));
         sidebar.setPreferredSize(new Dimension(Theme.scaled(262), 0));
         wrapMissionGoal();
     }
@@ -196,7 +206,7 @@ public final class TablePanel extends JPanel {
         actionButtons.setOpaque(false);
         actionButtons.setAlignmentX(CENTER_ALIGNMENT);
         bar.add(hint);
-        bar.add(Box.createVerticalStrut(6));
+        bar.add(Box.createVerticalStrut(4));
         bar.add(actionButtons);
         return bar;
     }
@@ -563,6 +573,130 @@ public final class TablePanel extends JPanel {
         }
     }
 
+    /**
+     * 胡與自摸的按鈕外面包一圈火焰：上緣與兩側一排火舌各自忽高忽低、左右搖，根部黃、往上變橘再變紅淡掉，
+     * 外面再一圈橘色的光。按鈕在畫面上時每 33 毫秒重畫一次，拿掉就停。burning 是 false 時只留同樣的空間不畫火，
+     * 讓同一排的其他按鈕和有火焰的對齊。
+     */
+    static final class FlameFrame extends JPanel {
+        private static final int FRAME_MS = 33;
+        private static final float[] STOPS = {0f, .45f, 1f};
+        /** 外層的火：橘到紅，尖端淡掉。 */
+        private static final Color[] OUTER = {new Color(255, 170, 40, 235), new Color(240, 90, 20, 205),
+            new Color(190, 20, 10, 0)};
+        /** 裡面一層比較矮的火心：白黃到橘。 */
+        private static final Color[] INNER = {new Color(255, 250, 210, 245), new Color(255, 214, 90, 225),
+            new Color(255, 150, 30, 0)};
+
+        private final boolean burning;
+        private final Timer timer = new Timer(FRAME_MS, e -> repaint());
+        private final long start = System.nanoTime();
+
+        FlameFrame(JButton button, boolean burning) {
+            super(new BorderLayout());
+            this.burning = burning;
+            setOpaque(false);
+            int side = burning ? Theme.scaled(18) : 0;
+            setBorder(BorderFactory.createEmptyBorder(Theme.scaled(20), side, Theme.scaled(4), side));
+            add(button, BorderLayout.CENTER);
+        }
+
+        @Override
+        public void addNotify() {
+            super.addNotify();
+            if (burning) {
+                timer.start();
+            }
+        }
+
+        @Override
+        public void removeNotify() {
+            timer.stop();
+            super.removeNotify();
+        }
+
+        @Override
+        protected void paintComponent(Graphics graphics) {
+            if (!burning || getComponentCount() == 0) {
+                return;
+            }
+            Graphics2D g = (Graphics2D) graphics.create();
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            java.awt.Rectangle b = getComponent(0).getBounds();
+            double t = (System.nanoTime() - start) / 1e9;
+            double reach = b.y;
+            double sideReach = b.x;
+
+            // 外面一圈橘光，一明一暗
+            double pulse = .65 + .35 * Math.sin(t * 7);
+            for (int ring = 3; ring >= 1; ring--) {
+                g.setColor(new Color(255, 120, 20, (int) (70 * pulse / ring)));
+                g.setStroke(new BasicStroke(ring * Math.max(2f, b.x / 4.5f)));
+                g.drawRect(b.x, b.y, b.width - 1, b.height - 1);
+            }
+            // 先畫外層橘紅的火，再畫裡面比較矮的黃色火心
+            flames(g, b, t, reach, sideReach, 1, OUTER, 0);
+            flames(g, b, t, reach * .62, sideReach * .6, .72, INNER, 40);
+            g.dispose();
+        }
+
+        /**
+         * 一層火：上緣一排火舌往上竄、左右搖，兩側的火舌往外上方飄、越上面越長。
+         * reach 是上緣最高竄多高，sideReach 是兩側往外多遠，thickness 是火舌寬度的比例，seed 讓每一層的節奏不一樣。
+         */
+        private static void flames(Graphics2D g, java.awt.Rectangle b, double t, double reach, double sideReach,
+                                   double thickness, Color[] colors, int seed) {
+            int count = Math.max(4, (int) Math.round(b.width / (Theme.scaled(13) * 1.0)));
+            double step = (double) b.width / count;
+            for (int i = 0; i < count; i++) {
+                double flicker = flicker(t, i + seed);
+                double x = b.x + step * (i + .5);
+                double h = reach * (.4 + .6 * flicker);
+                double w = step * 1.9 * thickness;
+                double sway = Math.sin(t * 6 + (i + seed) * 1.3) * w * .3;
+                tongue(g, x, b.y + 3, x + sway, b.y + 3 - h, w, colors);
+            }
+            int sideCount = 3;
+            for (int side = -1; side <= 1; side += 2) {
+                double edge = side < 0 ? b.x + 2 : b.x + b.width - 2;
+                for (int i = 0; i < sideCount; i++) {
+                    double flicker = flicker(t, i + seed + 20 + side * 7);
+                    double y = b.y + b.height * (1 - .42 * i);
+                    double out = sideReach * (.45 + .5 * flicker);
+                    double up = reach * (.7 + .5 * flicker) * (.7 + .15 * i);
+                    tongue(g, edge, y, edge + side * out, y - up, b.height * .55 * thickness, colors);
+                }
+            }
+        }
+
+        /** 0 到 1 的忽大忽小，每條火舌的節奏不一樣。 */
+        private static double flicker(double t, int index) {
+            return .5 + .5 * Math.sin(t * 11 + index * 1.7) * Math.sin(t * 6.3 + index * 2.9);
+        }
+
+        /** 一條火舌：根部在 (baseX, baseY)、寬 width，尖端在 (tipX, tipY)，顏色從根部往尖端變。 */
+        private static void tongue(Graphics2D g, double baseX, double baseY, double tipX, double tipY, double width,
+                                   Color[] colors) {
+            double dx = tipX - baseX;
+            double dy = tipY - baseY;
+            double length = Math.hypot(dx, dy);
+            if (length < 1) {
+                return;
+            }
+            // 根部沿著和火舌垂直的方向展開
+            double nx = -dy / length * width / 2;
+            double ny = dx / length * width / 2;
+            Path2D.Double shape = new Path2D.Double();
+            shape.moveTo(baseX - nx, baseY - ny);
+            shape.quadTo(baseX - nx * .7 + dx * .5, baseY - ny * .7 + dy * .5, tipX, tipY);
+            shape.quadTo(baseX + nx * .7 + dx * .5, baseY + ny * .7 + dy * .5, baseX + nx, baseY + ny);
+            shape.closePath();
+            g.setPaint(new java.awt.LinearGradientPaint((float) baseX, (float) baseY, (float) tipX, (float) tipY,
+                    STOPS, colors));
+            g.fill(shape);
+        }
+    }
+
     /** 紀錄收合按鈕上的箭頭：一個 V 字，up 時朝上。大小跟著字體大小設定。 */
     static final class ChevronIcon implements Icon {
         private static final int SIZE = 14;
@@ -713,12 +847,14 @@ public final class TablePanel extends JPanel {
 
     private void setButtons(List<ActionItem> actions) {
         actionButtons.removeAll();
+        boolean anyFlame = actions.stream().anyMatch(ActionItem::flame);
         for (ActionItem action : actions) {
             JButton button = action.translucent()
                     ? Theme.translucentButton(action.label(), action.color())
                     : Theme.button(action.label(), action.color());
             button.addActionListener(e -> action.run().run());
-            actionButtons.add(button);
+            // 有火焰的按鈕外面多一圈空間，同一排的其他按鈕也墊一樣高，才會對齊
+            actionButtons.add(action.flame() ? new FlameFrame(button, true) : anyFlame ? new FlameFrame(button, false) : button);
         }
         actionButtons.revalidate();
         actionButtons.repaint();

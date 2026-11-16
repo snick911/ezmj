@@ -9,6 +9,7 @@ import java.awt.Font;
 import java.awt.Frame;
 import java.awt.Graphics2D;
 import java.awt.Image;
+import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
@@ -63,6 +64,9 @@ final class HelpDialog extends JDialog {
     private static final String LICENSE_URL = "https://www.gnu.org/licenses/agpl-3.0.html";
     private static final String ISSUES_URL = "https://github.com/snick911/ezmj/issues";
 
+    /** 看榮譽榜時視窗至少這麼大，見 widenForHonorRoll。 */
+    private static final int HONOR_WIDTH = 1120;
+    private static final int HONOR_HEIGHT = 720;
     private static final int RULE_TILE_W = 30;
     private static final int EXAMPLE_TILE_W = 24;
     /** HTML 編輯器找圖片時，會先查文件上這個屬性裡的快取，所以牌面圖不必真的存成檔案。 */
@@ -160,6 +164,22 @@ final class HelpDialog extends JDialog {
                 + "連線對戰打完全場、成績亮眼的，名字還會登上網頁版大廳的「榮譽榜」。</p>"
                 + "<h2>免費，沒有廣告</h2>"
                 + "<p>EZMJ 完全免費，畫面上沒有廣告，也沒有任何要付費的地方，單純就是打麻將。</p>"
+                + "<h2>牌是真的洗出來的，電腦不作弊</h2>"
+                + "<p>很多人擔心電腦麻將的牌是「算好的」。EZMJ 的做法和實體牌桌一樣：</p><ul>"
+                + "<li><b>一副牌、洗一次、照順序摸</b>：每一局開始，先把 144 張牌整副洗亂、疊成牌牆。之後每個人摸到的牌，"
+                + "就是牌牆上照順序排在那裡的下一張（補花、槓牌從牌尾補），和真的牌桌一樣。不是輪到你才臨時用亂數「抽」一張，"
+                + "所以這一局誰會摸到什麼，洗完牌那一刻就決定了，中途誰也改不了。</li>"
+                + "<li><b>沒有偷偷調機率</b>：不會因為你連輸幾把就發好牌給你，也不會因為你贏太多就讓你摸不到牌；"
+                + "電腦也不會比較容易摸到好牌。四家拿牌的機會完全一樣，手氣好壞純粹是洗牌的結果。</li>"
+                + "<li><b>電腦看不到你的牌</b>：電腦知道的，就是坐在牌桌上的人看得到的：自己的手牌、大家打出來的牌、"
+                + "吃碰槓亮出來的牌、花牌與籌碼。你的手牌、別家的暗槓、牌牆裡還沒摸的牌，它都看不到；"
+                + "程式根本沒有把這些交給它，不是靠它自律。</li>"
+                + "<li><b>電腦和人一樣用想的</b>：它照打牌的人會想的事來決定：手上哪張最沒用、還差幾張聽牌、"
+                + "哪些牌外面已經打了很多、誰看起來快聽了該不該守。等級越高想得越多（初學者只顧自己的牌，"
+                + "職業會從別人打過的牌猜他在等什麼），但四個等級拿到的牌與規則都一樣。</li>"
+                + "<li><b>流局時翻牌給你看</b>：練習牌局與修業模式流局的時候，牌牆剩下沒摸的牌會一張一張翻開，"
+                + "可以看看自己等的牌是不是真的還在裡面。</li></ul>"
+                + "<p>連線對戰的洗牌、發牌與電腦玩家都在服務器上，用的是同一套程式。</p>"
                 + "<h2>隨時補位，開打了也能上桌</h2>"
                 + "<p>連線對戰開房間時勾了「隨時補位」，開打之後電腦在打的座位，別人也能從大廳加入替換。牌局不會為了等人停下來："
                 + "加入時先保留座位，等那家電腦打完這一手就換你上場，通常只要一兩手；這一局先結束的話，下一局開始時上場。"
@@ -224,7 +244,11 @@ final class HelpDialog extends JDialog {
                 + "<li><b>修練</b>：練記牌與看聽的小關卡，不是完整的牌局。記牌是照常打牌，打到某一輪停下來，"
                 + "牌桌蓋住問剛才誰打了什麼；看聽是先看一手聽牌，蓋起來之後點出它聽哪幾種。每題限時，答對夠多就過關，"
                 + "一樣有獎金與三顆星。修練自成一條線，第一關一開始就開放，和挑戰關卡互不影響。</li>"
-                + "<li>籌碼少到上不了桌時可以領救濟金，會記一次破產。帳上的籌碼到過一定數目就得到稱號。</li></ul>"
+                + "<li>籌碼少到上不了桌時可以領救濟金，會記一次破產。</li></ul>"
+                + "<p>檔案畫面右邊用「挑戰關卡」與「修練」兩個頁籤切換，頁籤上寫著過了幾關。</p>"
+                + "<p><b>稱號</b>：檔案畫面左上角的牌子寫著現在的稱號，剛建立時是「" + CareerHubPanel.NO_TITLE
+                + "」；稱號越高，牌子上的星越多。</p>"
+                + careerTitles()
                 + "<p>修業模式不能用電腦代打。詳細規則在「基本規則」最後的「修業模式」。</p>"
                 + "<h2>連線對戰</h2>"
                 + "<p>按「連線對戰」進大廳，先在最上面填名字（最多 " + OnlinePanel.MAX_NAME_LENGTH
@@ -296,14 +320,15 @@ final class HelpDialog extends JDialog {
                 + "<li><b>打牌</b>：輪到你時，滑鼠移到手牌上那張會抬起來，點一下就打出去。</li>"
                 + "<li><b>吃、碰、槓、胡</b>：別家打出你用得到的牌，動作列就出現對應的按鈕；不要就按「過」。"
                 + "吃有好幾種吃法時，再點手牌選要用哪幾張。</li>"
-                + "<li><b>自摸、暗槓、加槓</b>：輪到你時做得到就出現按鈕，不按就照常打牌。</li>"
+                + "<li><b>自摸、暗槓、加槓</b>：輪到你時做得到就出現按鈕，不按就照常打牌。"
+                + "「胡」與「自摸」的按鈕外面有一圈跳動的火焰，一眼就看得到。</li>"
                 + "<li><b>吃、碰之後</b>要再打一張牌，提示會放大閃動提醒你。</li>"
                 + "<li><b>聽牌</b>：打出某張就會聽牌時，出現半透明的「聽牌」按鈕，見「基本規則」的「聽牌」。</li>"
                 + "<li><b>時間</b>：環境設定的「等待時間」可以限制每次想幾秒。時間到還沒決定，吃碰槓胡算放棄，輪到打牌就打出最右邊那張。</li>"
                 + "<li><b>電腦代打</b>：練習牌局可以按右側的「電腦代打」交給電腦打，再按一次拿回來；用過的牌局不列入榮譽榜。</li></ul>"
                 + "<h2>一局結束</h2>"
                 + "<p>有人胡牌時跳出「胡」或「自摸」的大字，贏家的手牌推倒翻開，籌碼從付錢的人飛向贏家，各家跳出輸贏的數字。"
-                + "牌摸完沒人胡就流局，由司儀宣布「流局」；莊家連莊時，下一局開始司儀會說「連莊，連二拉二」這樣的連莊數。"
+                + "牌摸完沒人胡就流局，由司儀宣布「流局」，牌牆剩下的牌在牌桌中間一張一張翻開（連線對戰沒有）；莊家連莊時，下一局開始司儀會說「連莊，連二拉二」這樣的連莊數。"
                 + "接著是結果視窗，列出台數、每家付多少與大家的手牌，倒數完自動進入下一局，也可以直接按按鈕。"
                 + "四圈打完或有人籌碼輸光，就顯示整場的排名。台數怎麼算見「台數計算」。</p>"
                 + "<h2>離開與存檔</h2>"
@@ -316,7 +341,7 @@ final class HelpDialog extends JDialog {
                 + "語音（喊牌，以及司儀宣布流局與連莊；司儀的聲音穩重，不跟著語音風格）、我的語音（自己喊牌用女聲或男聲）、"
                 + "語音風格與動畫。改了立刻生效，下次開啟也記得。"
                 + "解析度比 1360 × 900 大或最大化時，整個畫面跟著等比例放大。</li>"
-                + "<li><b>榮譽榜、成就、統計</b>：看自己的紀錄。進入修業檔案時看那個檔案的，其他時候看練習牌局的。"
+                + "<li><b>榮譽榜、成就、統計</b>：看自己的紀錄（看榮譽榜時視窗會自己加大，九欄才排得開）。進入修業檔案時看那個檔案的，其他時候看練習牌局的。"
                 + "「統計」裡的「段位證照」是初段到九段的證書，可以換個人圖像、複製到 LINE 或存成圖片。</li>"
                 + "<li><b>說明</b>：簡介、這一頁、基本規則、台數計算、段位證照與關於。說明視窗不擋住牌桌，可以邊看邊打。</li></ul>";
     }
@@ -378,9 +403,24 @@ final class HelpDialog extends JDialog {
         HonorRoll.Stakes shown = category != HonorRoll.Category.WINNINGS ? null
                 : stakes != null && roll.stakes().contains(stakes) ? stakes : roll.latestStakes();
         currentPage = () -> showHonorRoll(roll, category, owner, shown);
+        widenForHonorRoll();
         showPage("榮譽榜：" + category.label() + "（" + owner + "）", ownerLine(owner) + honorPage(roll, category, shown));
         if (shown != null) {
             fillStakes(roll.stakes(), shown, chosen -> showHonorRoll(roll, category, owner, chosen));
+        }
+    }
+
+    /**
+     * 榮譽榜有九欄，說明的視窗太窄，名字、電腦等級與日期會折成好幾行：看榮譽榜時把視窗加大到
+     * HONOR_WIDTH × HONOR_HEIGHT（跟著字體大小縮放，不超出螢幕），已經比較大就不動；加大了就重新置中。
+     */
+    private void widenForHonorRoll() {
+        Rectangle screen = getGraphicsConfiguration().getBounds();
+        int width = Math.min(screen.width - 40, Theme.scaled(HONOR_WIDTH));
+        int height = Math.min(screen.height - 80, Theme.scaled(HONOR_HEIGHT));
+        if (getWidth() < width || getHeight() < height) {
+            setSize(Math.max(getWidth(), width), Math.max(getHeight(), height));
+            setLocationRelativeTo(getOwner());
         }
     }
 
@@ -423,7 +463,7 @@ final class HelpDialog extends JDialog {
         StringBuilder html = new StringBuilder("<h2>段位證照</h2>"
                 + "<p>局數、胡牌率、自摸率達到門檻，放槍率不超過門檻，四項都做到就升到那一段，發一張段位證書。"
                 + "證書上有名字、段位、認定日期、那一段看的局數、胡牌數、自摸數、胡牌率、自摸率、放槍率、16 碼證號與個人圖像，"
-                + "可以複製到 LINE 或存成圖片。"
+                + "可以複製到 LINE 或存成圖片。專家模式的修業檔案，證書上名字的右邊多一個紅圈圈起來的「特」字。"
                 + "段位只升不降，之後成績掉下來也不收回，證書上的數字是升段那天的。</p>"
                 + "<p>證書上的名字不能改：修業檔案是建立檔案時取的名字，練習牌局是第一次記進統計那一局的名字。</p>"
                 + "<p>證號是英文與數字，例如 EZ76 L09H 4QX2 MR8T：EZ、段位、認定年份的個位數、月份（A 是一月，跳過 I，"
@@ -577,15 +617,16 @@ final class HelpDialog extends JDialog {
         if (records.isEmpty()) {
             return html.append("<p>還沒有紀錄。牌局打到結束，成績就會記錄在這裡。</p>").toString();
         }
-        html.append("<table width=\"100%\" cellspacing=\"0\" cellpadding=\"5\"><tr class=\"head\">");
+        html.append("<table width=\"100%\" cellspacing=\"0\" cellpadding=\"8\"><tr class=\"head\">");
         for (String title : new String[] {"名次", "姓名", "胡牌", "自摸", "贏錢", "放槍", "電腦", "底／台", "日期"}) {
-            html.append("<td class=\"cell\">").append(title).append("</td>");
+            html.append("<td class=\"cell\" nowrap>").append(title).append("</td>");
         }
         html.append("</tr>");
         for (int i = 0; i < records.size(); i++) {
             GameRecord record = records.get(i);
+            // 前三名的名次是金色
             html.append("<tr>")
-                    .append(honorCell(String.valueOf(i + 1), false))
+                    .append(honorCell(String.valueOf(i + 1), i < 3))
                     .append(honorCell(escape(record.name()), false))
                     .append(honorCell(String.valueOf(record.wins()), category == HonorRoll.Category.WINS))
                     .append(honorCell(String.valueOf(record.selfDraws()), category == HonorRoll.Category.SELF_DRAWS))
@@ -675,6 +716,8 @@ final class HelpDialog extends JDialog {
                 + "電腦等 " + TableFlow.BOT_CLAIM_MS / 1000 + " 秒就先碰走，不用等你按。你能胡、或能做的和電腦一樣大時，照舊等你。</p>"
                 + "<h2>流局</h2>"
                 + "<p>牌牆固定留 " + Wall.RESERVED + " 張不摸，其餘摸完還沒有人胡就流局，這局沒有輸贏。</p>"
+                + "<p>練習牌局與修業模式流局時，牌牆剩下的牌會在牌桌中間先蓋著排好，再照牌頭到牌尾的順序一張一張翻開，"
+                + "翻完才跳出結果。連線對戰的牌牆在服務器上，不翻。</p>"
                 + "<h2>莊家與圈風</h2>"
                 + "<p>莊家胡牌或流局就連莊，其他情況由下家接莊。莊家的門風是東，下家起依序是南、西、北。</p>"
                 + "<p>從東風圈開始，每輪完一次莊就換下一圈。</p>"
@@ -691,7 +734,9 @@ final class HelpDialog extends JDialog {
                 + "<p>練習牌局、修業模式與連線對戰都一樣。專家模式沒有打牌前的提示，照常打牌，打出之後如果已經聽牌，下方會出現「聽牌」按鈕，"
                 + "一直到你下一次摸牌、吃碰槓或這局結束，中間按「過」放棄別家打出的牌不影響。"
                 + "專家模式聽牌之後也不列出等哪些牌，要自己記。</p>"
-                + "<p>聽牌之後自動摸牌打牌，胡的牌來了就自動胡，也不再吃、碰、槓，這一局不能取消。</p>"
+                + "<p>聽牌之後自動摸牌打牌，也不再吃、碰、槓，這一局不能取消。胡的牌來了（自己摸到或別家打出），"
+                + "動作列會出現火焰的「自摸」或「胡」讓你自己按；" + TableFlow.LISTENING_WIN_SECONDS
+                + " 秒內沒按也會自動胡，不能放棄。開了電腦代打時照舊直接胡；連線對戰由服務器直接胡，不會出現按鈕。</p>"
                 + "<p>聽牌是公開的，全桌都看得到，你的名字旁會有圓圈的「聽」。胡的時候多算「聽牌」1 台，自摸或胡別家的牌都算，"
                 + "也算在牌型台數裡。電腦也會聽牌：初學者不會，其他等級看手牌與局勢決定。</p>"
                 + "<h2>專家模式</h2>"
@@ -741,7 +786,8 @@ final class HelpDialog extends JDialog {
         challengeTable(html, Challenge.line(false), "任務", "牌桌");
         html.append("<p><b>修練</b>是另外一條線，練記牌與看聽，不是完整的牌局：第一關一開始就開放，過了前一關才開下一關，"
                 + "和上面的挑戰關卡互不影響。修練不記統計、成就、榮譽榜與段位證照，不能存檔，中途離開就是沒過關；"
-                + "因為不是完整的牌局，獎金比較少。每題都限時，從可以作答時開始算，時間到算答錯。</p><ul>"
+                + "因為不是完整的牌局，獎金比較少：過關獎金最高 " + CareerProfile.DRILL_REWARD_MAX
+                + "，專家檔案的獎金與加星獎金再少，一次最少也有 " + CareerProfile.DRILL_REWARD_MIN + "。每題都限時，從可以作答時開始算，時間到算答錯。</p><ul>"
                 + "<li><b>記牌</b>：照專家模式打一局，牌河每家只看得到最後一張，自己的牌自己打。四家各打一張算一輪，"
                 + "打到第幾輪會隨機停下來，牌桌蓋住開始問：最後打出的幾張、某一家最後兩張（照先後點牌，點滿了按「確定」，"
                 + "點錯可以「退一張」）、某張牌一共被打出幾張、某張牌是誰打的（點一下選項就送出）。各家照這局的門風叫，例如「東家」。</li>"

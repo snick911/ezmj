@@ -80,6 +80,15 @@ final class TableCanvas extends JComponent {
     private static final double GOLDEN_ANGLE = 2.39996323;
     private static final Color BIG_WIN_TOP = new Color(0xC9, 0x3A, 0x32, 235);
     private static final Color BIG_WIN_BOTTOM = new Color(0x6E, 0x12, 0x0E, 235);
+    /**
+     * 流局時把牌牆剩下的牌一張一張翻開給大家看：「流局」的大字出來 REVEAL_DELAY_MS 之後開始，
+     * 每張隔 REVEAL_INTERVAL_MS、翻 REVEAL_TILE_MS，全部翻完再停 REVEAL_HOLD_MS 才跳出結果。一排 REVEAL_COLUMNS 張。
+     */
+    static final int REVEAL_DELAY_MS = 900;
+    static final int REVEAL_INTERVAL_MS = 110;
+    private static final int REVEAL_TILE_MS = 160;
+    private static final int REVEAL_HOLD_MS = 1300;
+    private static final int REVEAL_COLUMNS = 8;
     /** 報聽時「聽」標記彈出來、外面兩個圈擴散的時間。 */
     static final int LISTEN_BADGE_MS = 900;
     /** 吃碰槓後要打牌時，手牌外框一明一暗的週期。 */
@@ -252,6 +261,9 @@ final class TableCanvas extends JComponent {
     /** 吃碰槓後要打牌，手牌外框亮起。 */
     private boolean discardPrompt;
     private long promptStart;
+    /** 流局時牌牆剩下的牌，從牌頭到牌尾；沒有流局或連線時（服務器不送牌牆）是空的。revealStart 是開始翻的時間。 */
+    private List<Tile> revealTiles = List.of();
+    private long revealStart;
 
     TableCanvas(Consumer<Tile> onDiscard) {
         this.onDiscard = onDiscard;
@@ -289,6 +301,7 @@ final class TableCanvas extends JComponent {
         pushSeat = -1;
         chipStart = 0;
         chipDeltas = null;
+        revealTiles = List.of();
         discardPrompt = false;
         dealStart = 0;
         lastEvent = null;
@@ -306,6 +319,23 @@ final class TableCanvas extends JComponent {
         if (event.type() == RoundEvent.Type.DISCARD && round != null) {
             shownDiscards[event.seat()] = round.player(event.seat()).discards().size();
         }
+        if (event.type() == RoundEvent.Type.DRAWN_GAME && round != null) {
+            // 沒有動畫時直接全部翻開；有動畫的話 animate 接著會把開始的時間改成稍後
+            revealTiles = List.copyOf(round.remainingWall());
+            revealStart = System.nanoTime() - 3_600_000_000_000L;
+            repaint();
+        }
+    }
+
+    /** 流局翻牌從開始到可以跳出結果要多久；count 是牌牆剩下幾張，沒有牌可翻是 0。 */
+    static int drawnRevealMs(int count) {
+        return count == 0 ? 0 : REVEAL_DELAY_MS + count * REVEAL_INTERVAL_MS + REVEAL_TILE_MS + REVEAL_HOLD_MS;
+    }
+
+    /** 流局的牌還在一張一張翻。 */
+    private boolean revealing() {
+        return !revealTiles.isEmpty()
+                && (frameNow - revealStart) / 1e6 < revealTiles.size() * REVEAL_INTERVAL_MS + REVEAL_TILE_MS;
     }
 
     /** 吃碰槓之後要打一張牌：自己的手牌外框一明一暗，直到打出牌。 */
@@ -459,6 +489,7 @@ final class TableCanvas extends JComponent {
                 break;
             default:
                 addCenterBanner("流局", null, Theme.MUTED, Style.PLAIN, WIN_BANNER_MS);
+                revealStart = System.nanoTime() + REVEAL_DELAY_MS * 1_000_000L;
                 break;
         }
         lastEvent = event;
@@ -529,7 +560,7 @@ final class TableCanvas extends JComponent {
             listenAnimating |= listenStart[seat] != 0;
         }
         if (flights.isEmpty() && banners.isEmpty() && announcements.isEmpty() && !dealing() && !listenAnimating
-                && !discardPrompt && !pushing() && !settling()) {
+                && !discardPrompt && !pushing() && !settling() && !revealing()) {
             frameTimer.stop();
         }
         repaint();
@@ -969,6 +1000,7 @@ final class TableCanvas extends JComponent {
             g.translate(cx, cy);
             paintCenterText(g, tableUnit());
             paintDice(g, tableUnit());
+            paintReveal(g, tableUnit());
             for (Flight flight : flights) {
                 paintFlight(g, flight);
             }
@@ -1057,6 +1089,68 @@ final class TableCanvas extends JComponent {
         }
         g.setComposite(saved);
         g.setTransform(origin);
+    }
+
+    /**
+     * 流局：牌桌中間一塊深色金框的板子，牌牆剩下的牌先蓋著排好，再照牌頭到牌尾的順序一張一張翻開，
+     * 剛翻開的那張有金框。翻完就留著，到下一局開始才收掉。原點在牌桌中心。
+     */
+    private void paintReveal(Graphics2D g, double unit) {
+        if (revealTiles.isEmpty()) {
+            return;
+        }
+        double ms = (frameNow - revealStart) / 1e6;
+        if (ms < 0) {
+            return;
+        }
+        int count = revealTiles.size();
+        int columns = Math.min(REVEAL_COLUMNS, count);
+        int rows = (count + columns - 1) / columns;
+        double w = 34 * unit;
+        double h = w * TILE_RATIO;
+        double gap = 3 * unit;
+        double pad = 12 * unit;
+        Font titleFont = Theme.fixedFont(Font.BOLD, (float) (17 * unit));
+        FontMetrics metrics = g.getFontMetrics(titleFont);
+        double gridW = columns * w + (columns - 1) * gap;
+        double gridH = rows * h + (rows - 1) * gap;
+        double titleH = metrics.getHeight() + 5 * unit;
+        double boxW = gridW + pad * 2;
+        double boxH = gridH + titleH + pad * 2;
+        Composite saved = g.getComposite();
+        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) Math.min(1, ms / 200)));
+        RoundRectangle2D box = new RoundRectangle2D.Double(-boxW / 2, -boxH / 2, boxW, boxH, 14 * unit, 14 * unit);
+        g.setColor(new Color(0x0A, 0x1A, 0x14, 238));
+        g.fill(box);
+        g.setColor(Theme.GOLD);
+        g.setStroke(new BasicStroke((float) Math.max(1.5, 2 * unit)));
+        g.draw(box);
+        String title = "流局・牌牆剩下的 " + count + " 張";
+        g.setFont(titleFont);
+        g.drawString(title, (float) (-metrics.stringWidth(title) / 2.0), (float) (-boxH / 2 + pad + metrics.getAscent()));
+        int latest = (int) Math.min(count - 1, Math.floor(ms / REVEAL_INTERVAL_MS));
+        boolean running = ms < count * REVEAL_INTERVAL_MS + REVEAL_TILE_MS + REVEAL_HOLD_MS / 2.0;
+        AffineTransform base = g.getTransform();
+        for (int i = 0; i < count; i++) {
+            double cx = -gridW / 2 + (i % columns) * (w + gap) + w / 2;
+            double top = -boxH / 2 + pad + titleH + (i / columns) * (h + gap);
+            double t = Math.min(1, (ms - i * REVEAL_INTERVAL_MS) / REVEAL_TILE_MS);
+            // 前半蓋著往中間縮成一條線，後半翻成正面再展開
+            boolean face = t >= .5;
+            double squeeze = t <= 0 ? 1 : Math.max(.04, Math.abs(1 - 2 * t));
+            g.translate(cx, top);
+            g.scale(squeeze, 1);
+            if (face) {
+                TilePainter.paintFace(g, revealTiles.get(i), -w / 2, 0, w, h);
+                if (running && i == latest) {
+                    TilePainter.paintHighlight(g, -w / 2, 0, w, h, Theme.GOLD);
+                }
+            } else {
+                TilePainter.paintBack(g, -w / 2, 0, w, h);
+            }
+            g.setTransform(base);
+        }
+        g.setComposite(saved);
     }
 
     /** 整片漸層很花時間，大小沒變就重複用同一張。 */

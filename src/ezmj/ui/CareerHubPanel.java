@@ -81,7 +81,8 @@ final class CareerHubPanel extends JPanel {
     private final JLabel reliefText = new JLabel();
     /** 一般對戰的規則，專家模式不一樣，換檔案時重寫。 */
     private final JLabel generalText = new JLabel();
-    private final JLabel titleNote = label(" ", Font.BOLD, 14f, Theme.GOLD);
+    /** 稱號的牌子，見 TitleBadge。 */
+    private final TitleBadge titleBadge = new TitleBadge();
     /** 選項跟著帳上的籌碼變，見 fillStakes。 */
     private final JComboBox<Integer> baseBox = StartPanel.combo(new Integer[] {100}, 100);
     private final JComboBox<Integer> taiBox = StartPanel.combo(new Integer[] {20}, 20);
@@ -93,7 +94,13 @@ final class CareerHubPanel extends JPanel {
     private final JLabel tableNote = label(" ", Font.PLAIN, 14f, Theme.MUTED);
     private final JLabel payWarning = StartPanel.warningLabel();
     private final JButton generalButton = Theme.button("開始一般對戰", Theme.RED);
+    /** 頁籤右邊的星數，例如「★ 12 / 54」。 */
     private final JLabel challengeTitle = sectionLabel(" ");
+    /** 挑戰關卡與修練各一個頁籤，列表一次只列其中一條線。 */
+    private final JButton stageTab = tabButton(false);
+    private final JButton drillTab = tabButton(true);
+    /** 現在看的是修練那一頁。 */
+    private boolean showDrills;
     private final JPanel challengeRows = new RowsPanel();
     private final JScrollPane challengeScroll = new JScrollPane(challengeRows,
             JScrollPane.VERTICAL_SCROLLBAR_ALWAYS, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
@@ -194,10 +201,7 @@ final class CareerHubPanel extends JPanel {
         GridBagConstraints c = new GridBagConstraints();
         c.gridx = 0;
         c.gridy = -1;
-        addWide(left, c, label("帳上籌碼", Font.PLAIN, 14f, Theme.MUTED), 0);
-        addWide(left, c, bankroll, 0);
-        addWide(left, c, bankrollNote, 2);
-        addWide(left, c, titleNote, 2);
+        addWide(left, c, summaryCard(), 0);
 
         pendingBox.add(sectionLabel("沒打完的牌局"));
         pendingBox.add(pendingInfo);
@@ -242,10 +246,41 @@ final class CareerHubPanel extends JPanel {
         return left;
     }
 
+    /**
+     * 左上角的一塊：稱號的牌子在最上面，下面是帳上的籌碼（大字、三位一撇）與起始、最高、破產次數。
+     * 淺色底、細金框，和下面的一般對戰分開。下一個稱號不寫在這裡，稱號怎麼來寫在「說明」→「遊戲玩法」。
+     */
+    private JPanel summaryCard() {
+        JPanel card = box();
+        card.setOpaque(true);
+        card.setBackground(Theme.PANEL_LIGHT);
+        card.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(Theme.GOLD.getRed(), Theme.GOLD.getGreen(), Theme.GOLD.getBlue(), 110), 1),
+                BorderFactory.createEmptyBorder(12, 16, 12, 16)));
+        titleBadge.setAlignmentX(LEFT_ALIGNMENT);
+        card.add(titleBadge);
+        card.add(Box.createVerticalStrut(10));
+        card.add(label("帳上籌碼", Font.PLAIN, 13f, Theme.MUTED));
+        card.add(bankroll);
+        card.add(Box.createVerticalStrut(2));
+        card.add(bankrollNote);
+        return card;
+    }
+
     private JPanel rightColumn() {
-        JPanel right = new JPanel(new BorderLayout(0, 6));
+        JPanel right = new JPanel(new BorderLayout());
         right.setOpaque(false);
-        right.add(challengeTitle, BorderLayout.NORTH);
+        JPanel tabs = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        tabs.setOpaque(false);
+        tabs.add(stageTab);
+        tabs.add(Box.createHorizontalStrut(4));
+        tabs.add(drillTab);
+        JPanel top = new JPanel(new BorderLayout(12, 0));
+        top.setOpaque(false);
+        top.add(tabs, BorderLayout.WEST);
+        top.add(challengeTitle, BorderLayout.EAST);
+        right.add(top, BorderLayout.NORTH);
+        syncTabs();
         challengeRows.setBackground(Theme.PANEL);
         challengeScroll.setBorder(BorderFactory.createLineBorder(Theme.PANEL_LIGHT));
         challengeScroll.getViewport().setBackground(Theme.PANEL);
@@ -260,6 +295,9 @@ final class CareerHubPanel extends JPanel {
             // 換了一個檔案，上一個檔案選的底台不留，照這個檔案的預設重選
             baseBox.setSelectedItem(null);
             taiBox.setSelectedItem(null);
+            // 頁籤也回到挑戰關卡
+            showDrills = false;
+            syncTabs();
         }
         profile = shown;
         title.setText(shown.name() + " 的修業");
@@ -267,10 +305,10 @@ final class CareerHubPanel extends JPanel {
         HomePanel.wrapped(reliefText, "補到 " + shown.reliefTo() + "，記一次破產。", 400);
         // 一句開場白；底台怎麼開放、專家模式的等待時間等規則寫在「說明」→「遊戲玩法」
         HomePanel.wrapped(generalText, "帶著帳上的籌碼上桌，和三家電腦拚四圈，贏來的就是你闖蕩江湖的本錢。", 400);
-        bankroll.setText(String.valueOf(shown.bankroll()));
-        bankrollNote.setText("起始 " + shown.startingChips() + "・最高 " + shown.peak() + "・破產 "
+        bankroll.setText(grouped(shown.bankroll()));
+        bankrollNote.setText("起始 " + grouped(shown.startingChips()) + "・最高 " + grouped(shown.peak()) + "・破產 "
                 + shown.bankruptcies() + " 次");
-        titleNote.setText(titleText(shown));
+        titleBadge.show(shown.title());
         pendingBox.setVisible(pendingSummary != null);
         pendingInfo.setText(pendingSummary == null ? " " : pendingSummary);
         reliefBox.setVisible(shown.canTakeRelief());
@@ -281,12 +319,49 @@ final class CareerHubPanel extends JPanel {
         repaint();
     }
 
-    /** 例如「稱號：百萬雀士・下一個「麻將大亨」要帳上到 5000000」。 */
+    /** 還沒有稱號時牌子上寫的字。 */
+    static final String NO_TITLE = "無名小卒";
+
+    /** 現在的稱號，例如「百萬雀士」；還沒有就是「無名小卒」。下一個稱號不寫，稱號表在「說明」→「遊戲玩法」。 */
     static String titleText(CareerProfile shown) {
         CareerTitle current = shown.title();
-        CareerTitle next = shown.nextTitle();
-        String now = current == null ? "還沒有稱號" : "稱號：" + current.label();
-        return next == null ? now + "・全部到手" : now + "・帳上到 " + next.threshold() + " 得到「" + next.label() + "」";
+        return current == null ? NO_TITLE : current.label();
+    }
+
+    /** 三位一撇，例如 1,234,567。 */
+    private static String grouped(long amount) {
+        return String.format(java.util.Locale.ROOT, "%,d", amount);
+    }
+
+    /** 一個頁籤：挑戰關卡或修練，按了換列表。樣子在 syncTabs 決定。 */
+    private JButton tabButton(boolean drills) {
+        JButton tab = Theme.button(" ", Theme.PANEL);
+        tab.setFont(Theme.font(Font.BOLD, 16f));
+        tab.addActionListener(e -> selectTab(drills));
+        return tab;
+    }
+
+    private void selectTab(boolean drills) {
+        if (showDrills == drills) {
+            return;
+        }
+        showDrills = drills;
+        syncTabs();
+        if (profile != null) {
+            fillChallenges(true);
+        }
+    }
+
+    /** 選到的頁籤是淺色底、金字、下面一條金線，和列表連在一起；另一個是深色底、灰字。 */
+    private void syncTabs() {
+        for (JButton tab : List.of(stageTab, drillTab)) {
+            boolean on = (tab == drillTab) == showDrills;
+            tab.setBackground(on ? Theme.PANEL_LIGHT : Theme.PANEL);
+            tab.setForeground(on ? Theme.GOLD : Theme.MUTED);
+            tab.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createMatteBorder(0, 0, 3, 0, on ? Theme.GOLD : Theme.PANEL_LIGHT),
+                    BorderFactory.createEmptyBorder(8, 20, 6, 20)));
+        }
     }
 
     /**
@@ -347,9 +422,9 @@ final class CareerHubPanel extends JPanel {
 
     /** 重新排挑戰列表。scrollToCurrent 時捲到第一個還沒過的關；只是視窗變寬變窄就不捲。 */
     private void fillChallenges(boolean scrollToCurrent) {
-        challengeTitle.setText("挑戰關卡　已過 " + profile.clearedCount(false) + " / " + Challenge.line(false).size()
-                + "　修練 " + profile.clearedCount(true) + " / " + Challenge.line(true).size()
-                + "　★ " + profile.totalStars() + " / " + Challenge.values().length * Challenge.MAX_STARS);
+        stageTab.setText("挑戰關卡　" + profile.clearedCount(false) + " / " + Challenge.line(false).size());
+        drillTab.setText("修練　" + profile.clearedCount(true) + " / " + Challenge.line(true).size());
+        challengeTitle.setText("★ " + profile.totalStars() + " / " + Challenge.values().length * Challenge.MAX_STARS);
         int goalPixels = goalPixels();
         challengeRows.removeAll();
         GridBagConstraints c = new GridBagConstraints();
@@ -359,7 +434,7 @@ final class CareerHubPanel extends JPanel {
         c.fill = GridBagConstraints.HORIZONTAL;
         String chapter = null;
         JComponent focus = null;
-        for (Challenge challenge : Challenge.values()) {
+        for (Challenge challenge : Challenge.line(showDrills)) {
             if (!challenge.chapter().equals(chapter)) {
                 chapter = challenge.chapter();
                 JLabel heading = label(challenge.chapterHeading(), Font.BOLD, 15f, Theme.GOLD);
@@ -513,6 +588,136 @@ final class CareerHubPanel extends JPanel {
 
     private static JLabel sectionLabel(String text) {
         return label(text, Font.BOLD, 17f, Theme.GOLD);
+    }
+
+    /**
+     * 稱號的牌子：兩端有缺角的緞帶，深紅漸層的底、金框、裡面再一道細金線，毛筆字的稱號，左右各一顆金色菱形，
+     * 上緣一道淡淡的反光；稱號越高，字的下面多一顆小星（一到五顆）。還沒有稱號是灰色的牌子，寫「無名小卒」。
+     */
+    static final class TitleBadge extends JComponent {
+        private static final Color RED_TOP = new Color(0xA8, 0x2A, 0x24);
+        private static final Color RED_BOTTOM = new Color(0x5E, 0x10, 0x0E);
+        private static final Color GOLD_LIGHT = new Color(0xF6, 0xDD, 0x8E);
+        private static final Color PLAIN_TOP = new Color(0x3A, 0x4E, 0x47);
+        private static final Color PLAIN_BOTTOM = new Color(0x24, 0x33, 0x2E);
+
+        private CareerTitle title;
+
+        TitleBadge() {
+            setOpaque(false);
+        }
+
+        void show(CareerTitle shown) {
+            title = shown;
+            setToolTipText(shown == null ? "還沒有稱號。稱號怎麼來，見「說明」→「遊戲玩法」的「稱號」"
+                    : "帳上的籌碼到過 " + grouped(shown.threshold()) + " 得到的稱號，之後輸掉也不會拿走");
+            revalidate();
+            repaint();
+        }
+
+        private String text() {
+            return title == null ? NO_TITLE : title.label();
+        }
+
+        private java.awt.Font brush() {
+            return Theme.brushFont(Theme.scaled(26));
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            int text = getFontMetrics(brush()).stringWidth(text()) + (text().length() - 1) * Theme.scaled(6);
+            return new Dimension(text + Theme.scaled(96), Theme.scaled(title == null ? 44 : 54));
+        }
+
+        @Override
+        public Dimension getMaximumSize() {
+            return getPreferredSize();
+        }
+
+        @Override
+        protected void paintComponent(Graphics graphics) {
+            java.awt.Graphics2D g = (java.awt.Graphics2D) graphics.create();
+            g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING,
+                    java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            Dimension size = getPreferredSize();
+            double w = size.width - 2;
+            double h = size.height - 2;
+            double notch = h * .28;
+            boolean plain = title == null;
+            java.awt.geom.Path2D.Double ribbon = new java.awt.geom.Path2D.Double();
+            ribbon.moveTo(1, 1);
+            ribbon.lineTo(1 + w, 1);
+            ribbon.lineTo(1 + w - notch, 1 + h / 2);
+            ribbon.lineTo(1 + w, 1 + h);
+            ribbon.lineTo(1, 1 + h);
+            ribbon.lineTo(1 + notch, 1 + h / 2);
+            ribbon.closePath();
+            g.setPaint(new java.awt.GradientPaint(0, 0, plain ? PLAIN_TOP : RED_TOP, 0, (float) h,
+                    plain ? PLAIN_BOTTOM : RED_BOTTOM));
+            g.fill(ribbon);
+            // 上半一道淡淡的反光
+            java.awt.Shape savedClip = g.getClip();
+            g.clip(ribbon);
+            g.setPaint(new java.awt.GradientPaint(0, 0, new Color(255, 255, 255, plain ? 22 : 46), 0, (float) (h * .5),
+                    new Color(255, 255, 255, 0)));
+            g.fill(new java.awt.geom.Rectangle2D.Double(0, 0, size.width, h * .5));
+            g.setClip(savedClip);
+            Color edge = plain ? Theme.MUTED : Theme.GOLD;
+            g.setColor(edge);
+            g.setStroke(new java.awt.BasicStroke(Math.max(1.5f, Theme.scaled(2))));
+            g.draw(ribbon);
+            // 裡面一道細線
+            double inset = Theme.scaled(5);
+            g.setStroke(new java.awt.BasicStroke(1f));
+            g.setColor(new Color(edge.getRed(), edge.getGreen(), edge.getBlue(), 150));
+            g.draw(new java.awt.geom.Line2D.Double(1 + notch + inset, 1 + inset, 1 + w - notch - inset, 1 + inset));
+            g.draw(new java.awt.geom.Line2D.Double(1 + notch + inset, 1 + h - inset, 1 + w - notch - inset, 1 + h - inset));
+
+            int stars = plain ? 0 : title.ordinal() + 1;
+            double starH = stars > 0 ? Theme.scaled(11) : 0;
+            g.setFont(brush());
+            java.awt.FontMetrics metrics = g.getFontMetrics();
+            int[] glyphs = text().codePoints().toArray();
+            double spacing = Theme.scaled(6);
+            double textW = (glyphs.length - 1) * spacing;
+            for (int glyph : glyphs) {
+                textW += metrics.stringWidth(new String(Character.toChars(glyph)));
+            }
+            double x = (size.width - textW) / 2;
+            double baseline = 1 + (h - starH) / 2 + (metrics.getAscent() - metrics.getDescent()) / 2.0;
+            for (int glyph : glyphs) {
+                String one = new String(Character.toChars(glyph));
+                g.setColor(new Color(0, 0, 0, 120));
+                g.drawString(one, (float) (x + 1.5), (float) (baseline + 1.5));
+                g.setColor(plain ? Theme.MUTED : GOLD_LIGHT);
+                g.drawString(one, (float) x, (float) baseline);
+                x += metrics.stringWidth(one) + spacing;
+            }
+            // 字的兩邊各一顆菱形
+            double r = Theme.scaled(5);
+            for (int side = -1; side <= 1; side += 2) {
+                double cx = size.width / 2.0 + side * (textW / 2 + Theme.scaled(16));
+                double cy = 1 + (h - starH) / 2;
+                java.awt.geom.Path2D.Double diamond = new java.awt.geom.Path2D.Double();
+                diamond.moveTo(cx, cy - r);
+                diamond.lineTo(cx + r, cy);
+                diamond.lineTo(cx, cy + r);
+                diamond.lineTo(cx - r, cy);
+                diamond.closePath();
+                g.setColor(plain ? Theme.MUTED : Theme.GOLD);
+                g.fill(diamond);
+            }
+            if (stars > 0) {
+                g.setFont(Theme.fixedFont(Font.PLAIN, Theme.scaled(11)));
+                java.awt.FontMetrics small = g.getFontMetrics();
+                String row = "★".repeat(stars);
+                g.setColor(Theme.GOLD);
+                g.drawString(row, (float) ((size.width - small.stringWidth(row)) / 2.0),
+                        (float) (1 + h - inset - Theme.scaled(3)));
+            }
+            g.dispose();
+        }
     }
 
     /** 直排、靠左的一小塊，沒打完的牌局與救濟金用。 */

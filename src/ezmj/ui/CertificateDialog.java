@@ -48,18 +48,32 @@ final class CertificateDialog extends JDialog {
     private final Records records;
     private final String ownerLabel;
     private final boolean career;
+    /** 專家模式的修業檔案：證書上有圈起來的「特」字。 */
+    private final boolean expert;
     private final Runnable showRules;
     private final Rectangle screen;
 
     /** profileName 是修業檔案的名字，練習牌局是 null；ownerLabel 例如「練習牌局」「修業：小明」。 */
     CertificateDialog(Frame owner, Records records, String ownerLabel, String profileName, Runnable showRules) {
-        this(owner, records, ownerLabel, profileName, showRules, ShareDialog.usableScreen(owner));
+        this(owner, records, ownerLabel, profileName, false, showRules);
+    }
+
+    /** expert 是專家模式的修業檔案，證書上多一個圈起來的「特」字。 */
+    CertificateDialog(Frame owner, Records records, String ownerLabel, String profileName, boolean expert,
+                      Runnable showRules) {
+        this(owner, records, ownerLabel, profileName, expert, showRules, ShareDialog.usableScreen(owner));
     }
 
     /** screen 是螢幕上可以放視窗的範圍，預覽的大小照它算；檢查各種螢幕時可以直接給。 */
     CertificateDialog(Frame owner, Records records, String ownerLabel, String profileName, Runnable showRules,
                       Rectangle screen) {
+        this(owner, records, ownerLabel, profileName, false, showRules, screen);
+    }
+
+    CertificateDialog(Frame owner, Records records, String ownerLabel, String profileName, boolean expert,
+                      Runnable showRules, Rectangle screen) {
         super(owner, TITLE, ModalityType.MODELESS);
+        this.expert = expert;
         this.records = records;
         this.ownerLabel = ownerLabel;
         this.career = profileName != null;
@@ -109,7 +123,7 @@ final class CertificateDialog extends JDialog {
         ShareDialog.Preview preview = null;
         JButton[] shareButtons = {};
         if (grant != null) {
-            BufferedImage image = CertificateArt.certificate(grant, certificate.name(), avatar);
+            BufferedImage image = CertificateArt.certificate(grant, certificate.name(), avatar, expert);
             preview = new ShareDialog.Preview(image, ShareDialog.MIN_PREVIEW_WIDTH,
                     ShareDialog.MIN_PREVIEW_WIDTH * CertificateArt.HEIGHT / CertificateArt.WIDTH);
             ShareDialog.zoomOnClick(preview, image, "段位證書");

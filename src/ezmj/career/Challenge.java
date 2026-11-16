@@ -17,7 +17,8 @@ import ezmj.model.Player;
  * 新增關卡只要在這裡加一項，記得給兩個加星條件。
  * <p>
  * 後面的「修練」關卡不是完整牌局（見 Drill）：記牌是打到一半停下來問答，看聽是看一手牌點出聽哪幾種。
- * 修練自成一條線，過了前一個修練才開下一個，和完整牌局的關卡互不擋；獎金也少得多。
+ * 修練自成一條線，過了前一個修練才開下一個，和完整牌局的關卡互不擋；獎金也少得多，
+ * 最高 1000，專家檔案與加星獎金最低也有 10，見 CareerProfile.rewardFor。
  * 加星條件固定是「全部答對」與「平均幾秒內作答」，由 Drill.stars 判定，不用 check。
  */
 public enum Challenge {
@@ -59,13 +60,13 @@ public enum Challenge {
     WAITS_1("修練", "看聽一", "看一手聽牌的 16 張，牌蓋起來之後點出它聽哪幾種（聽 1～2 種）",
             BotLevel.BEGINNER, 600, Drill.waits(1, 2, false, 15, 15, 5, 4, 8)),
     MEMORY_2("修練", "記牌二", "照常打牌，牌河每家只看得到最後一張；打到第 3～5 輪停下來，問 4 題剛才打過哪些牌",
-            BotLevel.AMATEUR, 1_000, Drill.memory(3, 5, 4, 12, 3, 7)),
+            BotLevel.AMATEUR, 800, Drill.memory(3, 5, 4, 12, 3, 7)),
     WAITS_2("修練", "看聽二", "看一手聽牌的 16 張，牌蓋起來之後點出它聽哪幾種（聽 2～4 種）",
-            BotLevel.BEGINNER, 1_000, Drill.waits(2, 4, false, 10, 12, 5, 4, 6)),
+            BotLevel.BEGINNER, 800, Drill.waits(2, 4, false, 10, 12, 5, 4, 6)),
     MEMORY_3("修練", "記牌三", "照常打牌，牌河每家只看得到最後一張；打到第 5～7 輪停下來，問 5 題剛才打過哪些牌",
-            BotLevel.PRO, 1_500, Drill.memory(5, 7, 5, 10, 4, 6)),
+            BotLevel.PRO, 1_000, Drill.memory(5, 7, 5, 10, 4, 6)),
     WAITS_3("修練", "看聽三", "看一手聽牌的 16 張，牌蓋起來之後點出它聽哪幾種（聽 3～6 種，多為一色牌）",
-            BotLevel.BEGINNER, 1_500, Drill.waits(3, 6, true, 8, 10, 5, 4, 5));
+            BotLevel.BEGINNER, 1_000, Drill.waits(3, 6, true, 8, 10, 5, 4, 5));
 
     /** 每關最多幾顆星：過關一顆，再加兩個加星條件。 */
     public static final int MAX_STARS = 3;

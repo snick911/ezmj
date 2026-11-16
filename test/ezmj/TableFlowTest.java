@@ -169,6 +169,20 @@ final class TableFlowTest {
         }
     }
 
+    /** 畫面會顯示「胡」的按鈕：報聽的人等的牌來了，流程要等他按。 */
+    private static final class WinAsker extends Recorder {
+        /** 每次問是不是自摸。 */
+        final List<Boolean> winAsks = new ArrayList<>();
+        int winAskId;
+
+        @Override
+        public boolean askListeningWin(int seat, int waitId, boolean selfDraw) {
+            winAsks.add(selfDraw);
+            winAskId = waitId;
+            return true;
+        }
+    }
+
     private static TableFlow.Pacing pacing(int waitSeconds) {
         return new TableFlow.Pacing() {
             @Override
@@ -498,6 +512,83 @@ final class TableFlowTest {
             eq(1, recorder.finished, "通知結束一次");
             eq(1, recorder.turnAsks.size(), "聽牌之後不再問");
             eq(0, recorder.claimAsks.size(), "聽牌之後也不問宣告");
+        });
+
+        test("聽牌後胡別家的牌：畫面要按鈕時等 5 秒讓他自己按，按了馬上胡", () -> {
+            Clock clock = new Clock();
+            WinAsker recorder = new WinAsker();
+            TableFlow flow = flow(Set.of(1), NEVER, 0, clock, recorder);
+            Round round = Table.dealer(0).hand(1, WINS_ON_3W).draws("9w 2z 1w 3w").start();
+            flow.resume(round);
+            clock.pass(150);
+            flow.declareListening(1, recorder.turnAsks.get(1), tile("2z"));
+            clock.pass(1_000);
+            eq(List.of(false), recorder.winAsks, "問一次，不是自摸");
+            eq(Round.Phase.CLAIMS, round.phase(), "還在等他按");
+            check(recorder.seconds.contains(TableFlow.LISTENING_WIN_SECONDS), "從 5 秒開始倒數：" + recorder.seconds);
+            check(flow.isWaiting(1, recorder.winAskId), "正在等這一位");
+            flow.answerClaim(1, recorder.winAskId, option(round.claimOptions(1), Claim.Type.WIN));
+            eq(Round.Phase.FINISHED, round.phase(), "按了就胡");
+            eq(1, round.result().winner(), "座位 1 胡");
+            eq(3, round.result().from(), "座位 3 放槍");
+            eq(0, recorder.claimAsks.size(), "不用一般的宣告問");
+        });
+
+        test("聽牌後胡別家的牌：5 秒內沒按就自動胡", () -> {
+            Clock clock = new Clock();
+            WinAsker recorder = new WinAsker();
+            TableFlow flow = flow(Set.of(1), NEVER, 0, clock, recorder);
+            Round round = Table.dealer(0).hand(1, WINS_ON_3W).draws("9w 2z 1w 3w").start();
+            flow.resume(round);
+            clock.pass(150);
+            flow.declareListening(1, recorder.turnAsks.get(1), tile("2z"));
+            clock.pass(300);
+            eq(1, recorder.winAsks.size(), "問了");
+            clock.pass(4_000);
+            eq(Round.Phase.CLAIMS, round.phase(), "4 秒還在等");
+            clock.pass(1_100);
+            eq(Round.Phase.FINISHED, round.phase(), "5 秒到自動胡");
+            eq(1, round.result().winner(), "座位 1 胡");
+            eq(1, recorder.finished, "通知結束一次");
+        });
+
+        test("聽牌後自摸：等他按自摸，沒按 5 秒後自動自摸；按了馬上自摸", () -> {
+            for (boolean press : new boolean[] {true, false}) {
+                Clock clock = new Clock();
+                WinAsker recorder = new WinAsker();
+                TableFlow flow = flow(Set.of(1), NEVER, 0, clock, recorder);
+                Round round = Table.dealer(0).hand(1, WINS_ON_3W).draws("9w 2z 1w 1p 2p 3w").start();
+                flow.resume(round);
+                clock.pass(150);
+                flow.declareListening(1, recorder.turnAsks.get(1), tile("2z"));
+                clock.pass(1_000);
+                eq(List.of(true), recorder.winAsks, "問一次，是自摸");
+                eq(Round.Phase.TURN, round.phase(), "還沒胡");
+                if (press) {
+                    flow.declareSelfWin(1, recorder.winAskId);
+                } else {
+                    clock.pass(4_000);
+                    eq(Round.Phase.TURN, round.phase(), "不到 5 秒還在等");
+                    clock.pass(1_100);
+                }
+                eq(Round.Phase.FINISHED, round.phase(), press ? "按了就自摸" : "時間到自動自摸");
+                check(round.result().isSelfDraw(), "是自摸");
+                eq(1, round.result().winner(), "座位 1");
+            }
+        });
+
+        test("聽牌後胡牌：開了代打就不問，照舊自動胡", () -> {
+            Clock clock = new Clock();
+            WinAsker recorder = new WinAsker();
+            TableFlow flow = flow(Set.of(1), NEVER, 0, clock, recorder);
+            Round round = Table.dealer(0).hand(1, WINS_ON_3W).draws("9w 2z 1w 3w").start();
+            flow.resume(round);
+            clock.pass(150);
+            flow.declareListening(1, recorder.turnAsks.get(1), tile("2z"));
+            flow.setAutoPlay(1, true);
+            clock.pass(10_000);
+            eq(0, recorder.winAsks.size(), "沒有問");
+            eq(1, round.result().winner(), "照樣胡");
         });
 
         test("報聽：打完聽牌才問，按了就公開；摸到胡的牌就自摸，多算 1 台；開新局就解除", () -> {

@@ -825,7 +825,7 @@ public final class MainFrame extends JFrame {
             certificateDialog.dispose();
         }
         certificateDialog = new CertificateDialog(this, records, recordsOwner(), career == null ? null : career.name(),
-                this::showDanRules);
+                career != null && career.expert(), this::showDanRules);
         certificateDialog.setVisible(true);
     }
 

@@ -610,6 +610,11 @@ public final class Round implements RoundView {
     }
 
     @Override
+    public List<Tile> remainingWall() {
+        return wall.order();
+    }
+
+    @Override
     public int liveTiles() {
         return wall.liveCount();
     }

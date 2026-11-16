@@ -44,6 +44,8 @@ final class ResultDialog extends JDialog {
 
     private static final int SCREEN_MARGIN = 80;
     private static final int SCROLLBAR_ROOM = 24;
+    /** 牌型台數那一張表最少這麼寬（跟著字體大小縮放）。 */
+    private static final int SCORE_TABLE_WIDTH = 300;
 
     /** 時間到自動關閉，電腦代打才能一直打下去。 */
     ResultDialog(Frame owner, GameView game, RoundView round, Settlement settlement, List<Achievement> earned,
@@ -200,8 +202,12 @@ final class ResultDialog extends JDialog {
         GridBagConstraints constraints = new GridBagConstraints();
         constraints.anchor = GridBagConstraints.NORTH;
         constraints.fill = GridBagConstraints.HORIZONTAL;
-        constraints.insets = new Insets(0, 0, 0, 20);
-        tables.add(scoreTable(round, settlement), constraints);
+        constraints.insets = new Insets(0, 0, 0, Theme.scaled(36));
+        // 台數那一張至少這麼寬，牌型的名字和台數之間才不會擠在一起
+        GridTable score = scoreTable(round, settlement);
+        Dimension size = score.getPreferredSize();
+        score.setPreferredSize(new Dimension(Math.max(size.width, Theme.scaled(SCORE_TABLE_WIDTH)), size.height));
+        tables.add(score, constraints);
         constraints.insets = new Insets(0, 0, 0, 0);
         constraints.weightx = 1;
         tables.add(payTable(game, round, settlement), constraints);

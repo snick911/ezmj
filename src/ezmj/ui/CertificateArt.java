@@ -68,6 +68,8 @@ public final class CertificateArt {
     private static final Color RING = new Color(255, 255, 255, 24);
     private static final double COLUMN_LEFT = 610;
     private static final double COLUMN_RIGHT = WIDTH - 140;
+    /** 專家模式「特」字外圈的半徑。 */
+    private static final double EXPERT_MARK = 62;
 
     /**
      * 預設的個人圖像。名稱存在證照裡，不要改；順序就是選圖時的順序，第一張是預設。
@@ -278,6 +280,12 @@ public final class CertificateArt {
      * 字要在縮小的預覽、LINE 的縮圖裡也看得清楚：名字 86、說明 38、成績 32 與 54、日期與證號 34 以上（證書寬 1600）。
      */
     public static BufferedImage certificate(DanCertificate.Grant grant, String name, BufferedImage avatar) {
+        return certificate(grant, name, avatar, false);
+    }
+
+    /** expert 是專家模式的修業檔案的證照：名字那一行的右邊多一個紅圈圈起來的「特」字。 */
+    public static BufferedImage certificate(DanCertificate.Grant grant, String name, BufferedImage avatar,
+                                            boolean expert) {
         BufferedImage image = new BufferedImage(WIDTH, HEIGHT, BufferedImage.TYPE_INT_RGB);
         Graphics2D g = graphics(image);
         paintPaper(g);
@@ -296,7 +304,12 @@ public final class CertificateArt {
 
         String shownName = name == null || name.isBlank() ? "雀友" : name.trim();
         g.setColor(INK);
-        text(g, shownName, Theme.fixedFont(Font.BOLD, 86f), 50, width, COLUMN_LEFT, 352, Align.LEFT);
+        // 有「特」字時名字讓出右邊的位置，太長就縮小
+        text(g, shownName, Theme.fixedFont(Font.BOLD, 86f), 50, expert ? width - EXPERT_MARK * 2 - 30 : width,
+                COLUMN_LEFT, 352, Align.LEFT);
+        if (expert) {
+            paintExpertMark(g, COLUMN_RIGHT - EXPERT_MARK - 6, 338, EXPERT_MARK);
+        }
         g.setColor(GOLD_LIGHT);
         g.setStroke(new BasicStroke(1.5f));
         g.draw(new Line2D.Double(COLUMN_LEFT, 404, COLUMN_RIGHT, 404));
@@ -405,6 +418,26 @@ public final class CertificateArt {
             x += ImageKit.width(g, glyph) + spacing;
         }
         return total;
+    }
+
+    /**
+     * 專家模式的記號：紅色毛筆字「特」，外面一個紅圈、裡面再一道細圈，像蓋上去的章，微微往右斜。
+     * (cx, cy) 是圓心，r 是外圈的半徑。
+     */
+    private static void paintExpertMark(Graphics2D g, double cx, double cy, double r) {
+        AffineTransform saved = g.getTransform();
+        g.translate(cx, cy);
+        g.rotate(Math.toRadians(8));
+        g.setColor(PAPER);
+        g.fill(new Ellipse2D.Double(-r, -r, r * 2, r * 2));
+        g.setColor(SEAL);
+        g.setStroke(new BasicStroke((float) (r * .13)));
+        g.draw(new Ellipse2D.Double(-r, -r, r * 2, r * 2));
+        g.setStroke(new BasicStroke((float) (r * .035)));
+        double inner = r * .82;
+        g.draw(new Ellipse2D.Double(-inner, -inner, inner * 2, inner * 2));
+        text(g, "特", Theme.brushFont((float) (r * 1.25)), r * .6, r * 1.5, 0, r * .02, Align.CENTER);
+        g.setTransform(saved);
     }
 
     /** 圓形的個人圖像，外面一圈金環。 */

@@ -33,6 +33,8 @@ public final class TableFlow {
     private static final int SEATS = 4;
     /** 自動做的宣告在等宣告開始這麼久之後才算數。 */
     public static final int BOT_CLAIM_MS = 2_000;
+    /** 報聽的真人等的牌來了，「胡」的按鈕等他按這麼多秒，沒按就自動胡，見 Listener.askListeningWin。 */
+    public static final int LISTENING_WIN_SECONDS = 5;
 
     /** 排一個之後才執行的動作，回傳的動作用來取消。 */
     public interface Scheduler {
@@ -84,6 +86,16 @@ public final class TableFlow {
          */
         void canListen(int seat, int listenId);
 
+        /**
+         * 報聽的真人等的牌來了（selfDraw 是自己摸到，不然是別家打出或加槓）：讓他自己按「胡」。
+         * 回傳 true 表示畫面會顯示按鈕，流程就等 LISTENING_WIN_SECONDS 秒：自摸用 declareSelfWin(seat, waitId)、
+         * 胡別家的牌用 answerClaim(seat, waitId, 胡的那個 Claim) 回答，時間到還沒按就自動胡，不能放棄。
+         * 回傳 false（預設）就照舊立刻自動胡，連線的服務器不用改。同時還要等別的真人宣告時不會問，直接自動胡。
+         */
+        default boolean askListeningWin(int seat, int waitId, boolean selfDraw) {
+            return false;
+        }
+
         void thinkingFinished(int seat);
 
         void roundFinished(Round round, Settlement settlement);
@@ -115,6 +127,8 @@ public final class TableFlow {
     /** 剛打出牌的座位，下一次 advance 時看他能不能報聽。 */
     private int justDiscarded = -1;
     private int secondsLeft;
+    /** 這次等的是報聽的人按「胡」：只等 LISTENING_WIN_SECONDS 秒，時間到自動胡。 */
+    private boolean listeningWinWait;
     private Runnable cancelStep = () -> { };
     private Runnable cancelCountdown = () -> { };
     private Runnable cancelAutomatic = () -> { };
@@ -230,7 +244,7 @@ public final class TableFlow {
         if (waiting.isEmpty()) {
             return;
         }
-        secondsLeft = Math.max(pacing.waitSeconds(), 0);
+        secondsLeft = listeningWinWait ? LISTENING_WIN_SECONDS : Math.max(pacing.waitSeconds(), 0);
         table.secondsLeft(secondsLeft);
         if (secondsLeft > 0) {
             tickCountdown();
@@ -394,6 +408,16 @@ public final class TableFlow {
         int seat = round.current();
         TurnOptions options = round.turnOptions(seat);
         if (round.isListening(seat)) {
+            if (options.canSelfWin() && people.contains(seat) && !autoPlay[seat]) {
+                // 摸到等的牌：讓他自己按「自摸」，幾秒內沒按就自動胡
+                beginWait(Set.of(seat));
+                if (table.askListeningWin(seat, waitId, true)) {
+                    listeningWinWait = true;
+                    restartCountdown();
+                    return;
+                }
+                endWait();
+            }
             table.idle(seat);
             schedule(pacing.turnDelayMs(), () -> playListeningTurn(seat, options));
         } else if (!people.contains(seat)) {
@@ -454,7 +478,9 @@ public final class TableFlow {
             }
         }
         if (asks.isEmpty()) {
-            resolveClaimsAfterDelay();
+            if (!askListeningWins()) {
+                resolveClaimsAfterDelay();
+            }
             return;
         }
         table.checkpoint();
@@ -475,6 +501,33 @@ public final class TableFlow {
                 }
             });
         }
+    }
+
+    /**
+     * 沒有別的真人要問時，報聽、沒開代打的真人能胡這張牌，就讓他自己按「胡」。他的胡已經放在自動的宣告裡，
+     * 時間到沒按照樣算數；按了只是提早。有一位的畫面不顯示按鈕就都不等，照舊自動胡。回傳有沒有在等。
+     */
+    private boolean askListeningWins() {
+        Set<Integer> winners = new HashSet<>();
+        for (int seat : people) {
+            Claim claim = automaticClaims.get(seat);
+            if (round.isListening(seat) && !autoPlay[seat] && claim != null && claim.type() == Claim.Type.WIN) {
+                winners.add(seat);
+            }
+        }
+        if (winners.isEmpty()) {
+            return false;
+        }
+        beginWait(winners);
+        for (int seat : winners) {
+            if (!table.askListeningWin(seat, waitId, false)) {
+                endWait();
+                return false;
+            }
+        }
+        listeningWinWait = true;
+        restartCountdown();
+        return true;
     }
 
     /** 報聽的人只胡不吃碰槓；代打就照電腦的判斷。 */
@@ -561,6 +614,7 @@ public final class TableFlow {
 
     private void endWait() {
         waiting.clear();
+        listeningWinWait = false;
         cancelCountdown.run();
         cancelCountdown = () -> { };
         cancelAutomatic.run();
@@ -581,7 +635,15 @@ public final class TableFlow {
 
     /** 時間到：輪到的人打出最右邊的牌，還沒決定宣告的都算過。 */
     private void onWaitTimeout() {
-        if (round.phase() == Round.Phase.TURN) {
+        if (listeningWinWait) {
+            // 報聽的人沒按「胡」：自摸就替他胡，胡別家的牌已經在自動的宣告裡
+            if (round.phase() == Round.Phase.TURN) {
+                round.declareSelfWin(round.current());
+                advance();
+            } else {
+                resolveClaims();
+            }
+        } else if (round.phase() == Round.Phase.TURN) {
             int seat = round.current();
             round.discard(seat, round.rightmostTile(seat));
             advance();

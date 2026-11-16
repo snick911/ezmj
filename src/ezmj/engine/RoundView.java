@@ -1,5 +1,7 @@
 package ezmj.engine;
 
+import java.util.List;
+
 import ezmj.model.Player;
 import ezmj.model.Tile;
 
@@ -40,4 +42,12 @@ public interface RoundView {
     int liveTiles();
 
     RoundResult result();
+
+    /**
+     * 牌牆裡還沒摸走的牌，從牌頭到牌尾。流局時畫面把它們一張一張翻開。
+     * 只有這局結束之後才該拿來畫；連線時服務器不送牌牆，是空的。
+     */
+    default List<Tile> remainingWall() {
+        return List.of();
+    }
 }

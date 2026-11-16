@@ -211,6 +211,20 @@ public final class GameController implements TableFlow.Listener, TablePresenter.
         flow.answerClaim(HUMAN_SEAT, waitId, claim);
     }
 
+    /** 聽牌之後自己按了「胡」或「自摸」：自摸直接宣告，胡別家的牌回答這次宣告裡胡的那一個。 */
+    @Override
+    public void declareListeningWin(int waitId, boolean selfDraw) {
+        if (selfDraw) {
+            flow.declareSelfWin(HUMAN_SEAT, waitId);
+            return;
+        }
+        if (!flow.isWaiting(HUMAN_SEAT, waitId)) {
+            return;
+        }
+        round().claimOptions(HUMAN_SEAT).stream().filter(claim -> claim.type() == Claim.Type.WIN).findFirst()
+                .ifPresent(claim -> flow.answerClaim(HUMAN_SEAT, waitId, claim));
+    }
+
     void restartCountdown() {
         flow.restartCountdown();
     }
@@ -297,6 +311,13 @@ public final class GameController implements TableFlow.Listener, TablePresenter.
         if (isExpert()) {
             presenter.canListen(listenId);
         }
+    }
+
+    /** 聽牌之後等的牌來了：出現火焰的「胡」讓自己按，幾秒內沒按流程會自動胡。 */
+    @Override
+    public boolean askListeningWin(int seat, int waitId, boolean selfDraw) {
+        presenter.askListeningWin(waitId, selfDraw);
+        return true;
     }
 
     @Override
