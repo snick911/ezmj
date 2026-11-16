@@ -35,7 +35,20 @@ final class FinalDialog extends JDialog {
 
     private static final String PDF_TITLE = "存成輸贏 PDF";
 
+    /**
+     * 關閉按鈕旁邊多的一顆，例如修業模式的「下一關」「再挑戰」「再打一場」。
+     * 按了只關掉視窗並記下是哪一顆，run 由開視窗的人在收拾好牌桌之後執行。
+     */
+    record Choice(String label, Runnable run) {
+    }
+
     private final GameReport report;
+    /** 按了哪一顆 Choice；按關閉或直接關掉視窗是 null。 */
+    private Choice chosen;
+
+    Choice chosen() {
+        return chosen;
+    }
 
     /**
      * headline 是 null 時照結束原因寫，例如「四圈打完，牌局結束」。note 是表格下方要告訴玩家的話，沒有就傳空字串，
@@ -43,6 +56,21 @@ final class FinalDialog extends JDialog {
      */
     FinalDialog(Frame owner, GameView game, String headline, String note, List<Achievement> earned, String closeLabel,
                 String roomName) {
+        this(owner, game, headline, note, earned, false, closeLabel, roomName);
+    }
+
+    /** animated 是環境設定的「動畫」，新成就的卡片要不要演。 */
+    FinalDialog(Frame owner, GameView game, String headline, String note, List<Achievement> earned, boolean animated,
+                String closeLabel, String roomName) {
+        this(owner, game, headline, note, earned, animated, closeLabel, roomName, List.of());
+    }
+
+    /**
+     * choices 是關閉按鈕右邊多的按鈕，見 Choice。有的時候按鈕分兩排：上面是接下來要做什麼，
+     * 下面是輸贏歷程、分享與 PDF，字體放大時一排才不會太寬。
+     */
+    FinalDialog(Frame owner, GameView game, String headline, String note, List<Achievement> earned, boolean animated,
+                String closeLabel, String roomName, List<Choice> choices) {
         super(owner, "牌局結束", true);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
 
@@ -69,7 +97,7 @@ final class FinalDialog extends JDialog {
                 content.add(ResultDialog.line(line, Font.BOLD, 16f, Theme.GOLD));
             }
         }
-        ResultDialog.addEarned(content, earned);
+        ResultDialog.addEarned(content, earned, animated);
         content.add(Box.createVerticalStrut(16));
 
         JButton close = Theme.button(closeLabel, Theme.RED);
@@ -85,8 +113,26 @@ final class FinalDialog extends JDialog {
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         buttons.setOpaque(false);
         buttons.setAlignmentX(LEFT_ALIGNMENT);
-        buttons.add(close);
-        buttons.add(Box.createHorizontalStrut(10));
+        if (choices.isEmpty()) {
+            buttons.add(close);
+            buttons.add(Box.createHorizontalStrut(10));
+        } else {
+            JPanel nextSteps = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+            nextSteps.setOpaque(false);
+            nextSteps.setAlignmentX(LEFT_ALIGNMENT);
+            nextSteps.add(close);
+            for (Choice choice : choices) {
+                JButton button = Theme.button(choice.label(), Theme.RED);
+                button.addActionListener(e -> {
+                    chosen = choice;
+                    dispose();
+                });
+                nextSteps.add(Box.createHorizontalStrut(10));
+                nextSteps.add(button);
+            }
+            content.add(nextSteps);
+            content.add(Box.createVerticalStrut(10));
+        }
         buttons.add(history);
         buttons.add(Box.createHorizontalStrut(10));
         buttons.add(share);

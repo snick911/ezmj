@@ -133,11 +133,16 @@ final class TableCanvas extends JComponent {
     private static final double WALL_DEPTH = 17;
     private static final int DISCARD_COLUMNS = 8;
     /**
-     * 棄牌的大小。一排的一半寬（DISCARD_COLUMNS × DISCARD_W / 2）要小於 DISCARD_TOP，
-     * 相鄰兩家的棄牌在角落才不會疊在一起，所以 8 張一排時寬最多到 30。
+     * 棄牌原本的大小，地方不夠時照這個畫。一排的一半寬（DISCARD_COLUMNS × DISCARD_W / 2）小於 DISCARD_TOP 時棄牌置中；
+     * 放大後比較寬，就往該家的左手邊挪，見 pileLeft。
      */
     private static final double DISCARD_W = 30;
     private static final double DISCARD_H = 40;
+    /** 地方夠的時候，棄牌最寬放大到這麼寬（和網頁版的電腦版一樣），見 discardScale。 */
+    private static final double MAX_DISCARD_W = 39;
+    /** 花牌最多八張；手牌最少十六格。用來算棄牌會不會排到花牌底下，牌局中張數變了棄牌也不會忽大忽小。 */
+    private static final int MAX_FLOWERS = 8;
+    private static final double MIN_HAND_SLOTS = 16;
     /** 棄牌排在牌牆外面。 */
     private static final double DISCARD_TOP = 123;
     private static final double FLOWER_W = 22;
@@ -659,10 +664,59 @@ final class TableCanvas extends JComponent {
     /** 第 index 張棄牌的中心點，該家視角。 */
     private Point2D.Double discardCenter(int index) {
         double unit = tableUnit();
-        double w = DISCARD_W * unit;
-        double h = DISCARD_H * unit;
-        return new Point2D.Double(-w * DISCARD_COLUMNS / 2 + (index % DISCARD_COLUMNS) * w + w / 2,
+        double scale = discardScale();
+        double w = DISCARD_W * unit * scale;
+        double h = DISCARD_H * unit * scale;
+        return new Point2D.Double(pileLeft(w, DISCARD_TOP * unit) + (index % DISCARD_COLUMNS) * w + w / 2,
                 DISCARD_TOP * unit + (index / DISCARD_COLUMNS) * h + h / 2);
+    }
+
+    /**
+     * 一排 8 張的棄牌左端，該家視角。原本置中；放大後半排比 top（棄牌離中心的距離）寬，就往這家的左手邊挪，
+     * 右端剛好到 top。四家像風車一樣各佔一個角，相鄰兩家的棄牌在角落才不會疊在一起。
+     */
+    private static double pileLeft(double tileW, double top) {
+        return Math.min(-tileW * DISCARD_COLUMNS / 2, top - tileW * DISCARD_COLUMNS);
+    }
+
+    /** 棄牌一張的寬，地方夠時放大。 */
+    private double discardW() {
+        return DISCARD_W * tableUnit() * discardScale();
+    }
+
+    /**
+     * 棄牌放大幾倍：四家都要從 DISCARD_TOP 排得下三排、不超過 discardReach，最寬到 MAX_DISCARD_W，
+     * 放不下就照原本的大小。中央方框、牌牆與手牌不變。
+     */
+    private double discardScale() {
+        if (getWidth() == 0 || getHeight() == 0) {
+            return 1;
+        }
+        double k = tableUnit();
+        double top = DISCARD_TOP * k;
+        double rows = DISCARD_ROWS_TO_FIT * DISCARD_H * k;
+        double scale = MAX_DISCARD_W / DISCARD_W;
+        for (int seat = 0; seat < 4; seat++) {
+            double reach = discardReach(seat, pileLeft(DISCARD_W * k * scale, top));
+            scale = Math.min(scale, (reach - top) / rows);
+        }
+        return Math.max(1, scale);
+    }
+
+    /**
+     * 從牌桌中心往這家的方向，棄牌最遠排到哪裡：手牌前面留一點空，自己的手牌還要留抬起來與外框發光的地方。
+     * 花牌從手牌左端往右排，最多八張，排得到棄牌左端（pileLeft，該家視角）的話，再讓出花牌那一排。
+     * 手牌照最少的格數算，花牌的起點最靠右。
+     */
+    private double discardReach(int seat, double pileLeft) {
+        double u = unit();
+        double k = tableUnit();
+        double reach = halfDepth(seat) - (seat == 0 ? humanRowDepth() + 8 * u : botRowDepth() + 4 * u);
+        double rowX = -rowStep(seat, MIN_HAND_SLOTS) * MIN_HAND_SLOTS / 2 + rowShift(seat);
+        if (flowersX(seat, rowX) + MAX_FLOWERS * FLOWER_W * k + 4 * k > pileLeft) {
+            reach -= (FLOWER_H + 6) * k;
+        }
+        return reach;
     }
 
     /** 打出的牌從手牌飛到棄牌區。真人從點的那張牌起飛，電腦從手牌中間起飛。 */
@@ -684,7 +738,7 @@ final class TableCanvas extends JComponent {
         Point2D.Double to = discardCenter(index);
         Point2D from = toTable(seat, fromX, fromY);
         Point2D target = toTable(seat, to.x, to.y);
-        double w = (DISCARD_W - 1) * tableUnit();
+        double w = discardW() - 1;
         flights.add(new Flight(event.tile(), false, from.getX(), from.getY(), seatAngle(seat), fromW,
                 target.getX(), target.getY(), seatAngle(seat), w, System.nanoTime(), DISCARD_FLIGHT_MS,
                 Slot.DISCARD, seat, -1));
@@ -708,7 +762,7 @@ final class TableCanvas extends JComponent {
         Point2D to = toTable(seat, meldX + tileIndex * row.step() + row.tileW() / 2, row.y() + row.tileH() / 2);
         double turn = Math.IEEEremainder(seatAngle(seat) - seatAngle(event.from()), Math.PI * 2);
         flights.add(new Flight(event.tile(), false, from.getX(), from.getY(), seatAngle(event.from()),
-                (DISCARD_W - 1) * tableUnit(), to.getX(), to.getY(), seatAngle(event.from()) + turn, row.tileW(),
+                discardW() - 1, to.getX(), to.getY(), seatAngle(event.from()) + turn, row.tileW(),
                 System.nanoTime(), CLAIM_FLIGHT_MS, Slot.MELD, seat, tileIndex));
         addSeatBanner(seat, text);
     }
@@ -1564,9 +1618,10 @@ final class TableCanvas extends JComponent {
     }
 
     private void paintDiscards(Graphics2D g, int seat, Player player, double unit) {
-        double tileW = DISCARD_W * unit;
-        double tileH = DISCARD_H * unit;
-        double startX = -tileW * DISCARD_COLUMNS / 2;
+        double scale = discardScale();
+        double tileW = DISCARD_W * unit * scale;
+        double tileH = DISCARD_H * unit * scale;
+        double startX = pileLeft(tileW, DISCARD_TOP * unit);
         double startY = DISCARD_TOP * unit;
         List<Tile> discards = player.discards();
         boolean lastHidden = flying(Slot.DISCARD, seat, -1);
@@ -1703,9 +1758,14 @@ final class TableCanvas extends JComponent {
 
     /** 花牌列的起點，該家視角。面子多時手牌變寬，花牌要避開隔壁家的手牌。 */
     private double flowersX(int seat, RowLayout row) {
+        return flowersX(seat, row.x());
+    }
+
+    /** 手牌左端在 rowX 時，花牌列的起點。 */
+    private double flowersX(int seat, double rowX) {
         double halfLength = (seat % 2 == 0 ? getWidth() : getHeight()) / 2.0;
         double inset = Math.max(66 * unit(), botRowDepth() + 6 * unit());
-        return Math.max(row.x(), -halfLength + inset);
+        return Math.max(rowX, -halfLength + inset);
     }
 
     private void addHit(double x, double y, double w, double h, Tile tile) {

@@ -51,6 +51,11 @@ public final class CareerProfile {
     /** 修練的獎金（過關與加星）最多、最少這麼多：不是完整的牌局，最高 1000；專家檔案除下來再少，一次也有 10。 */
     public static final int DRILL_REWARD_MAX = 1_000;
     public static final int DRILL_REWARD_MIN = 10;
+    /**
+     * 一般對戰打到一半就結束，那一局算棄局，賠這麼多個底（三家各一底）。
+     * 不然牌很差或別家聽大牌時結束這場再開一場，就不用輸。
+     */
+    public static final int FORFEIT_BASES = 3;
     public static final int MAX_NAME_LENGTH = 8;
     /** 檔案的格式版本，見 PropertyFiles.FORMAT_KEY。 */
     private static final int FORMAT = 1;
@@ -75,6 +80,8 @@ public final class CareerProfile {
     private Challenge challenge;
     /** 一般對戰開打時留在帳上、沒帶上桌的籌碼。 */
     private long reserve;
+    /** 打到一半的一般對戰的底，棄局時照這個賠；沒有在打或以前的版本開的牌局是 0。 */
+    private int stake;
 
     /** 一般模式的檔案。 */
     public CareerProfile(String name, int startingChips, String created) {
@@ -195,8 +202,32 @@ public final class CareerProfile {
         }
         int table = tableChips();
         reserve = bankroll - table;
+        stake = basePay;
         game = Game.GENERAL;
         return table;
+    }
+
+    /**
+     * 一般對戰現在就結束（打到一半的那局棄局）要賠多少：FORFEIT_BASES 個底，最多賠光桌上的籌碼，留在帳上的不動。
+     * 不是一般對戰是 0；以前的版本開的牌局沒有記底，也是 0。
+     */
+    public int forfeitCost() {
+        if (game != Game.GENERAL) {
+            return 0;
+        }
+        long onTable = Math.max(0, bankroll - reserve);
+        return (int) Math.min((long) stake * FORFEIT_BASES, onTable);
+    }
+
+    /** 一般對戰打到一半就結束：已經結算的局照算，那一局賠 forfeitCost，回傳賠了多少。 */
+    public int forfeitGeneral() {
+        if (game != Game.GENERAL) {
+            throw new IllegalStateException("沒有在打一般對戰");
+        }
+        int cost = forfeitCost();
+        bankroll -= cost;
+        endGame();
+        return cost;
     }
 
     /** 一般對戰每局結算完呼叫，帳跟著桌上的籌碼走。同一局重複呼叫結果一樣。 */
@@ -273,11 +304,15 @@ public final class CareerProfile {
         return reward;
     }
 
-    /** 打完、放棄或讀不回來的牌局都從這裡結束。一般對戰已經結算的局照算，打到一半的那局不算。 */
+    /**
+     * 打完、挑戰放棄或讀不回來的牌局都從這裡結束，沒有別的損失。一般對戰已經結算的局照算。
+     * 一般對戰打到一半自己要結束的，用 forfeitGeneral。
+     */
     public void endGame() {
         game = Game.NONE;
         challenge = null;
         reserve = 0;
+        stake = 0;
     }
 
     public boolean isCleared(Challenge stage) {
@@ -345,6 +380,7 @@ public final class CareerProfile {
             values.setProperty("game.challenge", challenge.name());
         }
         values.setProperty("game.reserve", String.valueOf(reserve));
+        values.setProperty("game.stake", String.valueOf(stake));
         store.write(values, file);
     }
 
@@ -392,6 +428,9 @@ public final class CareerProfile {
             }
         }
         profile.reserve = profile.game == Game.GENERAL ? number(values, "game.reserve", 0) : 0;
+        // 以前的版本開的牌局沒有記底，棄局不用賠
+        long stake = profile.game == Game.GENERAL ? number(values, "game.stake", 0) : 0;
+        profile.stake = (int) Math.max(0, Math.min(stake, BASE_OPTIONS.get(BASE_OPTIONS.size() - 1)));
         return profile;
     }
 

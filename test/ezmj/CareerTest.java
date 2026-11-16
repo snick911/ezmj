@@ -140,6 +140,49 @@ final class CareerTest {
             fails(IllegalStateException.class, () -> profile.settleGeneral(100), "沒在打就不能結算");
         });
 
+        test("一般對戰：打到一半就結束要賠三個底，最多賠光桌上的，打完或挑戰不用賠", () -> {
+            CareerProfile profile = profile(20_000);
+            eq(0, profile.forfeitCost(), "沒在打");
+            fails(IllegalStateException.class, profile::forfeitGeneral, "沒在打不能棄局");
+            profile.startGeneral(1_000, 20);
+            profile.settleGeneral(21_500);
+            eq(3_000, profile.forfeitCost(), "三個底");
+            eq(3_000, profile.forfeitGeneral(), "賠了多少");
+            eq(18_500L, profile.bankroll(), "已經打完的局照算，再扣三個底");
+            eq(21_500L, profile.peak(), "最高不變");
+            eq(CareerProfile.Game.NONE, profile.game(), "這場結束");
+            eq(0, profile.forfeitCost(), "結束之後");
+
+            profile.startGeneral(1_000, 20);
+            profile.settleGeneral(1_200);
+            eq(1_200, profile.forfeitGeneral(), "桌上不夠三個底，賠光桌上的");
+            eq(0L, profile.bankroll(), "不會變成負的");
+
+            CareerProfile busted = profile(20_000);
+            busted.startGeneral(100, 20);
+            busted.settleGeneral(-300);
+            eq(0, busted.forfeitGeneral(), "已經輸光就沒得賠");
+            eq(-300L, busted.bankroll(), "帳不變");
+
+            CareerProfile rich = new CareerProfile("阿明", 20_000, DATE);
+            rich.startGeneral(100, 20);
+            rich.settleGeneral(CareerProfile.MAX_TABLE_CHIPS * 2);
+            rich.endGame();
+            eq(CareerProfile.MAX_TABLE_CHIPS, rich.startGeneral(100, 20), "只帶一億上桌");
+            rich.settleGeneral(200);
+            long kept = rich.bankroll() - 200;
+            eq(200, rich.forfeitGeneral(), "只賠桌上的");
+            eq(kept, rich.bankroll(), "留在帳上的不動");
+
+            CareerProfile done = profile(20_000);
+            done.startGeneral(100, 20);
+            done.settleGeneral(19_000);
+            done.endGame();
+            eq(19_000L, done.bankroll(), "打完的不用賠");
+            done.startChallenge(Challenge.FIRST_WIN);
+            eq(0, done.forfeitCost(), "挑戰不用賠");
+        });
+
         test("一般對戰：帶上桌最多一億，其餘留在帳上", () -> {
             CareerProfile rich = profile(10_000_000);
             for (int i = 0; i < 12; i++) {
@@ -327,6 +370,7 @@ final class CareerTest {
             eq(CareerProfile.Game.GENERAL, loaded.game(), "一般對戰打到一半");
             loaded.settleGeneral(50_000);
             eq(profile.bankroll() + 2_000, loaded.bankroll(), "接著打，帳還是對的");
+            eq(300, loaded.forfeitCost(), "這場的底讀得回來，棄局賠三個底");
 
             loaded.endGame();
             loaded.startChallenge(Challenge.CONCEALED);

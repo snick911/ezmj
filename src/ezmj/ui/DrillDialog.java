@@ -56,6 +56,17 @@ final class DrillDialog extends JDialog {
         }
     }
 
+    /**
+     * settle 的結果：note 是寫在成績頁的話（過關、星、獎金），可以用換行分成幾行；
+     * next 是可以接著打的關卡，成績頁各有一顆按鈕：同一關是「再挑戰」，別的是「下一關」。
+     */
+    record Settled(String note, List<Challenge> next) {
+    }
+
+    /** 結束之後接著打的按鈕，挑戰關卡的牌局結束視窗也用這兩個字。 */
+    static final String RETRY_LABEL = "再挑戰";
+    static final String NEXT_LABEL = "下一關";
+
     private static final int TICK_MS = 100;
     private static final int FEEDBACK_MS = 2_200;
     private static final int HAND_TILE = 36;
@@ -67,7 +78,9 @@ final class DrillDialog extends JDialog {
 
     private final Challenge challenge;
     private final List<Item> items;
-    private final Function<Outcome, String> settle;
+    private final Function<Outcome, Settled> settle;
+    /** 成績頁按了接著打哪一關；回到修業檔案或中途放棄是 null。 */
+    private Challenge chosen;
     /** 每一頁至少 CARD_WIDTH 寬，換頁時卡片不會忽大忽小。 */
     private final JPanel card = new JPanel() {
         @Override
@@ -89,8 +102,8 @@ final class DrillDialog extends JDialog {
     private int feedbackFor = -1;
     private Outcome outcome;
 
-    /** settle 在答完最後一題時呼叫一次，回傳要寫在成績頁的話（過關、星、獎金）。 */
-    DrillDialog(JFrame owner, Challenge challenge, List<Item> items, Function<Outcome, String> settle) {
+    /** settle 在答完最後一題時呼叫一次，回傳要寫在成績頁的話（過關、星、獎金）與可以接著打的關卡。 */
+    DrillDialog(JFrame owner, Challenge challenge, List<Item> items, Function<Outcome, Settled> settle) {
         super(owner, challenge.label() + "　" + challenge.title(), ModalityType.APPLICATION_MODAL);
         this.challenge = challenge;
         this.items = List.copyOf(items);
@@ -131,6 +144,11 @@ final class DrillDialog extends JDialog {
     /** 作答完的成績；中途放棄是 null。 */
     Outcome outcome() {
         return outcome;
+    }
+
+    /** 成績頁按了「下一關」或「再挑戰」要接著打的關卡；回到修業檔案或中途放棄是 null。 */
+    Challenge chosen() {
+        return chosen;
     }
 
     private void start(int next) {
@@ -379,7 +397,8 @@ final class DrillDialog extends JDialog {
         stopTimer();
         double average = seconds.stream().mapToDouble(Double::doubleValue).average().orElse(0);
         outcome = new Outcome(correct, items.size(), average);
-        String note = settle.apply(outcome);
+        Settled settled = settle.apply(outcome);
+        String note = settled.note();
         card.removeAll();
         card.add(ResultDialog.line(challenge.label() + "　" + challenge.title(), Font.BOLD, 22f, Theme.GOLD));
         card.add(Box.createVerticalStrut(14));
@@ -395,7 +414,17 @@ final class DrillDialog extends JDialog {
         card.add(Box.createVerticalStrut(18));
         JButton done = Theme.button("回到修業檔案", Theme.RED);
         done.addActionListener(e -> dispose());
-        card.add(ShareDialog.buttonRow(done));
+        List<JComponent> buttons = new ArrayList<>();
+        buttons.add(done);
+        for (Challenge next : settled.next()) {
+            JButton go = Theme.button(next == challenge ? RETRY_LABEL : NEXT_LABEL, Theme.RED);
+            go.addActionListener(e -> {
+                chosen = next;
+                dispose();
+            });
+            buttons.add(go);
+        }
+        card.add(ShareDialog.buttonRow(buttons.toArray(new JComponent[0])));
         getRootPane().setDefaultButton(done);
         refresh();
     }

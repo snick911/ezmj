@@ -50,12 +50,12 @@ final class ResultDialog extends JDialog {
     /** 時間到自動關閉，電腦代打才能一直打下去。 */
     ResultDialog(Frame owner, GameView game, RoundView round, Settlement settlement, List<Achievement> earned,
                  String buttonText, int autoCloseSeconds) {
-        this(owner, game, round, settlement, earned, null, buttonText, autoCloseSeconds);
+        this(owner, game, round, settlement, earned, null, false, buttonText, autoCloseSeconds);
     }
 
-    /** notice 是成就下面另外要說的一句話，例如升段；沒有是 null。 */
+    /** notice 是成就下面另外要說的一句話，例如升段；沒有是 null。animated 是環境設定的「動畫」，成就的卡片要不要演。 */
     ResultDialog(Frame owner, GameView game, RoundView round, Settlement settlement, List<Achievement> earned,
-                 String notice, String buttonText, int autoCloseSeconds) {
+                 String notice, boolean animated, String buttonText, int autoCloseSeconds) {
         super(owner, "本局結果", true);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
 
@@ -83,7 +83,7 @@ final class ResultDialog extends JDialog {
         }
         content.add(Box.createVerticalStrut(12));
         content.add(otherHands(round));
-        addEarned(content, earned);
+        addEarned(content, earned, animated);
         if (notice != null) {
             content.add(Box.createVerticalStrut(earned.isEmpty() ? 10 : 4));
             content.add(line(notice, Font.BOLD, 16f, Theme.GOLD));
@@ -175,14 +175,13 @@ final class ResultDialog extends JDialog {
         return hands;
     }
 
-    /** 列出這次新達成的成就。 */
-    static void addEarned(JPanel content, List<Achievement> earned) {
+    /** 這次新達成的成就，每個一張有獎章的卡片（見 AchievementBanner），開了動畫時一張接一張彈出來。 */
+    static void addEarned(JPanel content, List<Achievement> earned, boolean animated) {
         if (!earned.isEmpty()) {
-            content.add(Box.createVerticalStrut(10));
+            content.add(Box.createVerticalStrut(6));
         }
-        for (Achievement achievement : earned) {
-            content.add(line("★ 達成成就：" + achievement.title() + "（" + achievement.description() + "）",
-                    Font.BOLD, 16f, Theme.GOLD));
+        for (int i = 0; i < earned.size(); i++) {
+            content.add(new AchievementBanner(earned.get(i), i, animated));
         }
     }
 

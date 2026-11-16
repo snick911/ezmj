@@ -20,7 +20,7 @@ public final class SoundEffects {
 
     /** variants 是同一種音效的版本數，避免連續打牌時每一聲都一模一樣。 */
     public enum Cue {
-        DISCARD(3), CHOW(1), PONG(1), KONG(1), WIN(1), DRAWN_GAME(1), DEAL(1), DRAW(1), FLOWER(1);
+        DISCARD(3), CHOW(1), PONG(1), KONG(1), WIN(1), DRAWN_GAME(1), DEAL(1), DRAW(1), FLOWER(1), ACHIEVEMENT(1);
 
         private final int variants;
 
@@ -179,6 +179,18 @@ public final class SoundEffects {
                 bell(mix, .03, 880, .5, .12);
                 bell(mix, .11, 1318.51, .45, .16);
                 level = .4;
+                break;
+            case ACHIEVEMENT:
+                // 達成成就：一路往上的五個鈴聲，最後一聲拉長，上面再撒兩點高音的亮光
+                mix = new double[seconds(1.4)];
+                bell(mix, 0, 783.99, .45, .14);
+                bell(mix, .08, 1046.50, .5, .14);
+                bell(mix, .16, 1318.51, .55, .16);
+                bell(mix, .24, 1567.98, .6, .2);
+                bell(mix, .34, 2093.00, .8, .42);
+                bell(mix, .42, 2637.02, .25, .18);
+                bell(mix, .50, 3135.96, .2, .16);
+                level = .6;
                 break;
             default:
                 mix = new double[seconds(.75)];

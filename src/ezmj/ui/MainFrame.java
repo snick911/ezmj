@@ -999,8 +999,9 @@ public final class MainFrame extends JFrame {
             for (WaitsQuiz.Hand hand : WaitsQuiz.hands(drill, random)) {
                 items.add(DrillDialog.Item.of(hand));
             }
-            runDrill(stage, items);
+            Challenge next = runDrill(stage, items);
             showCareerHub();
+            startFollowUp(next);
             return;
         }
         mode = Mode.DRILL;
@@ -1064,26 +1065,40 @@ public final class MainFrame extends JFrame {
                 stage.drill().questions(), new Random(gameSeed + 3))) {
             items.add(DrillDialog.Item.of(question));
         }
-        runDrill(stage, items);
+        Challenge next = runDrill(stage, items);
         returnToStart();
+        startFollowUp(next);
     }
 
-    /** 開作答視窗；答完照成績過關、給星與獎金，寫在視窗的成績頁。 */
-    private void runDrill(Challenge stage, List<DrillDialog.Item> items) {
-        new DrillDialog(this, stage, items, outcome -> settleDrill(stage, outcome)).setVisible(true);
+    /**
+     * 開作答視窗；答完照成績過關、給星與獎金，寫在視窗的成績頁。
+     * 回傳成績頁上按了「下一關」或「再挑戰」要接著打的那一關，回到修業檔案是 null。
+     */
+    private Challenge runDrill(Challenge stage, List<DrillDialog.Item> items) {
+        DrillDialog dialog = new DrillDialog(this, stage, items, outcome -> settleDrill(stage, outcome));
+        dialog.setVisible(true);
+        return dialog.chosen();
     }
 
-    /** 修練的成績：過關就記下來、發獎金與加星獎金，回傳要告訴玩家的話。 */
-    private String settleDrill(Challenge stage, DrillDialog.Outcome outcome) {
+    /** 修練成績頁按了接著打的那一關：回到檔案畫面之後再開。 */
+    private void startFollowUp(Challenge next) {
+        if (next != null) {
+            startNext(() -> startCareerChallenge(next));
+        }
+    }
+
+    /** 修練的成績：過關就記下來、發獎金與加星獎金，回傳要告訴玩家的話與可以接著打的關卡。 */
+    private DrillDialog.Settled settleDrill(Challenge stage, DrillDialog.Outcome outcome) {
         int stars = stage.drill().stars(outcome.correct(), outcome.averageSeconds());
         if (stars == 0) {
-            return "要答對 " + stage.drill().passCount() + " 題才過關，回到修業檔案可以再挑戰一次。";
+            return new DrillDialog.Settled("要答對 " + stage.drill().passCount() + " 題才過關，按「再挑戰」可以馬上再來一次。",
+                    followUps(stage, false, false));
         }
         boolean first = !career.isCleared(stage);
         int before = career.stars(stage);
         int reward = career.clearChallenge(stage, LocalDate.now().toString(), stars);
         saveCareer();
-        return clearedNote(stage, stars, first, before, reward);
+        return new DrillDialog.Settled(clearedNote(stage, stars, first, before, reward), followUps(stage, first, true));
     }
 
     private void resumeCareer() {
@@ -1102,8 +1117,12 @@ public final class MainFrame extends JFrame {
 
     /** 結束這場時會怎樣，問要不要放棄時寫在後面。 */
     private String endDetail() {
-        return career.game() == CareerProfile.Game.GENERAL ? "結束的話，已經打完的局輸贏照算，打到一半的那局不算。"
-                : "結束的話，這關算失敗，沒有其他損失。";
+        if (career.game() != CareerProfile.Game.GENERAL) {
+            return "結束的話，這關算失敗，沒有其他損失。";
+        }
+        int cost = career.forfeitCost();
+        return "結束的話，已經打完的局輸贏照算；打到一半的這局算棄局，"
+                + (cost > 0 ? "賠三家各一底，一共扣 " + cost + "。" : "不另外扣籌碼。");
     }
 
     private void confirmAbandonCareer() {
@@ -1114,10 +1133,14 @@ public final class MainFrame extends JFrame {
         }
     }
 
-    /** 沒打完就結束：刪掉存檔，檔案上的這場也結束。 */
+    /** 沒打完就結束：刪掉存檔，檔案上的這場也結束。一般對戰打到一半的那局算棄局，要賠底。 */
     private void endCareerGame() {
         deleteSavedGame(careerRecords.saveFile());
-        career.endGame();
+        if (career.game() == CareerProfile.Game.GENERAL) {
+            career.forfeitGeneral();
+        } else {
+            career.endGame();
+        }
         saveCareer();
     }
 
@@ -1304,7 +1327,68 @@ public final class MainFrame extends JFrame {
     }
 
     /** 牌局結束視窗要顯示的東西。headline 是 null 時照結束原因寫。 */
-    private record Ending(String headline, String note) {
+    private record Ending(String headline, String note, List<FinalDialog.Choice> choices) {
+        Ending(String headline, String note) {
+            this(headline, note, List.of());
+        }
+
+        /** 表格下面再多一行話，其他不變。 */
+        Ending plus(String more) {
+            return new Ending(headline, join(note, more), choices);
+        }
+    }
+
+    /**
+     * 一般對戰打完，牌局結束視窗的「再打一場」：照剛才的底台與電腦等級再開一場。
+     * 帳上的籌碼已經選不了這個底台（輸太多）就沒有這顆按鈕，回檔案畫面重選。
+     */
+    private List<FinalDialog.Choice> generalChoices(GameSession session) {
+        GameConfig config = session.config();
+        int basePay = config.basePay();
+        int taiPay = config.taiPay();
+        int chips = career.tableChips();
+        if (chips <= 0 || !career.stakesAllowed(basePay, taiPay) || !GameConfig.paysFit(chips, basePay, taiPay)) {
+            return List.of();
+        }
+        List<BotLevel> levels = config.botLevels();
+        return List.of(new FinalDialog.Choice("再打一場", () -> startCareerGeneral(basePay, taiPay, levels)));
+    }
+
+    /**
+     * 挑戰或修練結束之後可以直接接著打的：第一次過關而且有下一關就是「下一關」，
+     * 沒過關或還有星沒拿到就是「再挑戰」。要在檔案記下這次的結果之後呼叫。
+     */
+    private List<Challenge> followUps(Challenge stage, boolean first, boolean cleared) {
+        List<Challenge> stages = new ArrayList<>();
+        Challenge after = stage.next();
+        if (first && after != null && career.isUnlocked(after)) {
+            stages.add(after);
+        }
+        if (!cleared || career.starMask(stage) != Challenge.ALL_STARS) {
+            stages.add(stage);
+        }
+        return stages;
+    }
+
+    private List<FinalDialog.Choice> challengeChoices(Challenge stage, boolean first, boolean cleared) {
+        List<FinalDialog.Choice> choices = new ArrayList<>();
+        for (Challenge next : followUps(stage, first, cleared)) {
+            choices.add(new FinalDialog.Choice(next == stage ? DrillDialog.RETRY_LABEL : DrillDialog.NEXT_LABEL,
+                    () -> startCareerChallenge(next)));
+        }
+        return choices;
+    }
+
+    /**
+     * 結束視窗按了接著打的那一顆：等這個視窗的事件處理完再開下一場，連續按很多次也不會一層疊一層。
+     * 這中間檔案有了沒打完的牌局或離開了檔案就不開。
+     */
+    private void startNext(Runnable start) {
+        SwingUtilities.invokeLater(() -> {
+            if (controller == null && career != null && career.game() == CareerProfile.Game.NONE) {
+                start.run();
+            }
+        });
     }
 
     /**
@@ -1350,7 +1434,7 @@ public final class MainFrame extends JFrame {
             career.settleGeneral(session.player(0).chips());
             if (over) {
                 career.endGame();
-                ending = new Ending(null, join(generalNote(session), honorNote));
+                ending = new Ending(null, join(generalNote(session), honorNote), generalChoices(session));
             }
             saveCareer();
         } else if (mode == Mode.CHALLENGE) {
@@ -1364,12 +1448,11 @@ public final class MainFrame extends JFrame {
             titlesEarned.add(career.title());
         }
         if (over && !titlesEarned.isEmpty()) {
-            ending = new Ending(ending.headline(), join(ending.note(), "獲得稱號："
-                    + titlesEarned.stream().map(title -> "「" + title.label() + "」").collect(Collectors.joining("、"))));
+            ending = ending.plus("獲得稱號："
+                    + titlesEarned.stream().map(title -> "「" + title.label() + "」").collect(Collectors.joining("、")));
         }
         if (over && danEarned != null) {
-            ending = new Ending(ending.headline(), join(ending.note(), "晉升段位：" + danEarned.label()
-                    + "，選單「統計」→「段位證照」可以看證書"));
+            ending = ending.plus("晉升段位：" + danEarned.label() + "，選單「統計」→「段位證照」可以看證書");
         }
         if (over) {
             deleteSavedGame(saveFile());
@@ -1433,10 +1516,12 @@ public final class MainFrame extends JFrame {
             boolean first = !career.isCleared(challenge);
             int before = career.stars(challenge);
             int reward = career.clearChallenge(challenge, LocalDate.now().toString(), check.stars());
-            return new Ending("挑戰成功：" + name, clearedNote(challenge, check.stars(), first, before, reward));
+            return new Ending("挑戰成功：" + name, clearedNote(challenge, check.stars(), first, before, reward),
+                    challengeChoices(challenge, first, true));
         }
         career.endGame();
-        return new Ending("挑戰失敗：" + name, check.progress() + "\n回到修業檔案可以再挑戰一次。");
+        return new Ending("挑戰失敗：" + name, check.progress() + "\n按「再挑戰」可以馬上再打一次。",
+                challengeChoices(challenge, false, false));
     }
 
     /**
@@ -1468,17 +1553,33 @@ public final class MainFrame extends JFrame {
     private void showRoundEnd(GameSession session, Round round, Settlement settlement, List<Achievement> earned,
                               String danNotice, boolean over, Ending ending, List<Achievement> gameEarned, Runnable next) {
         String finalLabel = mode == Mode.CHALLENGE ? "查看挑戰結果" : "查看最終排名";
-        new ResultDialog(this, session, round, settlement, earned, danNotice, over ? finalLabel : "下一局",
+        chimeFor(earned);
+        new ResultDialog(this, session, round, settlement, earned, danNotice, settings.animationEnabled(),
+                over ? finalLabel : "下一局",
                 round.result().isDrawnGame() ? DRAWN_RESULT_SECONDS : RESULT_SECONDS).setVisible(true);
         if (controller == null) {
             return;
         }
         if (over) {
-            new FinalDialog(this, session, ending.headline(), ending.note(), gameEarned,
-                    mode == Mode.PRACTICE ? "回到練習牌局" : "回到修業檔案", "").setVisible(true);
+            chimeFor(gameEarned);
+            FinalDialog dialog = new FinalDialog(this, session, ending.headline(), ending.note(), gameEarned,
+                    settings.animationEnabled(), mode == Mode.PRACTICE ? "回到練習牌局" : "回到修業檔案", "",
+                    ending.choices());
+            dialog.setVisible(true);
+            // 先照常收拾牌桌、回到檔案畫面，再照按的那一顆開下一場
             returnToStart();
+            if (dialog.chosen() != null) {
+                startNext(dialog.chosen().run());
+            }
         } else {
             next.run();
+        }
+    }
+
+    /** 有新成就時，結果視窗出來的同時響一聲。 */
+    private void chimeFor(List<Achievement> earned) {
+        if (!earned.isEmpty() && settings.soundEnabled()) {
+            SoundEffects.play(SoundEffects.Cue.ACHIEVEMENT);
         }
     }
 

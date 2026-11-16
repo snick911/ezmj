@@ -73,7 +73,10 @@ final class CareerHubPanel extends JPanel {
     private final JLabel title = label(" ", Font.BOLD, 28f, Theme.GOLD);
     private final JLabel subtitle = label(" ", Font.PLAIN, 14f, Theme.MUTED);
     private final JLabel bankroll = label(" ", Font.BOLD, 28f, Theme.GOLD);
-    private final JLabel bankrollNote = label(" ", Font.PLAIN, 14f, Theme.MUTED);
+    /** 起始、最高與破產次數，各是一欄的數字，見 statsRow。 */
+    private final JLabel startValue = statValue();
+    private final JLabel peakValue = statValue();
+    private final JLabel bustValue = statValue();
     private final JPanel pendingBox = box();
     private final JLabel pendingInfo = label(" ", Font.PLAIN, 15f, Theme.TEXT);
     private final JPanel reliefBox = box();
@@ -247,7 +250,7 @@ final class CareerHubPanel extends JPanel {
     }
 
     /**
-     * 左上角的一塊：稱號的牌子在最上面，下面是帳上的籌碼（大字、三位一撇）與起始、最高、破產次數。
+     * 左上角的一塊：稱號的牌子在最上面，下面是金幣與帳上的籌碼（大字、三位一撇），最下面一排是起始、最高、破產次數。
      * 淺色底、細金框，和下面的一般對戰分開。下一個稱號不寫在這裡，稱號怎麼來寫在「說明」→「遊戲玩法」。
      */
     private JPanel summaryCard() {
@@ -255,16 +258,76 @@ final class CareerHubPanel extends JPanel {
         card.setOpaque(true);
         card.setBackground(Theme.PANEL_LIGHT);
         card.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(new Color(Theme.GOLD.getRed(), Theme.GOLD.getGreen(), Theme.GOLD.getBlue(), 110), 1),
+                BorderFactory.createLineBorder(faint(Theme.GOLD, 110), 1),
                 BorderFactory.createEmptyBorder(12, 16, 12, 16)));
         titleBadge.setAlignmentX(LEFT_ALIGNMENT);
         card.add(titleBadge);
         card.add(Box.createVerticalStrut(10));
         card.add(label("帳上籌碼", Font.PLAIN, 13f, Theme.MUTED));
+        bankroll.setIcon(new CoinIcon());
+        bankroll.setIconTextGap(Theme.scaled(8));
         card.add(bankroll);
-        card.add(Box.createVerticalStrut(2));
-        card.add(bankrollNote);
+        card.add(Box.createVerticalStrut(8));
+        card.add(statsRow());
         return card;
+    }
+
+    /**
+     * 起始、最高、破產各一欄：上面小字寫是什麼，下面是數字，欄與欄之間一道淡金色的直線，
+     * 不再擠成一行用「・」隔開。上面再一道橫線，和帳上的籌碼分開。
+     */
+    private JPanel statsRow() {
+        JPanel row = new JPanel(new GridBagLayout());
+        row.setOpaque(false);
+        row.setAlignmentX(LEFT_ALIGNMENT);
+        row.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(1, 0, 0, 0, faint(Theme.GOLD, 60)),
+                BorderFactory.createEmptyBorder(8, 0, 0, 0)));
+        GridBagConstraints c = new GridBagConstraints();
+        c.gridy = 0;
+        c.anchor = GridBagConstraints.WEST;
+        c.fill = GridBagConstraints.VERTICAL;
+        String[] names = {"起始", "最高", "破產"};
+        JLabel[] values = {startValue, peakValue, bustValue};
+        for (int i = 0; i < names.length; i++) {
+            if (i > 0) {
+                c.insets = new Insets(2, 0, 2, 0);
+                row.add(divider(), c);
+            }
+            JPanel stat = box();
+            stat.add(label(names[i], Font.PLAIN, 12.5f, Theme.MUTED));
+            stat.add(Box.createVerticalStrut(1));
+            stat.add(values[i]);
+            c.insets = new Insets(0, i == 0 ? 0 : 14, 0, 14);
+            row.add(stat, c);
+        }
+        // 右邊空著的地方讓給最後一欄，三欄靠左排
+        c.weightx = 1;
+        c.insets = new Insets(0, 0, 0, 0);
+        row.add(Box.createHorizontalGlue(), c);
+        return row;
+    }
+
+    private static JLabel statValue() {
+        return label(" ", Font.BOLD, 16f, Theme.TEXT);
+    }
+
+    /** 欄與欄之間的直線。 */
+    private static JComponent divider() {
+        JComponent line = new JComponent() {
+            @Override
+            protected void paintComponent(Graphics graphics) {
+                graphics.setColor(faint(Theme.GOLD, 70));
+                graphics.fillRect(0, 0, 1, getHeight());
+            }
+        };
+        line.setPreferredSize(new Dimension(1, 1));
+        return line;
+    }
+
+    /** 同一個顏色，換成 alpha 的透明度。 */
+    private static Color faint(Color color, int alpha) {
+        return new Color(color.getRed(), color.getGreen(), color.getBlue(), alpha);
     }
 
     private JPanel rightColumn() {
@@ -306,8 +369,9 @@ final class CareerHubPanel extends JPanel {
         // 一句開場白；底台怎麼開放、專家模式的等待時間等規則寫在「說明」→「遊戲玩法」
         HomePanel.wrapped(generalText, "帶著帳上的籌碼上桌，和三家電腦拚四圈，贏來的就是你闖蕩江湖的本錢。", 400);
         bankroll.setText(grouped(shown.bankroll()));
-        bankrollNote.setText("起始 " + grouped(shown.startingChips()) + "・最高 " + grouped(shown.peak()) + "・破產 "
-                + shown.bankruptcies() + " 次");
+        startValue.setText(grouped(shown.startingChips()));
+        peakValue.setText(grouped(shown.peak()));
+        bustValue.setText(shown.bankruptcies() + " 次");
         titleBadge.show(shown.title());
         pendingBox.setVisible(pendingSummary != null);
         pendingInfo.setText(pendingSummary == null ? " " : pendingSummary);
@@ -716,6 +780,77 @@ final class CareerHubPanel extends JPanel {
                 g.drawString(row, (float) ((size.width - small.stringWidth(row)) / 2.0),
                         (float) (1 + h - inset - Theme.scaled(3)));
             }
+            g.dispose();
+        }
+    }
+
+    /**
+     * 帳上籌碼前面的金幣：底下一層深金色的厚度，正面左上亮、右下暗的金色，外圈一道邊、裡面一道細環，
+     * 中間是古錢的方孔，左上角一道反光。大小跟著字體大小與視窗放大的比例。
+     */
+    static final class CoinIcon implements javax.swing.Icon {
+        private static final Color FACE_LIGHT = new Color(0xFF, 0xF1, 0xB8);
+        private static final Color FACE_MID = new Color(0xF0, 0xC8, 0x5C);
+        private static final Color FACE_DARK = new Color(0xC4, 0x8E, 0x24);
+        private static final Color EDGE = new Color(0x9A, 0x6E, 0x18);
+        private static final Color RIM = new Color(0xA8, 0x78, 0x1C);
+
+        private static int diameter() {
+            return Theme.scaled(28);
+        }
+
+        private static int thickness() {
+            return Math.max(2, Math.round(diameter() * .12f));
+        }
+
+        @Override
+        public int getIconWidth() {
+            return diameter() + 2;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return diameter() + thickness() + 2;
+        }
+
+        @Override
+        public void paintIcon(java.awt.Component component, Graphics graphics, int x, int y) {
+            java.awt.Graphics2D g = (java.awt.Graphics2D) graphics.create();
+            g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setRenderingHint(java.awt.RenderingHints.KEY_STROKE_CONTROL, java.awt.RenderingHints.VALUE_STROKE_PURE);
+            double d = diameter();
+            double left = x + 1;
+            double top = y + 1;
+            // 厚度：正面往下錯開一點的深色圓
+            g.setColor(EDGE);
+            g.fill(new java.awt.geom.Ellipse2D.Double(left, top + thickness(), d, d));
+            java.awt.geom.Ellipse2D.Double face = new java.awt.geom.Ellipse2D.Double(left, top, d, d);
+            g.setPaint(new java.awt.RadialGradientPaint(new java.awt.geom.Point2D.Double(left + d * .32, top + d * .3),
+                    (float) (d * .85), new float[] {0f, .55f, 1f}, new Color[] {FACE_LIGHT, FACE_MID, FACE_DARK}));
+            g.fill(face);
+            g.setColor(RIM);
+            g.setStroke(new java.awt.BasicStroke((float) Math.max(1, d * .06)));
+            g.draw(face);
+            double ring = d * .17;
+            g.setColor(new Color(RIM.getRed(), RIM.getGreen(), RIM.getBlue(), 170));
+            g.setStroke(new java.awt.BasicStroke((float) Math.max(1, d * .04)));
+            g.draw(new java.awt.geom.Ellipse2D.Double(left + ring, top + ring, d - 2 * ring, d - 2 * ring));
+            // 方孔：深色的洞，右下緣一道亮邊，看起來是凹下去的
+            double hole = d * .26;
+            double hx = left + (d - hole) / 2;
+            double hy = top + (d - hole) / 2;
+            g.setColor(EDGE);
+            g.fill(new java.awt.geom.Rectangle2D.Double(hx, hy, hole, hole));
+            g.setColor(new Color(FACE_LIGHT.getRed(), FACE_LIGHT.getGreen(), FACE_LIGHT.getBlue(), 200));
+            g.setStroke(new java.awt.BasicStroke((float) Math.max(1, d * .035)));
+            g.draw(new java.awt.geom.Line2D.Double(hx, hy + hole, hx + hole, hy + hole));
+            g.draw(new java.awt.geom.Line2D.Double(hx + hole, hy, hx + hole, hy + hole));
+            // 左上角的反光
+            g.setColor(new Color(255, 255, 255, 150));
+            g.setStroke(new java.awt.BasicStroke((float) Math.max(1, d * .07), java.awt.BasicStroke.CAP_ROUND,
+                    java.awt.BasicStroke.JOIN_ROUND));
+            g.draw(new java.awt.geom.Arc2D.Double(left + d * .14, top + d * .14, d * .72, d * .72, 105, 60,
+                    java.awt.geom.Arc2D.OPEN));
             g.dispose();
         }
     }
