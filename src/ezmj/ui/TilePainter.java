@@ -149,15 +149,48 @@ public final class TilePainter {
     }
 
     /**
-     * 自己面前站著的手牌：牌面上面多露出一道牌頂，靠牌面的一半是象牙色、後面一半是綠色的牌背，
-     * 像從斜上方看著立起來的牌。牌頂畫在 y 上面 STANDING_TOP × h 那麼高，排版要留這麼多。
+     * 自己面前站著的手牌，只用在沒有旋轉的座標：躺著的牌露在下緣的厚度，站著時改成牌面上面的一道牌頂，
+     * 靠牌面的一半是象牙色、後面一半是綠色的牌背，像從斜上方看著立起來的牌。整張還是畫在 (x, y, w, h) 裡面，
+     * 和躺著的牌一樣大，排版不用另外留地方。
      */
     static void paintStanding(Graphics2D g, Tile tile, double x, double y, double w, double h) {
         paintTile(g, tile, x, y, w, h, true);
     }
 
-    /** 站著的手牌，牌頂比牌面高出牌高的這個比例。 */
-    static final double STANDING_TOP = .12;
+    /** 站著的牌的遮罩，和 paintMask 一樣，形狀照站著的牌。 */
+    static void paintStandingMask(Graphics2D g, double x, double y, double w, double h) {
+        Body whole = standingWhole(x, y, w, h);
+        Area area = new Area(shape(whole, 0));
+        area.add(new Area(shape(whole, 1)));
+        g.setColor(MASK);
+        g.fill(area);
+    }
+
+    /** 站著的牌的外框，和 paintHighlight 一樣框住牌面。 */
+    static void paintStandingHighlight(Graphics2D g, double x, double y, double w, double h, Color color) {
+        Body face = standingFace(x, y, w, h);
+        g.setColor(color);
+        g.setStroke(new BasicStroke((float) Math.max(2, w * .07)));
+        g.draw(shape(face, 0));
+    }
+
+    /** 站著的牌頂有多高，是厚度的這個倍數。 */
+    private static final double LID = 1.15;
+
+    /** 站著的牌整張的外形：牌頂加牌面，右邊照樣露一點厚度，下緣只留一條細邊。 */
+    private static Body standingWhole(double x, double y, double w, double h) {
+        double depth = Math.min(w, h) * DEPTH;
+        double side = depth * .3;
+        double base = depth * .25;
+        return new Body(x, y, w - side, h - base, side, base, (w - side) * .2);
+    }
+
+    /** 站著的牌的牌面：整張扣掉上面的牌頂。 */
+    private static Body standingFace(double x, double y, double w, double h) {
+        Body whole = standingWhole(x, y, w, h);
+        double lid = Math.min(w, h) * DEPTH * LID;
+        return new Body(whole.x, whole.y + lid, whole.w, whole.h - lid, whole.dx, whole.dy, whole.arc);
+    }
 
     /** 轉正或轉 90 度的牌走快取；飛行中轉到一半的牌角度太多種，就直接畫。 */
     private static void paintTile(Graphics2D g, Tile tile, double x, double y, double w, double h, boolean standing) {
@@ -167,8 +200,7 @@ public final class TilePainter {
             drawTile(g, tile, x, y, w, h, standing);
             return;
         }
-        double top = standing ? h * STANDING_TOP : 0;
-        Rectangle2D box = t.createTransformedShape(new Rectangle2D.Double(x, y - top, w, h + top)).getBounds2D();
+        Rectangle2D box = t.createTransformedShape(new Rectangle2D.Double(x, y, w, h)).getBounds2D();
         CacheKey key = new CacheKey(tile, (int) Math.round(box.getWidth()), (int) Math.round(box.getHeight()), quarter,
                 standing);
         int margin = margin(key);
@@ -217,15 +249,16 @@ public final class TilePainter {
     }
 
     private static void drawFace(Graphics2D g, Tile tile, double x, double y, double w, double h, boolean standing) {
-        Body b = body(g, x, y, w, h);
+        Body b;
         if (standing) {
             // 整張立起來的牌（牌頂加牌面）一起投影子、露厚度，再畫牌頂，牌面蓋在最上面
-            double top = h * STANDING_TOP;
-            Body whole = new Body(b.x, b.y - top, b.w, b.h + top, b.dx, b.dy, b.arc);
+            Body whole = standingWhole(x, y, w, h);
+            b = standingFace(x, y, w, h);
             paintSides(g, whole, BACK_DARK, IVORY_SIDE);
             paintLid(g, whole, b);
             paintTop(g, b, IVORY, IVORY_SHADE);
         } else {
+            b = body(g, x, y, w, h);
             paintBody(g, b, IVORY, IVORY_SHADE, IVORY_SIDE, BACK_DARK);
         }
         double px = b.x + b.w * .1;

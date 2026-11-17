@@ -13,6 +13,8 @@ import java.awt.Graphics2D;
 import java.awt.GraphicsEnvironment;
 import java.awt.RenderingHints;
 import java.awt.Shape;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
 import java.awt.geom.Rectangle2D;
 import java.awt.geom.RoundRectangle2D;
 import java.util.Arrays;
@@ -180,8 +182,8 @@ final class Theme {
 
     /**
      * 所有色塊按鈕：圓角，上面亮一點、下面暗一點，頂端一道細的亮線。滑鼠移上去變亮，按下變深、字往下沉一點，
-     * 不能按時底色淡掉；游標是手指，不能按時換回箭頭。滑鼠點了不搶焦點，用 Tab 移過來時外面一圈金框，
-     * 看得出 Enter 或空白鍵會按到哪一個。translucent 的平常半透明，滑鼠移上去或按下才不透明。
+     * 不能按時底色淡掉；游標是手指，不能按時換回箭頭。用 Tab 移過來時外面一圈金框，看得出空白鍵會按到哪一個；
+     * 滑鼠點的或程式放的焦點不畫。translucent 的平常連字一起半透明，滑鼠移上去或按下才不透明。
      */
     private static final class ThemeButton extends JButton {
         private static final Cursor HAND = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR);
@@ -190,6 +192,11 @@ final class Theme {
         private final boolean translucent;
         /** 圓角的直徑，還沒縮放。 */
         private int corner = CORNER;
+        /**
+         * 焦點是用 Tab 移過來的。畫面一打開程式自己把焦點放在第一個按鈕（例如開始畫面的「修業模式」、
+         * 視窗的第一個按鈕）時不算，不畫金框，看起來和以前一樣。
+         */
+        private boolean keyboardFocus;
 
         ThemeButton(String text, Color background, boolean translucent) {
             super(text);
@@ -203,9 +210,22 @@ final class Theme {
             setOpaque(false);
             setContentAreaFilled(false);
             setRolloverEnabled(true);
-            setRequestFocusEnabled(false);
+            // 滑鼠點了照舊拿到焦點（例如等待秒數打到一半直接按開房間，要先收下打的數字），只是不畫金框
             setCursor(HAND);
             addPropertyChangeListener("enabled", e -> setCursor(isEnabled() ? HAND : Cursor.getDefaultCursor()));
+            addFocusListener(new FocusAdapter() {
+                @Override
+                public void focusGained(FocusEvent e) {
+                    keyboardFocus = e.getCause().name().startsWith("TRAVERSAL");
+                    repaint();
+                }
+
+                @Override
+                public void focusLost(FocusEvent e) {
+                    keyboardFocus = false;
+                    repaint();
+                }
+            });
         }
 
         @Override
@@ -237,7 +257,7 @@ final class Theme {
                 edge.fill(new Rectangle2D.Double(0, 0, w, Math.max(1, scaled(pressed ? 2 : 1))));
                 edge.dispose();
             }
-            if (isFocusOwner()) {
+            if (keyboardFocus && isFocusOwner()) {
                 float stroke = Math.max(2f, scaled(2));
                 g.setComposite(AlphaComposite.SrcOver);
                 g.setColor(GOLD);
@@ -249,7 +269,8 @@ final class Theme {
             g.dispose();
             Graphics2D text = (Graphics2D) graphics.create();
             if (translucent && !hover && !pressed) {
-                text.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, .8f));
+                // 和以前一樣，平常連字也是半透明
+                text.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, TRANSLUCENT_ALPHA));
             }
             if (pressed) {
                 text.translate(0, 1);

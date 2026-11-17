@@ -606,7 +606,7 @@ final class TableCanvas extends JComponent {
      */
     private double tableUnit() {
         double unit = unit();
-        double handH = rowTileW(0, MIN_ROW_SLOTS) * TILE_RATIO * (1 + TilePainter.STANDING_TOP);
+        double handH = rowTileW(0, MIN_ROW_SLOTS) * TILE_RATIO;
         double room = (getHeight() / 2.0 - handH - 8 * unit) / unit;
         double fit = room / (DISCARD_TOP + DISCARD_ROWS_TO_FIT * DISCARD_H);
         double grow = Math.min(Theme.tileScale(), MAX_TABLE_SCALE);
@@ -632,14 +632,8 @@ final class TableCanvas extends JComponent {
         return getHeight() - humanRowDepth() - botRowDepth();
     }
 
-    /** 自己的手牌是站著的，牌面上面還露出一道牌頂（見 TilePainter.paintStanding），也算在裡面。 */
     private double humanRowDepth() {
-        return rowTileW(0, MIN_ROW_SLOTS) * TILE_RATIO * (1 + TilePainter.STANDING_TOP) + 8 * unit();
-    }
-
-    /** 手牌列最上緣，該家視角：自己的牌面上面還有牌頂。 */
-    private static double rowTop(int seat, RowLayout row) {
-        return row.y() - (seat == 0 ? row.tileH() * TilePainter.STANDING_TOP : 0);
+        return rowTileW(0, MIN_ROW_SLOTS) * TILE_RATIO + 8 * unit();
     }
 
     private double botRowDepth() {
@@ -820,7 +814,7 @@ final class TableCanvas extends JComponent {
         double w = FLOWER_W * unit;
         double h = FLOWER_H * unit;
         Point2D from = toTable(seat, row.x() + row.total() / 2, row.y() + row.tileH() / 2);
-        Point2D to = toTable(seat, flowersX(seat, row) + index * w + w / 2, rowTop(seat, row) - 6 * unit - h / 2);
+        Point2D to = toTable(seat, flowersX(seat, row) + index * w + w / 2, row.y() - 6 * unit - h / 2);
         flights.add(new Flight(event.tile(), false, from.getX(), from.getY(), seatAngle(seat), row.tileW(),
                 to.getX(), to.getY(), seatAngle(seat), w - 1, System.nanoTime(), FLOWER_FLIGHT_MS,
                 Slot.FLOWER, seat, index));
@@ -1244,12 +1238,16 @@ final class TableCanvas extends JComponent {
         double x = flight.fromX() + (flight.toX() - flight.fromX()) * eased;
         double y = flight.fromY() + (flight.toY() - flight.fromY()) * eased;
         double w = (flight.fromW() + (flight.toW() - flight.fromW()) * eased) * (1 + .2 * Math.sin(Math.PI * t));
-        double h = w * DISCARD_H / DISCARD_W;
+        // 自己摸到的牌一路站著飛進手牌，比例也和手牌一樣，落地時樣子不會跳
+        boolean standing = flight.slot() == Slot.DRAWN && flight.slotSeat() == 0 && !flight.faceDown();
+        double h = w * (standing ? TILE_RATIO : DISCARD_H / DISCARD_W);
         AffineTransform saved = g.getTransform();
         g.translate(x, y);
         g.rotate(flight.fromAngle() + (flight.toAngle() - flight.fromAngle()) * eased);
         if (flight.faceDown()) {
             TilePainter.paintBack(g, -w / 2, -h / 2, w, h);
+        } else if (standing) {
+            TilePainter.paintStanding(g, flight.tile(), -w / 2, -h / 2, w, h);
         } else {
             TilePainter.paintFace(g, flight.tile(), -w / 2, -h / 2, w, h);
         }
@@ -1808,8 +1806,10 @@ final class TableCanvas extends JComponent {
                 paintPushedTile(g, seat, separated, index, x, y, tileW, tileH, true);
             } else if (!flying(Slot.DRAWN, seat, -1)) {
                 paintDealtTile(g, seat, separated, index, x, y, tileW, tileH, tileW, faceUp);
-                if (finished) {
-                    // 一局結束時分開的那張就是胡的牌
+                if (finished && seat == 0) {
+                    // 一局結束時分開的那張就是胡的牌；自己的牌沒推倒時是站著的
+                    TilePainter.paintStandingHighlight(g, x, y, tileW, tileH, Theme.GOLD);
+                } else if (finished) {
                     TilePainter.paintHighlight(g, x, y, tileW, tileH, Theme.GOLD);
                 }
             } else if (seat == 0) {
@@ -1821,7 +1821,7 @@ final class TableCanvas extends JComponent {
             paintPromptGlow(g, row);
         }
         if (!dealing()) {
-            paintFlowers(g, player, flowersX(seat, row), rowTop(seat, row), tableUnit());
+            paintFlowers(g, player, flowersX(seat, row), y, tableUnit());
         }
     }
 
@@ -1833,9 +1833,8 @@ final class TableCanvas extends JComponent {
         double phase = (frameNow - promptStart) / 1e6 / PROMPT_PULSE_MS;
         double strength = .55 + .45 * Math.sin(Math.PI * 2 * phase);
         double pad = 6 * unit();
-        double top = rowTop(0, row);
-        RoundRectangle2D frame = new RoundRectangle2D.Double(row.x() - pad, top - pad, row.total() + pad * 2,
-                row.y() + row.tileH() - top + pad * 2, 14 * unit(), 14 * unit());
+        RoundRectangle2D frame = new RoundRectangle2D.Double(row.x() - pad, row.y() - pad, row.total() + pad * 2,
+                row.tileH() + pad * 2, 14 * unit(), 14 * unit());
         for (int layer = 2; layer >= 0; layer--) {
             g.setColor(withAlpha(Theme.GOLD, strength * (layer == 0 ? .95 : .25 / layer)));
             g.setStroke(new BasicStroke((float) ((3 + layer * 5) * unit())));
@@ -1978,7 +1977,8 @@ final class TableCanvas extends JComponent {
             g.setColor(new Color(0, 0, 0, 55));
             g.fill(new RoundRectangle2D.Double(x + w * .08, y + h * .8, w * .92, h * .24, w * .3, w * .3));
         }
-        if (seat == 0 && faceUp) {
+        boolean standing = seat == 0 && faceUp;
+        if (standing) {
             TilePainter.paintStanding(g, tile, x, drawY, w, h);
         } else if (faceUp) {
             TilePainter.paintFace(g, tile, x, drawY, w, h);
@@ -1986,10 +1986,18 @@ final class TableCanvas extends JComponent {
             TilePainter.paintBack(g, x, drawY, w, h);
         }
         if (masked) {
-            TilePainter.paintMask(g, x, drawY, w, h);
+            if (standing) {
+                TilePainter.paintStandingMask(g, x, drawY, w, h);
+            } else {
+                TilePainter.paintMask(g, x, drawY, w, h);
+            }
         }
         if (marked) {
-            TilePainter.paintHighlight(g, x, drawY, w, h, Theme.GOLD);
+            if (standing) {
+                TilePainter.paintStandingHighlight(g, x, drawY, w, h, Theme.GOLD);
+            } else {
+                TilePainter.paintHighlight(g, x, drawY, w, h, Theme.GOLD);
+            }
         }
     }
 
