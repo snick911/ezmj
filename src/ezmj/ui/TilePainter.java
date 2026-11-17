@@ -6,12 +6,14 @@ import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.GradientPaint;
 import java.awt.Graphics2D;
+import java.awt.RadialGradientPaint;
 import java.awt.RenderingHints;
 import java.awt.Shape;
 import java.awt.geom.AffineTransform;
 import java.awt.geom.Area;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.Path2D;
+import java.awt.geom.Point2D;
 import java.awt.geom.QuadCurve2D;
 import java.awt.geom.Rectangle2D;
 import java.awt.geom.RoundRectangle2D;
@@ -29,7 +31,12 @@ public final class TilePainter {
     private static final Color IVORY_SHADE = new Color(0xE6, 0xDE, 0xC6);
     private static final Color IVORY_SIDE = new Color(0xCF, 0xC5, 0xA6);
     private static final Color EDGE = new Color(0x8A, 0x80, 0x66, 150);
-    private static final Color SHADOW = new Color(0, 0, 0, 42);
+    private static final Color SHADOW = new Color(0, 0, 0, 38);
+    private static final Color SHADOW_MID = new Color(0, 0, 0, 26);
+    private static final Color SHADOW_FAR = new Color(0, 0, 0, 15);
+    /** 牌面左上那團反光。 */
+    private static final Color SHEEN = new Color(255, 255, 255, 75);
+    private static final Color CLEAR = new Color(255, 255, 255, 0);
     private static final Color GLOSS = new Color(255, 255, 255, 190);
     private static final Color DIM = new Color(0, 0, 0, 45);
     private static final double DEPTH = .13;
@@ -121,8 +128,8 @@ public final class TilePainter {
         return new RoundRectangle2D.Double(b.x + b.dx * shift, b.y + b.dy * shift, b.w, b.h, b.arc, b.arc);
     }
 
-    /** 畫好的牌，tile 為 null 表示牌背。尺寸是實際像素，quarter 是轉了幾個 90 度。 */
-    private record CacheKey(Tile tile, int w, int h, int quarter) {
+    /** 畫好的牌，tile 為 null 表示牌背。尺寸是實際像素，quarter 是轉了幾個 90 度，standing 是站著的手牌。 */
+    private record CacheKey(Tile tile, int w, int h, int quarter, boolean standing) {
     }
 
     /** 同一種牌只畫一次，之後直接貼圖，整桌重畫才快得起來。只在畫面執行緒使用。 */
@@ -134,23 +141,36 @@ public final class TilePainter {
     };
 
     static void paintFace(Graphics2D g, Tile tile, double x, double y, double w, double h) {
-        paintTile(g, tile, x, y, w, h);
+        paintTile(g, tile, x, y, w, h, false);
     }
 
     static void paintBack(Graphics2D g, double x, double y, double w, double h) {
-        paintTile(g, null, x, y, w, h);
+        paintTile(g, null, x, y, w, h, false);
     }
 
+    /**
+     * 自己面前站著的手牌：牌面上面多露出一道牌頂，靠牌面的一半是象牙色、後面一半是綠色的牌背，
+     * 像從斜上方看著立起來的牌。牌頂畫在 y 上面 STANDING_TOP × h 那麼高，排版要留這麼多。
+     */
+    static void paintStanding(Graphics2D g, Tile tile, double x, double y, double w, double h) {
+        paintTile(g, tile, x, y, w, h, true);
+    }
+
+    /** 站著的手牌，牌頂比牌面高出牌高的這個比例。 */
+    static final double STANDING_TOP = .12;
+
     /** 轉正或轉 90 度的牌走快取；飛行中轉到一半的牌角度太多種，就直接畫。 */
-    private static void paintTile(Graphics2D g, Tile tile, double x, double y, double w, double h) {
+    private static void paintTile(Graphics2D g, Tile tile, double x, double y, double w, double h, boolean standing) {
         AffineTransform t = g.getTransform();
         int quarter = quarterTurns(t);
         if (quarter < 0) {
-            drawTile(g, tile, x, y, w, h);
+            drawTile(g, tile, x, y, w, h, standing);
             return;
         }
-        Rectangle2D box = t.createTransformedShape(new Rectangle2D.Double(x, y, w, h)).getBounds2D();
-        CacheKey key = new CacheKey(tile, (int) Math.round(box.getWidth()), (int) Math.round(box.getHeight()), quarter);
+        double top = standing ? h * STANDING_TOP : 0;
+        Rectangle2D box = t.createTransformedShape(new Rectangle2D.Double(x, y - top, w, h + top)).getBounds2D();
+        CacheKey key = new CacheKey(tile, (int) Math.round(box.getWidth()), (int) Math.round(box.getHeight()), quarter,
+                standing);
         int margin = margin(key);
         BufferedImage image = CACHE.get(key);
         if (image == null) {
@@ -160,7 +180,7 @@ public final class TilePainter {
             AffineTransform toImage = AffineTransform.getTranslateInstance(margin - box.getX(), margin - box.getY());
             toImage.concatenate(t);
             painter.setTransform(toImage);
-            drawTile(painter, tile, x, y, w, h);
+            drawTile(painter, tile, x, y, w, h, standing);
             painter.dispose();
             CACHE.put(key, image);
         }
@@ -184,21 +204,30 @@ public final class TilePainter {
         return Math.floorMod((int) Math.round(Math.atan2(t.getShearY(), t.getScaleX()) / (Math.PI / 2)), 4);
     }
 
-    private static void drawTile(Graphics2D g, Tile tile, double x, double y, double w, double h) {
+    private static void drawTile(Graphics2D g, Tile tile, double x, double y, double w, double h, boolean standing) {
         // 小圓圈與細線不對齊像素，縮小時形狀才不會歪
         Object strokeControl = g.getRenderingHint(RenderingHints.KEY_STROKE_CONTROL);
         g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
         if (tile == null) {
             paintBody(g, body(g, x, y, w, h), BACK, BACK_DARK, BACK_DARK, IVORY_SHADE);
         } else {
-            drawFace(g, tile, x, y, w, h);
+            drawFace(g, tile, x, y, w, h, standing);
         }
         g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, strokeControl);
     }
 
-    private static void drawFace(Graphics2D g, Tile tile, double x, double y, double w, double h) {
+    private static void drawFace(Graphics2D g, Tile tile, double x, double y, double w, double h, boolean standing) {
         Body b = body(g, x, y, w, h);
-        paintBody(g, b, IVORY, IVORY_SHADE, IVORY_SIDE, BACK_DARK);
+        if (standing) {
+            // 整張立起來的牌（牌頂加牌面）一起投影子、露厚度，再畫牌頂，牌面蓋在最上面
+            double top = h * STANDING_TOP;
+            Body whole = new Body(b.x, b.y - top, b.w, b.h + top, b.dx, b.dy, b.arc);
+            paintSides(g, whole, BACK_DARK, IVORY_SIDE);
+            paintLid(g, whole, b);
+            paintTop(g, b, IVORY, IVORY_SHADE);
+        } else {
+            paintBody(g, b, IVORY, IVORY_SHADE, IVORY_SIDE, BACK_DARK);
+        }
         double px = b.x + b.w * .1;
         double py = b.y + b.h * .08;
         double pw = b.w * .8;
@@ -253,16 +282,33 @@ public final class TilePainter {
 
     /** 由下往上疊：陰影、底層、側面，最後是有光影的牌面與邊緣高光。 */
     private static void paintBody(Graphics2D g, Body b, Color top, Color bottom, Color side, Color base) {
-        g.setColor(SHADOW);
-        g.fill(shape(b, 1.7));
-        g.fill(shape(b, 1.35));
-        g.setColor(base);
-        g.fill(shape(b, 1));
-        g.fill(shape(b, .75));
-        g.setColor(side);
-        g.fill(shape(b, .5));
-        g.fill(shape(b, .25));
+        paintSides(g, b, base, side);
+        paintTop(g, b, top, bottom);
+    }
 
+    /**
+     * 影子與厚度。影子是三層越外越淡的，邊緣才是軟的；厚度是一層一層錯開的同一個形狀，
+     * 一個像素以內就疊一層，放大了也是連續的斜面。後半是 base（牌面那張是綠色的牌背），前半是 side，越後面越暗。
+     */
+    private static void paintSides(Graphics2D g, Body b, Color base, Color side) {
+        g.setColor(SHADOW_FAR);
+        g.fill(shape(b, 2.2));
+        g.setColor(SHADOW_MID);
+        g.fill(shape(b, 1.75));
+        g.setColor(SHADOW);
+        g.fill(shape(b, 1.35));
+        AffineTransform t = g.getTransform();
+        double pixels = Math.hypot(b.dx, b.dy) * Math.hypot(t.getScaleX(), t.getShearY());
+        int steps = Math.max(4, Math.min(28, (int) Math.ceil(pixels * 1.5)));
+        for (int i = steps; i >= 1; i--) {
+            double s = (double) i / steps;
+            g.setColor(s > .5 ? Theme.mix(base, Color.BLACK, (s - .5) * .5) : Theme.mix(side, Color.BLACK, s * .2));
+            g.fill(shape(b, s));
+        }
+    }
+
+    /** 牌面：從光那一邊亮到另一邊暗，左上再一團淡淡的反光，看起來是微微鼓起來的；邊上一圈高光與細的外框。 */
+    private static void paintTop(Graphics2D g, Body b, Color top, Color bottom) {
         double reach = Math.max(b.w, b.h) * .6;
         double[] light = fromScreen(g, -.64 * reach, -.77 * reach);
         float centerX = (float) (b.x + b.w / 2);
@@ -273,6 +319,9 @@ public final class TilePainter {
         float darkY = centerY - (float) light[1];
         g.setPaint(new GradientPaint(lightX, lightY, top, darkX, darkY, bottom));
         g.fill(shape(b, 0));
+        g.setPaint(new RadialGradientPaint(new Point2D.Double(centerX + light[0] * .55, centerY + light[1] * .55),
+                (float) (reach * 1.1), new float[] {0f, 1f}, new Color[] {SHEEN, CLEAR}));
+        g.fill(shape(b, 0));
 
         float stroke = (float) Math.max(1, b.w * .035);
         double inset = stroke / 2;
@@ -282,6 +331,33 @@ public final class TilePainter {
         g.setColor(EDGE);
         g.setStroke(new BasicStroke(.8f));
         g.draw(shape(b, 0));
+    }
+
+    /**
+     * 站著的牌露出來的牌頂，在牌面上面：靠近牌面的一半是象牙色，後面一半是綠色的牌背，中間一道細線分開，
+     * 最上緣一道亮邊。whole 是整張立起來的牌，face 是牌面。
+     */
+    private static void paintLid(Graphics2D g, Body whole, Body face) {
+        Area lid = new Area(shape(whole, 0));
+        lid.intersect(new Area(new Rectangle2D.Double(whole.x - 1, whole.y - 1, whole.w + 2,
+                face.y - whole.y + face.arc / 2 + 1)));
+        double split = whole.y + (face.y - whole.y) * .55;
+        g.setPaint(new GradientPaint(0, (float) whole.y, BACK, 0, (float) split, BACK_DARK));
+        g.fill(lid);
+        Area ivory = new Area(lid);
+        ivory.intersect(new Area(new Rectangle2D.Double(whole.x - 1, split, whole.w + 2, whole.h)));
+        g.setPaint(new GradientPaint(0, (float) split, IVORY_SIDE, 0, (float) face.y, IVORY_SHADE));
+        g.fill(ivory);
+        float line = (float) Math.max(.6, face.w * .02);
+        g.setStroke(new BasicStroke(line));
+        g.setColor(new Color(0, 0, 0, 55));
+        g.draw(new java.awt.geom.Line2D.Double(whole.x + whole.arc * .3, split, whole.x + whole.w - whole.arc * .3, split));
+        Graphics2D rim = (Graphics2D) g.create();
+        rim.clip(lid);
+        rim.setColor(new Color(255, 255, 255, 70));
+        rim.setStroke(new BasicStroke(line * 1.6f));
+        rim.draw(shape(whole, 0));
+        rim.dispose();
     }
 
     private static void paintWan(Graphics2D g, Tile tile, double x, double y, double w, double h) {

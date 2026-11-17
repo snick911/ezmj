@@ -1,18 +1,26 @@
 package ezmj.ui;
 
 import java.awt.AlphaComposite;
+import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Container;
+import java.awt.Cursor;
 import java.awt.Font;
+import java.awt.GradientPaint;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.GraphicsEnvironment;
+import java.awt.RenderingHints;
+import java.awt.Shape;
+import java.awt.geom.Rectangle2D;
+import java.awt.geom.RoundRectangle2D;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
 
 import javax.swing.BorderFactory;
+import javax.swing.ButtonModel;
 import javax.swing.JButton;
 import javax.swing.JMenu;
 import javax.swing.UIManager;
@@ -141,38 +149,113 @@ final class Theme {
     }
 
     static JButton button(String text, Color background) {
-        JButton button = new JButton(text);
-        button.setFont(font(Font.BOLD, 16f));
-        button.setForeground(Color.WHITE);
-        button.setBackground(background);
-        button.setFocusPainted(false);
-        button.setBorder(BorderFactory.createEmptyBorder(8, 18, 8, 18));
-        return button;
+        return new ThemeButton(text, background, false);
     }
 
     /** 半透明的按鈕：可以用、但不一定要按的選項。滑鼠移上去時變成不透明，按下時顏色變深。 */
     static JButton translucentButton(String text, Color background) {
-        JButton button = new JButton(text) {
-            @Override
-            protected void paintComponent(Graphics g) {
-                Graphics2D g2 = (Graphics2D) g.create();
-                float alpha = getModel().isRollover() || getModel().isPressed() ? 1f : TRANSLUCENT_ALPHA;
-                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
-                g2.setColor(getModel().isPressed() ? getBackground().darker() : getBackground());
-                g2.fillRect(0, 0, getWidth(), getHeight());
-                super.paintComponent(g2);
-                g2.dispose();
+        return new ThemeButton(text, background, true);
+    }
+
+    /** 直角的按鈕，例如和列表連在一起的頁籤。不是 button 做的按鈕不變。 */
+    static void squareCorners(JButton button) {
+        if (button instanceof ThemeButton) {
+            ((ThemeButton) button).corner = 0;
+            button.repaint();
+        }
+    }
+
+    /** 按鈕圓角的直徑，跟著字體大小縮放；0 是直角。 */
+    static int buttonArc(JButton button) {
+        return button instanceof ThemeButton ? scaled(((ThemeButton) button).corner) : 0;
+    }
+
+    /** a 往 b 調 amount（0 到 1），透明度照 a。 */
+    static Color mix(Color a, Color b, double amount) {
+        double keep = 1 - amount;
+        return new Color((int) Math.round(a.getRed() * keep + b.getRed() * amount),
+                (int) Math.round(a.getGreen() * keep + b.getGreen() * amount),
+                (int) Math.round(a.getBlue() * keep + b.getBlue() * amount), a.getAlpha());
+    }
+
+    /**
+     * 所有色塊按鈕：圓角，上面亮一點、下面暗一點，頂端一道細的亮線。滑鼠移上去變亮，按下變深、字往下沉一點，
+     * 不能按時底色淡掉；游標是手指，不能按時換回箭頭。滑鼠點了不搶焦點，用 Tab 移過來時外面一圈金框，
+     * 看得出 Enter 或空白鍵會按到哪一個。translucent 的平常半透明，滑鼠移上去或按下才不透明。
+     */
+    private static final class ThemeButton extends JButton {
+        private static final Cursor HAND = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR);
+        private static final int CORNER = 10;
+
+        private final boolean translucent;
+        /** 圓角的直徑，還沒縮放。 */
+        private int corner = CORNER;
+
+        ThemeButton(String text, Color background, boolean translucent) {
+            super(text);
+            this.translucent = translucent;
+            setFont(font(Font.BOLD, 16f));
+            setForeground(Color.WHITE);
+            setBackground(background);
+            setFocusPainted(false);
+            setBorder(BorderFactory.createEmptyBorder(8, 18, 8, 18));
+            // 底色自己畫，圓角外面才透得出後面
+            setOpaque(false);
+            setContentAreaFilled(false);
+            setRolloverEnabled(true);
+            setRequestFocusEnabled(false);
+            setCursor(HAND);
+            addPropertyChangeListener("enabled", e -> setCursor(isEnabled() ? HAND : Cursor.getDefaultCursor()));
+        }
+
+        @Override
+        protected void paintComponent(Graphics graphics) {
+            Graphics2D g = (Graphics2D) graphics.create();
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            ButtonModel model = getModel();
+            boolean pressed = model.isArmed() && model.isPressed();
+            boolean hover = isEnabled() && model.isRollover();
+            Color base = getBackground();
+            Color fill = !isEnabled() ? mix(base, PANEL, .55)
+                    : pressed ? mix(base, Color.BLACK, .22)
+                    : hover ? mix(base, Color.WHITE, .14) : base;
+            if (translucent && !hover && !pressed) {
+                g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, TRANSLUCENT_ALPHA));
             }
-        };
-        button.setFont(font(Font.BOLD, 16f));
-        button.setForeground(Color.WHITE);
-        button.setBackground(background);
-        button.setFocusPainted(false);
-        button.setBorder(BorderFactory.createEmptyBorder(8, 18, 8, 18));
-        // 底色自己畫，才能半透明
-        button.setOpaque(false);
-        button.setContentAreaFilled(false);
-        button.setRolloverEnabled(true);
-        return button;
+            int w = getWidth();
+            int h = getHeight();
+            double arc = scaled(corner);
+            Shape shape = arc > 0 ? new RoundRectangle2D.Double(0, 0, w, h, arc, arc) : new Rectangle2D.Double(0, 0, w, h);
+            g.setPaint(new GradientPaint(0, 0, mix(fill, Color.WHITE, pressed ? 0 : .09), 0, h,
+                    mix(fill, Color.BLACK, pressed ? .02 : .1)));
+            g.fill(shape);
+            if (isEnabled()) {
+                // 按下時亮線換成上緣的一道陰影，看起來是壓下去
+                Graphics2D edge = (Graphics2D) g.create();
+                edge.clip(shape);
+                edge.setColor(pressed ? new Color(0, 0, 0, 70) : new Color(255, 255, 255, hover ? 70 : 45));
+                edge.fill(new Rectangle2D.Double(0, 0, w, Math.max(1, scaled(pressed ? 2 : 1))));
+                edge.dispose();
+            }
+            if (isFocusOwner()) {
+                float stroke = Math.max(2f, scaled(2));
+                g.setComposite(AlphaComposite.SrcOver);
+                g.setColor(GOLD);
+                g.setStroke(new BasicStroke(stroke));
+                double inset = stroke / 2;
+                g.draw(arc > 0 ? new RoundRectangle2D.Double(inset, inset, w - stroke, h - stroke, arc - inset, arc - inset)
+                        : new Rectangle2D.Double(inset, inset, w - stroke, h - stroke));
+            }
+            g.dispose();
+            Graphics2D text = (Graphics2D) graphics.create();
+            if (translucent && !hover && !pressed) {
+                text.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, .8f));
+            }
+            if (pressed) {
+                text.translate(0, 1);
+            }
+            super.paintComponent(text);
+            text.dispose();
+        }
     }
 }

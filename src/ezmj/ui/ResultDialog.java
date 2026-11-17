@@ -69,7 +69,7 @@ final class ResultDialog extends JDialog {
         content.add(Box.createVerticalStrut(12));
 
         if (result.isDrawnGame()) {
-            content.add(drawnTable(game));
+            content.add(line("這局沒有輸贏，各家籌碼不變", Font.PLAIN, 16f, Theme.MUTED));
         } else {
             HandStrip strip = HandStrip.large(round.player(result.winner()), result.winTile());
             strip.setAlignmentX(LEFT_ALIGNMENT);
@@ -167,7 +167,9 @@ final class ResultDialog extends JDialog {
             Player player = round.player(seat);
             String mark = !result.isDrawnGame() && !result.isSelfDraw() && seat == result.from() ? "（放槍）" : "";
             constraints.gridx = 0;
-            hands.add(line(player.name() + mark, seat == 0 ? Font.BOLD : Font.PLAIN, 15f, Theme.TEXT), constraints);
+            // 自己的名字是金色粗體，和牌桌右邊的計分表一樣
+            hands.add(line(player.name() + mark, seat == 0 ? Font.BOLD : Font.PLAIN, 15f,
+                    seat == 0 ? Theme.GOLD : Theme.TEXT), constraints);
             constraints.gridx = 1;
             hands.add(HandStrip.small(player), constraints);
             constraints.gridy++;
@@ -251,16 +253,9 @@ final class ResultDialog extends JDialog {
                     player.name() + (seat == round.dealer() ? "（莊）" : ""), outcome(round.result(), seat),
                     tai, money(delta), String.valueOf(player.chips()));
             cells[3].setForeground(moneyColor(delta));
-        }
-        return table;
-    }
-
-    private static GridTable drawnTable(GameView game) {
-        GridTable table = new GridTable(1);
-        table.header("玩家", "籌碼");
-        for (int seat = 0; seat < 4; seat++) {
-            Player player = game.player(seat);
-            table.row(seat == 0 ? Font.BOLD : Font.PLAIN, player.name(), String.valueOf(player.chips()));
+            if (seat == 0) {
+                cells[0].setForeground(Theme.GOLD);
+            }
         }
         return table;
     }

@@ -400,6 +400,7 @@ final class CareerHubPanel extends JPanel {
     /** 一個頁籤：挑戰關卡或修練，按了換列表。樣子在 syncTabs 決定。 */
     private JButton tabButton(boolean drills) {
         JButton tab = Theme.button(" ", Theme.PANEL);
+        Theme.squareCorners(tab);
         tab.setFont(Theme.font(Font.BOLD, 16f));
         tab.addActionListener(e -> selectTab(drills));
         return tab;

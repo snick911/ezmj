@@ -17,6 +17,7 @@ import java.awt.event.MouseEvent;
 import java.awt.geom.AffineTransform;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.Line2D;
+import java.awt.geom.Path2D;
 import java.awt.geom.Point2D;
 import java.awt.geom.Rectangle2D;
 import java.awt.geom.RoundRectangle2D;
@@ -263,6 +264,8 @@ final class TableCanvas extends JComponent {
     private int[] chipDeltas;
     /** 每家剛打出牌時牌河有幾張，-1 表示這局還沒看到他打牌。牌河張數不一樣了，就是最後那張被吃碰槓胡走了。 */
     private final int[] shownDiscards = new int[4];
+    /** 最後打出牌的人，這局還沒人打過是 -1。他牌河的最後一張有小標記，被吃碰槓胡走就不畫。 */
+    private int lastDiscarder = -1;
     /** 吃碰槓後要打牌，手牌外框亮起。 */
     private boolean discardPrompt;
     private long promptStart;
@@ -303,6 +306,7 @@ final class TableCanvas extends JComponent {
         banners.clear();
         Arrays.fill(listenStart, 0);
         Arrays.fill(shownDiscards, -1);
+        lastDiscarder = -1;
         pushSeat = -1;
         chipStart = 0;
         chipDeltas = null;
@@ -323,6 +327,7 @@ final class TableCanvas extends JComponent {
     void noteEvent(RoundEvent event) {
         if (event.type() == RoundEvent.Type.DISCARD && round != null) {
             shownDiscards[event.seat()] = round.player(event.seat()).discards().size();
+            lastDiscarder = event.seat();
         }
         if (event.type() == RoundEvent.Type.DRAWN_GAME && round != null) {
             // 沒有動畫時直接全部翻開；有動畫的話 animate 接著會把開始的時間改成稍後
@@ -601,7 +606,7 @@ final class TableCanvas extends JComponent {
      */
     private double tableUnit() {
         double unit = unit();
-        double handH = rowTileW(0, MIN_ROW_SLOTS) * TILE_RATIO;
+        double handH = rowTileW(0, MIN_ROW_SLOTS) * TILE_RATIO * (1 + TilePainter.STANDING_TOP);
         double room = (getHeight() / 2.0 - handH - 8 * unit) / unit;
         double fit = room / (DISCARD_TOP + DISCARD_ROWS_TO_FIT * DISCARD_H);
         double grow = Math.min(Theme.tileScale(), MAX_TABLE_SCALE);
@@ -627,8 +632,14 @@ final class TableCanvas extends JComponent {
         return getHeight() - humanRowDepth() - botRowDepth();
     }
 
+    /** 自己的手牌是站著的，牌面上面還露出一道牌頂（見 TilePainter.paintStanding），也算在裡面。 */
     private double humanRowDepth() {
-        return rowTileW(0, MIN_ROW_SLOTS) * TILE_RATIO + 8 * unit();
+        return rowTileW(0, MIN_ROW_SLOTS) * TILE_RATIO * (1 + TilePainter.STANDING_TOP) + 8 * unit();
+    }
+
+    /** 手牌列最上緣，該家視角：自己的牌面上面還有牌頂。 */
+    private static double rowTop(int seat, RowLayout row) {
+        return row.y() - (seat == 0 ? row.tileH() * TilePainter.STANDING_TOP : 0);
     }
 
     private double botRowDepth() {
@@ -809,7 +820,7 @@ final class TableCanvas extends JComponent {
         double w = FLOWER_W * unit;
         double h = FLOWER_H * unit;
         Point2D from = toTable(seat, row.x() + row.total() / 2, row.y() + row.tileH() / 2);
-        Point2D to = toTable(seat, flowersX(seat, row) + index * w + w / 2, row.y() - 6 * unit - h / 2);
+        Point2D to = toTable(seat, flowersX(seat, row) + index * w + w / 2, rowTop(seat, row) - 6 * unit - h / 2);
         flights.add(new Flight(event.tile(), false, from.getX(), from.getY(), seatAngle(seat), row.tileW(),
                 to.getX(), to.getY(), seatAngle(seat), w - 1, System.nanoTime(), FLOWER_FLIGHT_MS,
                 Slot.FLOWER, seat, index));
@@ -1556,33 +1567,75 @@ final class TableCanvas extends JComponent {
         }
     }
 
-    /** 中央方框四邊標示各家門風與姓名，輪到的一家亮起。 */
+    /**
+     * 中央方框四邊標示各家門風與姓名，輪到的一家亮起。方框跟著座位轉，字不轉：對家的是正的橫寫，
+     * 左右兩家是正的直寫、由上往下，四家都不用歪頭看。
+     */
     private void paintSeatLabel(Graphics2D g, int seat, Player player, double unit) {
         double half = 100 * unit;
+        double barH = 30 * unit;
         boolean active = round.phase() != Round.Phase.FINISHED && round.current() == seat
                 && round.phase() == Round.Phase.TURN;
         g.setColor(active ? Theme.GOLD : new Color(0, 0, 0, 90));
-        g.fill(new Rectangle2D.Double(-half, half - 30 * unit, half * 2, 30 * unit));
+        g.fill(new Rectangle2D.Double(-half, half - barH, half * 2, barH));
 
         String wind = Tile.windName(round.seatWind(seat));
-        String dealerMark = round.dealer() == seat ? "莊 " : "";
-        String text = dealerMark + wind + "  " + player.name();
-        g.setFont(Theme.canvasFont(Font.BOLD, (float) (14 * unit)));
-        g.setColor(active ? Color.BLACK : Theme.TEXT);
-        // 報聽的標記放在右端、轉角的方格內側，名字往左讓開
+        boolean dealer = round.dealer() == seat;
+        // 報聽的標記放在該家右手邊那一端、轉角的方格內側，名字往另一邊讓開
         boolean listening = round.isListening(seat);
         double badgeRoom = listening ? 32 * unit : 0;
-        // 字體調大時，長名字要縮回方框內
-        int textWidth = g.getFontMetrics().stringWidth(text);
-        double maxWidth = half * 2 - 8 * unit - badgeRoom * 2;
-        if (textWidth > maxWidth) {
-            g.setFont(g.getFont().deriveFont((float) (g.getFont().getSize2D() * maxWidth / textWidth)));
+        double room = half * 2 - 8 * unit - badgeRoom * 2;
+        AffineTransform turned = g.getTransform();
+        g.rotate(-seatAngle(seat));
+        Point2D center = toTable(seat, -badgeRoom / 2, half - barH / 2);
+        g.setFont(Theme.canvasFont(Font.BOLD, (float) (16 * unit)));
+        g.setColor(active ? Color.BLACK : Theme.TEXT);
+        if (seat % 2 == 0) {
+            String text = (dealer ? "莊 " : "") + wind + "  " + player.name();
+            fitWidth(g, text, room);
+            FontMetrics metrics = g.getFontMetrics();
+            g.drawString(text, (float) (center.getX() - metrics.stringWidth(text) / 2.0),
+                    (float) (center.getY() + metrics.getAscent() / 2.0 - metrics.getDescent() / 2.0));
+        } else {
+            paintColumn(g, dealer ? List.of("莊", wind, player.name()) : List.of(wind, player.name()), center, room);
+        }
+        if (listening) {
+            Point2D badge = toTable(seat, half - 46 * unit, half - barH / 2);
+            paintListenBadge(g, badge.getX(), badge.getY(), 12.5 * unit, listenProgress(seat));
+        }
+        g.setTransform(turned);
+    }
+
+    /**
+     * 直寫：每個字正著由上往下排，中心在 center，groups 之間多空半個字。總長超過 room 就把字縮小。
+     * 名字裡的英文字母與數字也一個一個直排。
+     */
+    private static void paintColumn(Graphics2D g, List<String> groups, Point2D center, double room) {
+        int chars = 0;
+        for (String group : groups) {
+            chars += group.codePointCount(0, group.length());
+        }
+        double gapChars = .45 * (groups.size() - 1);
+        double size = g.getFont().getSize2D();
+        double step = size * 1.02;
+        double total = (chars + gapChars) * step;
+        if (total > room) {
+            size *= room / total;
+            step *= room / total;
+            total = room;
+            g.setFont(g.getFont().deriveFont((float) size));
         }
         FontMetrics metrics = g.getFontMetrics();
-        g.drawString(text, (float) (-metrics.stringWidth(text) / 2.0 - badgeRoom / 2),
-                (float) (half - 15 * unit + metrics.getAscent() / 2.0 - metrics.getDescent() / 2.0));
-        if (listening) {
-            paintListenBadge(g, half - 46 * unit, half - 15 * unit, 12.5 * unit, listenProgress(seat));
+        double y = center.getY() - total / 2;
+        for (String group : groups) {
+            for (int i = 0; i < group.length(); i = group.offsetByCodePoints(i, 1)) {
+                String ch = group.substring(i, group.offsetByCodePoints(i, 1));
+                // 每個字放在一格 step 高的方格裡，上下置中
+                float baseline = (float) (y + (step - metrics.getAscent() - metrics.getDescent()) / 2 + metrics.getAscent());
+                g.drawString(ch, (float) (center.getX() - metrics.stringWidth(ch) / 2.0), baseline);
+                y += step;
+            }
+            y += step * .45;
         }
     }
 
@@ -1625,6 +1678,9 @@ final class TableCanvas extends JComponent {
         double startY = DISCARD_TOP * unit;
         List<Tile> discards = player.discards();
         boolean lastHidden = flying(Slot.DISCARD, seat, -1);
+        // 整桌最後打出、還沒被拿走的那張，到下一張打出之前都有小標記
+        boolean latest = seat == lastDiscarder && !discards.isEmpty() && discards.size() == shownDiscards[seat]
+                && !lastHidden;
         if (expert) {
             // 只畫最後打出、還沒被拿走的那張，放在第一格
             int count = discards.size();
@@ -1634,6 +1690,9 @@ final class TableCanvas extends JComponent {
             TilePainter.paintFace(g, discards.get(count - 1), startX, startY, tileW - 1, tileH - 1);
             if (round.phase() == Round.Phase.CLAIMS && !round.isRobbing() && round.discarder() == seat) {
                 TilePainter.paintHighlight(g, startX, startY, tileW - 1, tileH - 1, Theme.RED);
+            }
+            if (latest) {
+                paintLatestMark(g, startX, startY, tileW - 1);
             }
             return;
         }
@@ -1649,7 +1708,34 @@ final class TableCanvas extends JComponent {
             if (justDiscarded) {
                 TilePainter.paintHighlight(g, x, y, tileW - 1, tileH - 1, Theme.RED);
             }
+            if (latest && i == discards.size() - 1) {
+                paintLatestMark(g, x, y, tileW - 1);
+            }
         }
+    }
+
+    /**
+     * 最後打出那張牌的標記：牌的上緣（靠牌桌中間那一邊）正中間一個朝牌指的紅色小三角，金邊、底下一點影子，
+     * 大半壓在牌上，只露出一點，才不會蓋到前一排的牌。跟著該家的方向轉，所以一律從牌桌中間指向那張牌。
+     */
+    private static void paintLatestMark(Graphics2D g, double x, double y, double tileW) {
+        double size = tileW * .4;
+        double cx = x + tileW / 2;
+        Path2D.Double arrow = new Path2D.Double();
+        arrow.moveTo(cx - size / 2, y - size * .38);
+        arrow.lineTo(cx + size / 2, y - size * .38);
+        arrow.lineTo(cx, y + size * .5);
+        arrow.closePath();
+        AffineTransform saved = g.getTransform();
+        g.translate(size * .06, size * .1);
+        g.setColor(new Color(0, 0, 0, 90));
+        g.fill(arrow);
+        g.setTransform(saved);
+        g.setColor(TablePanel.DealerBadge.RED);
+        g.fill(arrow);
+        g.setColor(Theme.GOLD);
+        g.setStroke(new BasicStroke((float) Math.max(1, size * .1), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g.draw(arrow);
     }
 
     /** 手牌列的位置。separated 是與手牌分開顯示的那張牌，沒有就傳 null。 */
@@ -1735,7 +1821,7 @@ final class TableCanvas extends JComponent {
             paintPromptGlow(g, row);
         }
         if (!dealing()) {
-            paintFlowers(g, player, flowersX(seat, row), y, tableUnit());
+            paintFlowers(g, player, flowersX(seat, row), rowTop(seat, row), tableUnit());
         }
     }
 
@@ -1747,8 +1833,9 @@ final class TableCanvas extends JComponent {
         double phase = (frameNow - promptStart) / 1e6 / PROMPT_PULSE_MS;
         double strength = .55 + .45 * Math.sin(Math.PI * 2 * phase);
         double pad = 6 * unit();
-        RoundRectangle2D frame = new RoundRectangle2D.Double(row.x() - pad, row.y() - pad, row.total() + pad * 2,
-                row.tileH() + pad * 2, 14 * unit(), 14 * unit());
+        double top = rowTop(0, row);
+        RoundRectangle2D frame = new RoundRectangle2D.Double(row.x() - pad, top - pad, row.total() + pad * 2,
+                row.y() + row.tileH() - top + pad * 2, 14 * unit(), 14 * unit());
         for (int layer = 2; layer >= 0; layer--) {
             g.setColor(withAlpha(Theme.GOLD, strength * (layer == 0 ? .95 : .25 / layer)));
             g.setStroke(new BasicStroke((float) ((3 + layer * 5) * unit())));
@@ -1886,7 +1973,14 @@ final class TableCanvas extends JComponent {
                 drawY -= h * .16;
             }
         }
-        if (faceUp) {
+        if (drawY < y) {
+            // 抬起來的牌在原本的位置留一道影子，看得出是離開桌面了
+            g.setColor(new Color(0, 0, 0, 55));
+            g.fill(new RoundRectangle2D.Double(x + w * .08, y + h * .8, w * .92, h * .24, w * .3, w * .3));
+        }
+        if (seat == 0 && faceUp) {
+            TilePainter.paintStanding(g, tile, x, drawY, w, h);
+        } else if (faceUp) {
             TilePainter.paintFace(g, tile, x, drawY, w, h);
         } else {
             TilePainter.paintBack(g, x, drawY, w, h);

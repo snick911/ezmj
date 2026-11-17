@@ -4,12 +4,15 @@ import java.awt.BasicStroke;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.Container;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.Insets;
+import java.awt.LayoutManager;
 import java.awt.RenderingHints;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
@@ -31,6 +34,7 @@ import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SwingConstants;
+import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import javax.swing.text.AbstractDocument;
 
@@ -48,6 +52,15 @@ public final class TablePanel extends JPanel {
     /** 聊天一則最多幾個字，和服務器一樣。 */
     static final int MAX_CHAT_LENGTH = 100;
     private static final int PROMPT_BLINK_MS = 450;
+    /**
+     * 動作列的高度：上面一行提示、下面一排按鈕。有火焰的按鈕時，火焰竄到提示那一行，提示改放在按鈕左邊，
+     * 按鈕的位置不變，所以不用為了火焰加高。都跟著字體大小縮放。
+     */
+    private static final int ACTION_BAR_HEIGHT = 84;
+    /** 提示那一行的高度，放得下吃碰槓後放大的 18 點粗體。 */
+    private static final int HINT_ROW = 24;
+    /** 有火焰的按鈕兩側留給火焰的寬度。 */
+    private static final int FLAME_SIDE = 18;
 
     /** 動作列上的一個按鈕。translucent 的按鈕半透明，表示可以用但不一定要按。 */
     record ActionItem(String label, Color color, Runnable run, boolean translucent, boolean flame) {
@@ -94,7 +107,24 @@ public final class TablePanel extends JPanel {
     private final JTextArea chatArea = new JTextArea();
     private final JTextField chatField = new JTextField();
     private final JLabel chatNotice = new JLabel(" ");
-    private final JPanel actionBar = new JPanel();
+    /** 有火焰的按鈕時，火焰的後半畫在底色上、按鈕下面，前半（亮邊與火星）畫在按鈕上面。 */
+    private final JPanel actionBar = new JPanel() {
+        @Override
+        protected void paintComponent(Graphics g) {
+            super.paintComponent(g);
+            paintFlames(g, true);
+        }
+
+        @Override
+        protected void paintChildren(Graphics g) {
+            super.paintChildren(g);
+            paintFlames(g, false);
+        }
+    };
+    /** 提示原本的文字；畫面上的可能折成兩行，見 ActionBarLayout。 */
+    private String hintText = " ";
+    /** 動作列上有火焰的按鈕。 */
+    private boolean flaming;
     private final JPanel sidebar = new JPanel();
     private final JButton autoPlayButton = Theme.button("電腦代打：關", Theme.PANEL_LIGHT);
     /** 吃碰槓後要打牌，提示一閃一閃。 */
@@ -142,8 +172,7 @@ public final class TablePanel extends JPanel {
 
     /** 字體大小改變後，讓側欄與動作列跟著調整。 */
     void syncSizes() {
-        // 胡牌按鈕外面的火焰要多一點高度，所以比按鈕本身高
-        actionBar.setPreferredSize(new Dimension(0, Theme.scaled(104)));
+        actionBar.setPreferredSize(new Dimension(0, Theme.scaled(ACTION_BAR_HEIGHT)));
         sidebar.setPreferredSize(new Dimension(Theme.scaled(262), 0));
         wrapMissionGoal();
     }
@@ -196,19 +225,104 @@ public final class TablePanel extends JPanel {
 
     private JPanel buildActionBar() {
         JPanel bar = actionBar;
-        bar.setLayout(new BoxLayout(bar, BoxLayout.Y_AXIS));
+        bar.setLayout(new ActionBarLayout());
         bar.setBackground(Theme.PANEL);
         bar.setBorder(BorderFactory.createEmptyBorder(8, 8, 10, 8));
 
         hint.setFont(Theme.font(Font.PLAIN, 15f));
         hint.setForeground(Theme.MUTED);
-        hint.setAlignmentX(CENTER_ALIGNMENT);
         actionButtons.setOpaque(false);
-        actionButtons.setAlignmentX(CENTER_ALIGNMENT);
         bar.add(hint);
-        bar.add(Box.createVerticalStrut(4));
         bar.add(actionButtons);
         return bar;
+    }
+
+    /**
+     * 動作列的排法。按鈕一排一律置中，放在提示那一行下面。平常提示在上面那一行置中；
+     * 有火焰的按鈕時上面那一行讓給火焰，提示放在按鈕左邊、靠右對齊，太長就折成兩行。
+     */
+    private final class ActionBarLayout implements LayoutManager {
+        @Override
+        public void addLayoutComponent(String name, Component comp) {
+        }
+
+        @Override
+        public void removeLayoutComponent(Component comp) {
+        }
+
+        @Override
+        public Dimension preferredLayoutSize(Container parent) {
+            return new Dimension(0, Theme.scaled(ACTION_BAR_HEIGHT));
+        }
+
+        @Override
+        public Dimension minimumLayoutSize(Container parent) {
+            return preferredLayoutSize(parent);
+        }
+
+        @Override
+        public void layoutContainer(Container bar) {
+            Insets in = bar.getInsets();
+            int width = Math.max(0, bar.getWidth() - in.left - in.right);
+            int row = Theme.scaled(HINT_ROW);
+            Dimension buttons = actionButtons.getPreferredSize();
+            int buttonsW = Math.min(width, buttons.width);
+            int buttonsX = in.left + (width - buttonsW) / 2;
+            int buttonsY = in.top + row + Theme.scaled(4);
+            actionButtons.setBounds(buttonsX, buttonsY, buttonsW, buttons.height);
+            if (!flaming) {
+                hint.setHorizontalAlignment(SwingConstants.CENTER);
+                showHint(safeLabel(hintText));
+                hint.setBounds(in.left, in.top, width, row);
+                return;
+            }
+            int room = Math.max(0, buttonsX - in.left - Theme.scaled(12));
+            hint.setHorizontalAlignment(SwingConstants.RIGHT);
+            boolean fits = hint.getFontMetrics(hint.getFont()).stringWidth(hintText) <= room;
+            showHint(fits ? safeLabel(hintText) : rightWrapped(hintText, room));
+            int height = hint.getPreferredSize().height;
+            hint.setBounds(in.left, buttonsY + (buttons.height - height) / 2, room, height);
+        }
+    }
+
+    private void showHint(String text) {
+        if (!text.equals(hint.getText())) {
+            hint.setText(text);
+        }
+    }
+
+    /** 折行、靠右的 HTML。提示裡有玩家的名字，連線時是別人取的，先跳脫。寬度的換算和 HomePanel.wrapHtml 一樣。 */
+    private static String rightWrapped(String text, int pixels) {
+        return "<html><body style='width:" + Math.round(pixels / 1.3f) + "px;text-align:right'>"
+                + HomePanel.escape(text) + "</body></html>";
+    }
+
+    /** 換提示的文字，馬上排一次，畫面上的字與位置才跟得上。 */
+    private void setHintText(String text) {
+        hintText = text == null || text.isEmpty() ? " " : text;
+        actionBar.doLayout();
+        actionBar.repaint();
+    }
+
+    /** 畫動作列上每個有火焰的按鈕的火：behind 是按鈕後面那一半，否則是前面那一半。 */
+    private void paintFlames(Graphics graphics, boolean behind) {
+        for (Component child : actionButtons.getComponents()) {
+            if (!(child instanceof FlameFrame) || !child.isVisible()) {
+                continue;
+            }
+            FlameFrame frame = (FlameFrame) child;
+            JButton button = frame.button;
+            java.awt.Rectangle bounds = SwingUtilities.convertRectangle(frame, button.getBounds(), actionBar);
+            Graphics2D g = (Graphics2D) graphics.create();
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            double arc = Theme.buttonArc(button);
+            if (behind) {
+                FlameArt.paintBehind(g, bounds, arc, frame.seconds(), bounds.y, Theme.scaled(FLAME_SIDE));
+            } else {
+                FlameArt.paintFront(g, bounds, arc, frame.seconds(), bounds.y);
+            }
+            g.dispose();
+        }
     }
 
     private JPanel buildSidebar(Runnable onLeave, Runnable onToggleAutoPlay, Runnable onShowHistory) {
@@ -574,126 +688,41 @@ public final class TablePanel extends JPanel {
     }
 
     /**
-     * 胡與自摸的按鈕外面包一圈火焰：上緣與兩側一排火舌各自忽高忽低、左右搖，根部黃、往上變橘再變紅淡掉，
-     * 外面再一圈橘色的光。按鈕在畫面上時每 33 毫秒重畫一次，拿掉就停。burning 是 false 時只留同樣的空間不畫火，
-     * 讓同一排的其他按鈕和有火焰的對齊。
+     * 胡與自摸的按鈕：兩側留出火焰的寬度。火本身由動作列照 seconds() 畫（見 FlameArt），
+     * 這裡在按鈕上畫面時每 33 毫秒請動作列重畫一次，拿掉就停。
      */
     static final class FlameFrame extends JPanel {
         private static final int FRAME_MS = 33;
-        private static final float[] STOPS = {0f, .45f, 1f};
-        /** 外層的火：橘到紅，尖端淡掉。 */
-        private static final Color[] OUTER = {new Color(255, 170, 40, 235), new Color(240, 90, 20, 205),
-            new Color(190, 20, 10, 0)};
-        /** 裡面一層比較矮的火心：白黃到橘。 */
-        private static final Color[] INNER = {new Color(255, 250, 210, 245), new Color(255, 214, 90, 225),
-            new Color(255, 150, 30, 0)};
 
-        private final boolean burning;
-        private final Timer timer = new Timer(FRAME_MS, e -> repaint());
+        final JButton button;
+        private final Timer timer;
         private final long start = System.nanoTime();
 
-        FlameFrame(JButton button, boolean burning) {
+        FlameFrame(JButton button, Runnable repaint) {
             super(new BorderLayout());
-            this.burning = burning;
+            this.button = button;
+            this.timer = new Timer(FRAME_MS, e -> repaint.run());
             setOpaque(false);
-            int side = burning ? Theme.scaled(18) : 0;
-            setBorder(BorderFactory.createEmptyBorder(Theme.scaled(20), side, Theme.scaled(4), side));
+            int side = Theme.scaled(FLAME_SIDE);
+            setBorder(BorderFactory.createEmptyBorder(0, side, 0, side));
             add(button, BorderLayout.CENTER);
+        }
+
+        /** 燒了幾秒。 */
+        double seconds() {
+            return (System.nanoTime() - start) / 1e9;
         }
 
         @Override
         public void addNotify() {
             super.addNotify();
-            if (burning) {
-                timer.start();
-            }
+            timer.start();
         }
 
         @Override
         public void removeNotify() {
             timer.stop();
             super.removeNotify();
-        }
-
-        @Override
-        protected void paintComponent(Graphics graphics) {
-            if (!burning || getComponentCount() == 0) {
-                return;
-            }
-            Graphics2D g = (Graphics2D) graphics.create();
-            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            java.awt.Rectangle b = getComponent(0).getBounds();
-            double t = (System.nanoTime() - start) / 1e9;
-            double reach = b.y;
-            double sideReach = b.x;
-
-            // 外面一圈橘光，一明一暗
-            double pulse = .65 + .35 * Math.sin(t * 7);
-            for (int ring = 3; ring >= 1; ring--) {
-                g.setColor(new Color(255, 120, 20, (int) (70 * pulse / ring)));
-                g.setStroke(new BasicStroke(ring * Math.max(2f, b.x / 4.5f)));
-                g.drawRect(b.x, b.y, b.width - 1, b.height - 1);
-            }
-            // 先畫外層橘紅的火，再畫裡面比較矮的黃色火心
-            flames(g, b, t, reach, sideReach, 1, OUTER, 0);
-            flames(g, b, t, reach * .62, sideReach * .6, .72, INNER, 40);
-            g.dispose();
-        }
-
-        /**
-         * 一層火：上緣一排火舌往上竄、左右搖，兩側的火舌往外上方飄、越上面越長。
-         * reach 是上緣最高竄多高，sideReach 是兩側往外多遠，thickness 是火舌寬度的比例，seed 讓每一層的節奏不一樣。
-         */
-        private static void flames(Graphics2D g, java.awt.Rectangle b, double t, double reach, double sideReach,
-                                   double thickness, Color[] colors, int seed) {
-            int count = Math.max(4, (int) Math.round(b.width / (Theme.scaled(13) * 1.0)));
-            double step = (double) b.width / count;
-            for (int i = 0; i < count; i++) {
-                double flicker = flicker(t, i + seed);
-                double x = b.x + step * (i + .5);
-                double h = reach * (.4 + .6 * flicker);
-                double w = step * 1.9 * thickness;
-                double sway = Math.sin(t * 6 + (i + seed) * 1.3) * w * .3;
-                tongue(g, x, b.y + 3, x + sway, b.y + 3 - h, w, colors);
-            }
-            int sideCount = 3;
-            for (int side = -1; side <= 1; side += 2) {
-                double edge = side < 0 ? b.x + 2 : b.x + b.width - 2;
-                for (int i = 0; i < sideCount; i++) {
-                    double flicker = flicker(t, i + seed + 20 + side * 7);
-                    double y = b.y + b.height * (1 - .42 * i);
-                    double out = sideReach * (.45 + .5 * flicker);
-                    double up = reach * (.7 + .5 * flicker) * (.7 + .15 * i);
-                    tongue(g, edge, y, edge + side * out, y - up, b.height * .55 * thickness, colors);
-                }
-            }
-        }
-
-        /** 0 到 1 的忽大忽小，每條火舌的節奏不一樣。 */
-        private static double flicker(double t, int index) {
-            return .5 + .5 * Math.sin(t * 11 + index * 1.7) * Math.sin(t * 6.3 + index * 2.9);
-        }
-
-        /** 一條火舌：根部在 (baseX, baseY)、寬 width，尖端在 (tipX, tipY)，顏色從根部往尖端變。 */
-        private static void tongue(Graphics2D g, double baseX, double baseY, double tipX, double tipY, double width,
-                                   Color[] colors) {
-            double dx = tipX - baseX;
-            double dy = tipY - baseY;
-            double length = Math.hypot(dx, dy);
-            if (length < 1) {
-                return;
-            }
-            // 根部沿著和火舌垂直的方向展開
-            double nx = -dy / length * width / 2;
-            double ny = dx / length * width / 2;
-            Path2D.Double shape = new Path2D.Double();
-            shape.moveTo(baseX - nx, baseY - ny);
-            shape.quadTo(baseX - nx * .7 + dx * .5, baseY - ny * .7 + dy * .5, tipX, tipY);
-            shape.quadTo(baseX + nx * .7 + dx * .5, baseY + ny * .7 + dy * .5, baseX + nx, baseY + ny);
-            shape.closePath();
-            g.setPaint(new java.awt.LinearGradientPaint((float) baseX, (float) baseY, (float) tipX, (float) tipY,
-                    STOPS, colors));
-            g.fill(shape);
         }
     }
 
@@ -774,6 +803,8 @@ public final class TablePanel extends JPanel {
             hint.setFont(Theme.font(Font.PLAIN, 15f));
             hint.setForeground(Theme.MUTED);
         }
+        // 字變大小，放在按鈕左邊時要不要折行也跟著變
+        actionBar.doLayout();
     }
 
     private void blinkHint() {
@@ -822,41 +853,42 @@ public final class TablePanel extends JPanel {
 
     /** 只更新提示文字，按鈕不動。 */
     void setHint(String hintText) {
-        hint.setText(hintText);
+        setHintText(hintText);
     }
 
     void showActions(String hintText, boolean discardEnabled, List<ActionItem> actions) {
-        hint.setText(hintText);
         canvas.setDiscardEnabled(discardEnabled);
         setButtons(actions);
+        setHintText(hintText);
     }
 
     /** 進入選牌：只有 tiles 裡的手牌能點，其他蓋上遮罩。first 是已經選好的牌，沒有就是 null。 */
     void showPick(String hintText, Set<Tile> tiles, Tile first, Consumer<Tile> onPick, List<ActionItem> actions) {
-        hint.setText(hintText);
         canvas.startPick(tiles, first, onPick, false);
         setButtons(actions);
+        setHintText(hintText);
     }
 
     /** 和 showPick 一樣只有 tiles 裡的手牌能點，這些牌另外加上金框，例如報聽時打出去會聽牌的牌。 */
     void showMarkedPick(String hintText, Set<Tile> tiles, Consumer<Tile> onPick, List<ActionItem> actions) {
-        hint.setText(hintText);
         canvas.startPick(tiles, null, onPick, true);
         setButtons(actions);
+        setHintText(hintText);
     }
 
+    /** 換動作列的按鈕。有火焰的按鈕兩側留出火焰的寬度，提示的位置跟著換，見 ActionBarLayout。 */
     private void setButtons(List<ActionItem> actions) {
         actionButtons.removeAll();
-        boolean anyFlame = actions.stream().anyMatch(ActionItem::flame);
+        flaming = actions.stream().anyMatch(ActionItem::flame);
         for (ActionItem action : actions) {
             JButton button = action.translucent()
                     ? Theme.translucentButton(action.label(), action.color())
                     : Theme.button(action.label(), action.color());
             button.addActionListener(e -> action.run().run());
-            // 有火焰的按鈕外面多一圈空間，同一排的其他按鈕也墊一樣高，才會對齊
-            actionButtons.add(action.flame() ? new FlameFrame(button, true) : anyFlame ? new FlameFrame(button, false) : button);
+            actionButtons.add(action.flame() ? new FlameFrame(button, actionBar::repaint) : button);
         }
         actionButtons.revalidate();
-        actionButtons.repaint();
+        actionBar.doLayout();
+        actionBar.repaint();
     }
 }
