@@ -8,9 +8,13 @@ import static ezmj.T.tile;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
+import java.util.Set;
 
+import ezmj.engine.WallRing;
+import ezmj.model.Dice;
 import ezmj.model.Meld;
 import ezmj.model.Suit;
 import ezmj.model.Tile;
@@ -68,8 +72,9 @@ final class TilesTest {
         });
 
         test("牌牆洗牌不增減牌，同種子結果相同", () -> {
-            Wall a = new Wall(new Random(7));
-            Wall b = new Wall(new Random(7));
+            Wall a = Wall.shuffled(new Random(7), 0);
+            Wall b = Wall.shuffled(new Random(7), 0);
+            eq(a.dice(), b.dice(), "同種子擲出一樣的骰子");
             List<Tile> drawn = new ArrayList<>();
             while (a.size() > 0) {
                 Tile tile = a.drawFront();
@@ -83,8 +88,8 @@ final class TilesTest {
         });
 
         test("不同種子洗出不同順序", () -> {
-            Wall a = new Wall(new Random(1));
-            Wall b = new Wall(new Random(2));
+            Wall a = Wall.shuffled(new Random(1), 0);
+            Wall b = Wall.shuffled(new Random(2), 0);
             boolean differs = false;
             while (a.size() > 0) {
                 differs |= !a.drawFront().equals(b.drawFront());
@@ -97,8 +102,67 @@ final class TilesTest {
             eq(tile("1w"), wall.drawFront(), "牌頭");
             eq(tile("3w"), wall.drawBack(), "牌尾");
             eq(0, wall.liveCount(), "不足留牌時可摸張數為 0");
-            eq(128, new Wall(new Random(1)).liveCount(), "整副牌可摸張數");
+            eq(128, Wall.shuffled(new Random(1), 0).liveCount(), "整副牌可摸張數");
             eq(16, Wall.RESERVED, "留牌張數");
+        });
+
+        test("牌牆照骰子開門：牌頭從開門處往順時針，牌尾往逆時針，每墩先拿上面", () -> {
+            List<Tile> stacked = new ArrayList<>(Tile.fullSet());
+            Collections.shuffle(stacked, new Random(5));
+            // 莊家是座位 0，11 點數到對家（座位 2），對家的牌牆從第 36 墩開始，右端數過 11 墩，牌頭是第 47 墩
+            Wall wall = new Wall(stacked, 0, new Dice(4, 5, 2));
+            eq(47, wall.start(), "開門處");
+            eq(stacked.get(94), wall.drawFront(), "牌頭第 1 張：第 47 墩上面");
+            eq(stacked.get(95), wall.drawFront(), "牌頭第 2 張：第 47 墩下面");
+            eq(stacked.get(96), wall.drawFront(), "牌頭第 3 張：第 48 墩上面");
+            eq(stacked.get(92), wall.drawBack(), "牌尾第 1 張：第 46 墩上面");
+            eq(stacked.get(93), wall.drawBack(), "牌尾第 2 張：第 46 墩下面");
+            eq(stacked.get(90), wall.drawBack(), "牌尾第 3 張：第 45 墩上面");
+            eq(3, wall.headTaken(), "牌頭拿了 3 張");
+            eq(3, wall.tailTaken(), "牌尾拿了 3 張");
+            eq(138, wall.size(), "剩下的張數");
+            List<Tile> left = wall.order();
+            eq(stacked.get(97), left.get(0), "剩下的從牌頭那一墩的下面開始");
+            eq(stacked.get(91), left.get(left.size() - 1), "到牌尾那一墩的下面結束");
+            eq(stacked.get(0), left.get(47), "繞過第 71 墩接回第 0 墩的上面");
+            eq(stacked.get(1), left.get(48), "再來是第 0 墩的下面");
+        });
+
+        test("同一面牌牆，骰子不同就從不同的地方開門，拿到不同的牌", () -> {
+            List<Tile> stacked = new ArrayList<>(Tile.fullSet());
+            Collections.shuffle(stacked, new Random(8));
+            for (int dealer = 0; dealer < 4; dealer++) {
+                Set<Integer> starts = new HashSet<>();
+                for (int total = 3; total <= 18; total++) {
+                    Dice dice = new Dice(Math.min(6, total - 2), Math.max(1, Math.min(6, total - 7)), Math.max(1, total - 12));
+                    eq(total, dice.total(), "擲出 " + total + " 點");
+                    Wall wall = new Wall(stacked, dealer, dice);
+                    int start = Wall.openingStack(dealer, dice);
+                    eq(new WallRing(dealer, dice).start(), start, "畫面和引擎從同一墩開門");
+                    eq(stacked.get(start * 2), wall.drawFront(), dealer + " 當莊、" + total + " 點：牌頭第一張");
+                    eq(stacked.get(Math.floorMod(start - 1, 72) * 2), wall.drawBack(), dealer + " 當莊、" + total + " 點：牌尾第一張");
+                    starts.add(start);
+                }
+                eq(16, starts.size(), dealer + " 當莊：3 到 18 點各從不同的墩開門");
+            }
+        });
+
+        test("牌牆接回：照存的兩頭張數接著拿，牌頭與牌尾不能重疊", () -> {
+            List<Tile> stacked = new ArrayList<>(Tile.fullSet());
+            Collections.shuffle(stacked, new Random(9));
+            Wall played = new Wall(stacked, 2, new Dice(3, 3, 6));
+            for (int i = 0; i < 70; i++) {
+                played.drawFront();
+            }
+            for (int i = 0; i < 9; i++) {
+                played.drawBack();
+            }
+            Wall resumed = Wall.resumed(stacked, 2, new Dice(3, 3, 6), 70, 9);
+            eq(played.order(), resumed.order(), "剩下的牌一樣");
+            eq(played.drawFront(), resumed.drawFront(), "接著從牌頭拿");
+            eq(played.drawBack(), resumed.drawBack(), "接著從牌尾拿");
+            T.fails(IllegalArgumentException.class, () -> Wall.resumed(stacked, 2, new Dice(3, 3, 6), 141, 3), "重疊");
+            T.fails(IllegalArgumentException.class, () -> new Wall(stacked.subList(0, 143), 2, new Dice(3, 3, 6)), "少一張");
         });
 
         test("碰可以升級成明槓", () -> {

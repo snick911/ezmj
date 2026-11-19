@@ -292,7 +292,7 @@ final class TableCanvas extends JComponent {
     /** 吃碰槓後要打牌，手牌外框亮起。 */
     private boolean discardPrompt;
     private long promptStart;
-    /** 流局時牌牆剩下的牌，從牌頭到牌尾；沒有流局或連線時（服務器不送牌牆）是空的。revealStart 是開始翻的時間。 */
+    /** 流局時牌牆剩下的牌，從牌頭到牌尾；沒有流局，或連到 0.11.0 以前的服務器（不送牌牆）是空的。revealStart 是開始翻的時間。 */
     private List<Tile> revealTiles = List.of();
     private long revealStart;
 

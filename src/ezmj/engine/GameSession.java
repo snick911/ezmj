@@ -79,11 +79,12 @@ public final class GameSession implements GameView {
         return session;
     }
 
+    /** 洗牌疊好牌牆，莊家擲骰子開門，見 Wall.shuffled。發牌在 Round.start。 */
     public Round newRound(Consumer<String> log) {
         for (Player player : players) {
             player.resetForRound();
         }
-        return new Round(players, new Wall(random), dealer, roundWind, handWind(), streak, log);
+        return new Round(players, Wall.shuffled(random, dealer), dealer, roundWind, handWind(), streak, log);
     }
 
     /** 下一局的局風，見 RoundView.handWind。 */

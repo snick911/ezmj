@@ -240,12 +240,12 @@ public final class GameController implements TableFlow.Listener, TablePresenter.
     }
 
     /**
-     * 每局開門的骰子另外擲，不動牌局的亂數，同一個種子打出來的牌才一樣。擲骰子在發牌之前，所以紀錄寫在補花前面。
-     * 接回存檔時骰子沒有存，重新擲一次，只是牌牆開門的位置可能和存檔前不同。
+     * 骰子是引擎疊好牌牆後擲的，決定從哪裡開門拿牌，接回存檔也是同一組。擲骰子在發牌之前，所以紀錄寫在補花前面。
+     * 以前的存檔沒有記骰子，那一局照舊只在畫面上另外擲一次。
      */
     @Override
     public void roundOpened(Round round) {
-        Dice dice = Dice.roll(diceRandom);
+        Dice dice = round.dice() != null ? round.dice() : Dice.roll(diceRandom);
         view.bindRound(round, dice);
         if (!resuming) {
             view.appendLog(WallRing.announce(round, dice));

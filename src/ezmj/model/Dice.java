@@ -3,8 +3,8 @@ package ezmj.model;
 import java.util.Random;
 
 /**
- * 開局時莊家擲的三顆骰子，點數決定從哪一家的牌牆、哪一墩開門，見 engine.WallRing。
- * 牌牆是洗好的，從哪裡開門拿到什麼牌的機率都一樣，所以只影響畫面，不影響牌局。
+ * 開局時莊家擲的三顆骰子，點數決定從哪一家的牌牆、哪一墩開門，見 {@link Wall}。
+ * 和真的牌桌一樣，牌牆先疊好才擲骰子，誰拿到哪幾張牌就看從哪裡開門。
  */
 public record Dice(int first, int second, int third) {
 
@@ -28,7 +28,7 @@ public record Dice(int first, int second, int third) {
     }
 
     /**
-     * 同樣的 key 一定擲出同樣的點數。連線時服務器沒有送骰子，全桌用同樣的資料算，每家看到的才一樣。
+     * 同樣的 key 一定擲出同樣的點數。舊的服務器沒有送骰子，連上它時全桌用同樣的資料算，每家看到的才一樣。
      * 只用 String.hashCode 與 int 運算，網頁版編成 JavaScript 算出來也一樣。
      */
     public static Dice of(String key) {

@@ -532,7 +532,7 @@ final class OnlineController implements OnlineClient.Listener, TablePresenter.Ta
         return events;
     }
 
-    /** 重連回來時沒有 roundStart，第一份局面才接上牌桌。骰子用 state 的資料算，和別家看到的一樣。 */
+    /** 重連回來時沒有 roundStart，第一份局面才接上牌桌。骰子從 state 拿，和別家看到的一樣。 */
     private void bindRoundOnce() {
         if (!roundBound) {
             view.bindRound(game, game.dice());

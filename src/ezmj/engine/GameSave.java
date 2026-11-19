@@ -9,6 +9,7 @@ import java.util.Random;
 import java.util.stream.Collectors;
 
 import ezmj.model.BotLevel;
+import ezmj.model.Dice;
 import ezmj.model.GameConfig;
 import ezmj.model.Gender;
 import ezmj.model.Meld;
@@ -136,7 +137,15 @@ public final class GameSave {
         values.setProperty("round.afterKong", String.valueOf(state.afterKong()));
         values.setProperty("round.anyClaim", String.valueOf(state.anyClaim()));
         values.setProperty("round.turnsTaken", join(state.turnsTaken()));
-        values.setProperty("round.wall", codes(round.wall().order()));
+        // 剩下的牌照牌頭到牌尾，舊版程式只讀這個也接得回來；新版另外記整面牌牆、骰子與兩頭各拿了幾張
+        Wall wall = round.wall();
+        values.setProperty("round.wall", codes(wall.order()));
+        if (wall.dice() != null) {
+            Dice dice = wall.dice();
+            values.setProperty("round.stacks", codes(wall.stacked()));
+            values.setProperty("round.dice", dice.first() + LIST + dice.second() + LIST + dice.third());
+            values.setProperty("round.taken", wall.headTaken() + LIST + wall.tailTaken());
+        }
         values.setProperty("round.history", state.history().stream()
                 .map(event -> event.seat() + event.tile().code()).collect(Collectors.joining(LIST)));
         values.setProperty("round.listeners", seats(state.listening()));
@@ -259,11 +268,37 @@ public final class GameSave {
                 bool(values, "round.afterKong"), bool(values, "round.anyClaim"), ints(text(values, "round.turnsTaken")),
                 discards, listeners(values), seatFlags(values.getProperty("round.listenChances", NONE)));
         int dealer = integer(values, "round.dealer");
-        Round round = Round.restored(players, new Wall(Tile.parseAll(text(values, "round.wall"))), dealer,
+        Round round = Round.restored(players, readWall(values, dealer), dealer,
                 integer(values, "round.roundWind"), GameSession.handWind(firstDealer, dealer), integer(values, "round.streak"),
                 state);
         requireFullSet(round);
         return round;
+    }
+
+    /**
+     * 整面牌牆照原本的位置疊回去，從同一個開門處接著拿。
+     * 以前的存檔只記剩下的牌，照舊從頭尾接著拿，骰子由畫面另外擲。
+     */
+    private static Wall readWall(Properties values, int dealer) throws IOException {
+        List<Tile> remaining = Tile.parseAll(text(values, "round.wall"));
+        if (!values.containsKey("round.stacks")) {
+            return new Wall(remaining);
+        }
+        List<Tile> stacked = Tile.parseAll(text(values, "round.stacks"));
+        List<Tile> sorted = new ArrayList<>(stacked);
+        List<Tile> full = new ArrayList<>(Tile.fullSet());
+        sorted.sort(null);
+        full.sort(null);
+        if (!sorted.equals(full)) {
+            throw new IOException("存檔的牌牆不是完整的一副");
+        }
+        int[] faces = ints(text(values, "round.dice"));
+        int[] taken = ints(text(values, "round.taken"));
+        Wall wall = Wall.resumed(stacked, dealer, new Dice(faces[0], faces[1], faces[2]), taken[0], taken[1]);
+        if (!wall.order().equals(remaining)) {
+            throw new IOException("存檔的牌牆和剩下的牌對不起來");
+        }
+        return wall;
     }
 
     /** 牌一定要剛好是完整的 144 張，不然就是檔案壞了或被改過。 */

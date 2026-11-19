@@ -739,6 +739,21 @@ final class OnlineTest {
             check(game.result().isDrawnGame(), "流局");
             eq(10000, end.nextRoundMs(), "下一局");
             eq(1, game.drawnGames(), "流局次數");
+            check(game.remainingWall().isEmpty(), "0.11.0 以前的服務器沒有 wall，不翻");
+        });
+        test("局面：流局翻開服務器送的牌牆，單機版與網頁版都從這裡拿", () -> {
+            String drawn = ROUND_END
+                    .replace("\"drawnGame\":false,\"winner\":1,\"from\":2,\"selfDraw\":false,\"winTile\":\"3w\"",
+                            "\"wall\":[\"1w\",\"5z\",\"3f\",\"9s\"],\"drawnGame\":true,\"winner\":-1,\"from\":-1,"
+                                    + "\"selfDraw\":false,\"winTile\":null");
+            OnlineGame game = playing();
+            check(game.remainingWall().isEmpty(), "打牌中沒有");
+            game.applyRoundEnd(parse(drawn));
+            eq(T.hand("1w5z3f9s"), game.remainingWall(), "牌頭到牌尾");
+            game.applyRoundStart(parse("{\"type\":\"roundStart\",\"number\":8,\"dealer\":1,\"roundWind\":1,\"streak\":1,\"dealMs\":3000}"));
+            check(game.remainingWall().isEmpty(), "下一局收掉");
+            game.applyRoundEnd(parse(ROUND_END.replace("\"type\":\"roundEnd\",", "\"type\":\"roundEnd\",\"wall\":null,")));
+            check(game.remainingWall().isEmpty(), "有人胡不翻");
         });
         test("局面：整場結束的成績", () -> {
             OnlineGame game = playing();
@@ -813,7 +828,26 @@ final class OnlineTest {
             eq("小美", game.player(1).name(), "回來了");
             eq(9, game.player(1).concealed().size(), "牌還在");
         });
-        test("局面：開門的骰子全桌一樣，斷線接回只有 state 也一樣", () -> {
+        test("局面：開門的骰子用服務器送的，斷線接回從 state 拿", () -> {
+            String start = "{\"type\":\"roundStart\",\"number\":7,\"dealer\":0,\"roundWind\":1,\"streak\":1,"
+                    + "\"dice\":[4,5,2],\"dealMs\":3000}";
+            OnlineGame game = playing();
+            game.applyRoundStart(parse(start));
+            eq(new Dice(4, 5, 2), game.dice(), "roundStart 的骰子");
+            eq("小明 擲出 4、5、2，共 11 點，從小花的牌牆開門", WallRing.announce(game, game.dice()),
+                    "莊家是服務器座位 0（畫面上的對家），11 點數到服務器座位 2，也就是自己");
+            game.applyState(parse(state("TURN", 1, "\"drawn\":null,\"dice\":[4,5,2]")), List.of());
+            eq(new Dice(4, 5, 2), game.dice(), "state 也帶著");
+            OnlineGame resumed = new OnlineGame();
+            resumed.applyRoom(RoomInfo.parse(parse(ROOM_PLAYING)));
+            resumed.applyState(parse(state("TURN", 1, "\"drawn\":null,\"dice\":[6,1,3]")), List.of());
+            eq(new Dice(6, 1, 3), resumed.dice(), "斷線接回只有 state");
+            game.applyRoundStart(parse(start.replace("\"dice\":[4,5,2],", "")));
+            eq(Dice.of("ABC234/0/1/0/1"), game.dice(), "下一局舊服務器沒送，不沿用上一局的");
+            game.applyRoundStart(parse(start.replace("[4,5,2]", "[0,5,2]")));
+            eq(Dice.of("ABC234/0/1/0/1"), game.dice(), "點數不對就當作沒送");
+        });
+        test("局面：舊服務器沒送骰子，全桌用房號算，斷線接回只有 state 也一樣", () -> {
             String start = "{\"type\":\"roundStart\",\"number\":7,\"dealer\":0,\"roundWind\":1,\"streak\":1,\"dealMs\":3000}";
             OnlineGame game = playing();
             OnlineGame other = new OnlineGame();

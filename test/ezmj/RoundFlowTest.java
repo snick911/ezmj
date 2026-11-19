@@ -7,6 +7,7 @@ import static ezmj.T.test;
 import static ezmj.T.tile;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -18,6 +19,7 @@ import ezmj.engine.Round;
 import ezmj.engine.RoundEvent;
 import ezmj.engine.RoundResult;
 import ezmj.engine.TurnOptions;
+import ezmj.model.Dice;
 import ezmj.model.Gender;
 import ezmj.model.Meld;
 import ezmj.model.Player;
@@ -201,8 +203,11 @@ final class RoundFlowTest {
                 for (int seat = 0; seat < 4; seat++) {
                     players[seat] = new Player("P" + seat, seat, seat == 0, Gender.FEMALE, 1000);
                 }
-                Round round = new Round(players, new Wall(random), i % 4, 1, 1, 0, message -> { });
+                Round round = new Round(players, Wall.shuffled(random, i % 4), i % 4, 1, 1, 0, message -> { });
                 round.start();
+                if (round.phase() == Round.Phase.FINISHED) {
+                    continue;
+                }
                 for (int seat = 0; seat < 4; seat++) {
                     check(players[seat].concealed().stream().noneMatch(Tile::isFlower), "手牌有花");
                     eq(seat == i % 4 ? 17 : 16, players[seat].concealed().size(), "手牌張數");
@@ -210,6 +215,74 @@ final class RoundFlowTest {
                 }
                 conserved(round);
             }
+        });
+
+        test("發牌照真的牌桌：從開門處每家每次拿兩墩，拿四輪，莊家再拿一張", () -> {
+            Random random = new Random(32);
+            for (int dealer = 0; dealer < 4; dealer++) {
+                Dice dice = Dice.roll(random);
+                int start = Wall.openingStack(dealer, dice);
+                // fromHead 是從開門處往順時針數的順序，照開門處擺上牌牆。花牌放在最後，也就是牌尾那一頭，發牌拿不到
+                List<Tile> fromHead = new ArrayList<>(Tile.fullSet().stream().filter(tile -> !tile.isFlower()).toList());
+                Collections.shuffle(fromHead, random);
+                fromHead.addAll(Tile.fullSet().stream().filter(Tile::isFlower).toList());
+                Tile[] slots = new Tile[Wall.TILES];
+                for (int i = 0; i < Wall.TILES; i++) {
+                    slots[Wall.headStack(start, i) * 2 + i % 2] = fromHead.get(i);
+                }
+                Player[] players = new Player[4];
+                for (int seat = 0; seat < 4; seat++) {
+                    players[seat] = new Player("P" + seat, seat, seat == 0, Gender.FEMALE, 1000);
+                }
+                Round round = new Round(players, new Wall(List.of(slots), dealer, dice), dealer, 1, 1, 0, message -> { });
+                eq(dice, round.dice(), "局面上的骰子");
+                round.start();
+                for (int offset = 0; offset < 4; offset++) {
+                    int seat = (dealer + offset) % 4;
+                    List<Tile> expected = new ArrayList<>();
+                    for (int turn = 0; turn < 4; turn++) {
+                        // 第 turn 輪，這家拿的是牌頭第 (turn * 4 + offset) * 4 張起的四張，也就是連著的兩墩
+                        int first = (turn * 4 + offset) * 4;
+                        expected.addAll(fromHead.subList(first, first + 4));
+                    }
+                    if (offset == 0) {
+                        expected.add(fromHead.get(64));
+                    }
+                    List<Tile> hand = new ArrayList<>(players[seat].concealed());
+                    expected.sort(null);
+                    hand.sort(null);
+                    eq(expected, hand, dealer + " 當莊，座位 " + seat + " 的手牌");
+                }
+                eq(fromHead.get(64), round.drawn(), "莊家的第 17 張是牌頭第 65 張");
+                eq(65, round.wall().headTaken(), "牌頭拿了 65 張");
+                eq(0, round.wall().tailTaken(), "沒有花，牌尾沒動");
+            }
+        });
+
+        test("開局補花：莊家的第 17 張是花，和手上的花一起在莊家補，補完才輪到下家", () -> {
+            List<Tile> plain = new ArrayList<>(Tile.fullSet().stream().filter(tile -> !tile.isFlower()).toList());
+            List<Tile> flowers = Tile.fullSet().stream().filter(Tile::isFlower).toList();
+            Collections.shuffle(plain, new Random(33));
+            // 莊家（座位 0）第一輪拿到一張花、第 17 張也是花；下家第一輪拿到一張花
+            List<Tile> order = new ArrayList<>(plain);
+            order.add(0, flowers.get(0));
+            order.add(4, flowers.get(1));
+            order.add(64, flowers.get(2));
+            List<Tile> rest = new ArrayList<>(flowers.subList(3, 8));
+            order.addAll(order.size() - 20, rest);
+            Player[] players = new Player[4];
+            for (int seat = 0; seat < 4; seat++) {
+                players[seat] = new Player("P" + seat, seat, seat == 0, Gender.FEMALE, 1000);
+            }
+            Round round = new Round(players, new Wall(order), 0, 1, 1, 0, message -> { });
+            round.start();
+            eq(2, players[0].flowers().size(), "莊家兩張花");
+            eq(1, players[1].flowers().size(), "下家一張花");
+            List<Tile> fromTail = new ArrayList<>(order.subList(order.size() - 3, order.size()));
+            Collections.reverse(fromTail);
+            check(players[0].concealed().contains(fromTail.get(0)) && players[0].concealed().contains(fromTail.get(1)),
+                    "莊家先補，拿牌尾的前兩張");
+            check(players[1].concealed().contains(fromTail.get(2)), "下家接著補，拿牌尾第三張");
         });
 
         test("門風由莊家起算逆時針為東南西北", () -> {
@@ -259,7 +332,8 @@ final class RoundFlowTest {
             eq(tile("8f"), result.winTile(), "最後亮出的花");
             check(result.score().has("八仙過海"), "八仙過海 " + result.score());
             eq(8, result.score().totalTai(), "只算這一項");
-            eq(15, round.player(0).concealed().size(), "第八張沒有補牌");
+            // 照真的牌桌，莊家補花前已經拿了第 17 張：17 張亮出 8 張花、補 7 張
+            eq(16, round.player(0).concealed().size(), "第八張沒有補牌");
             conserved(round);
         });
 

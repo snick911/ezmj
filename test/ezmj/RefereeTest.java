@@ -520,19 +520,23 @@ final class RefereeTest {
         Model(List<Tile> order, int dealer) {
             this.wall = new ArrayDeque<>(order);
             this.dealer = dealer;
+            // 每家每次拿四張，拿四輪；莊家再摸第 17 張，接著從莊家起補花
             List<List<Tile>> dealtFlowers = List.of(new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>());
-            for (int i = 0; i < 16; i++) {
+            for (int turn = 0; turn < 4; turn++) {
                 for (int offset = 0; offset < 4; offset++) {
                     int seat = (dealer + offset) % 4;
-                    Tile tile = wall.pollFirst();
-                    if (tile.isFlower()) {
-                        dealtFlowers.get(seat).add(tile);
-                    } else {
-                        seats[seat].hand[tile.index()]++;
+                    for (int i = 0; i < 4; i++) {
+                        Tile tile = wall.pollFirst();
+                        if (tile.isFlower()) {
+                            dealtFlowers.get(seat).add(tile);
+                        } else {
+                            seats[seat].hand[tile.index()]++;
+                        }
                     }
                 }
             }
-            for (int offset = 0; offset < 4; offset++) {
+            draw(dealer, false);
+            for (int offset = 0; offset < 4 && phase != Round.Phase.FINISHED; offset++) {
                 int seat = (dealer + offset) % 4;
                 PriorityQueue<Tile> pending = new PriorityQueue<>(dealtFlowers.get(seat));
                 while (!pending.isEmpty()) {
@@ -547,7 +551,6 @@ final class RefereeTest {
                     }
                 }
             }
-            draw(dealer, false);
         }
 
         /** 八張都亮出來時才可能立即胡：一家八張，或一家七張、別家一張。 */
@@ -899,9 +902,9 @@ final class RefereeTest {
             Collections.shuffle(hand, random);
         }
         List<Tile> order = new ArrayList<>();
-        for (int i = 0; i < 16; i++) {
+        for (int turn = 0; turn < 4; turn++) {
             for (int offset = 0; offset < 4; offset++) {
-                order.add(hands.get((dealer + offset) % 4).get(i));
+                order.addAll(hands.get((dealer + offset) % 4).subList(turn * 4, turn * 4 + 4));
             }
         }
         order.addAll(front);

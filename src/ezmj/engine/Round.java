@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 
+import ezmj.model.Dice;
 import ezmj.model.Meld;
 import ezmj.model.Player;
 import ezmj.model.Tile;
@@ -28,6 +29,8 @@ public final class Round implements RoundView {
 
     private static final int SEATS = 4;
     private static final int STARTING_HAND = 16;
+    /** 發牌時每家每次拿兩墩。 */
+    private static final int PACKET = 4;
     private static final int FLOWERS = 8;
 
     private final Player[] players;
@@ -107,18 +110,22 @@ public final class Round implements RoundView {
         this.listener = listener;
     }
 
-    /** 發牌、補花，並讓莊家摸第 17 張。 */
+    /**
+     * 照真的牌桌發牌：從牌頭起，莊家先、照行牌順序每家每次拿兩墩（四張），拿四輪各 16 張，莊家再拿第 17 張；
+     * 接著從莊家起依序補花，每家把花補完才換下一家。莊家的第 17 張是花的話也在莊家補花時一起補。
+     */
     public void start() {
-        for (int i = 0; i < STARTING_HAND; i++) {
+        for (int turn = 0; turn < STARTING_HAND / PACKET; turn++) {
             for (int offset = 0; offset < SEATS; offset++) {
-                players[(dealer + offset) % SEATS].addToHand(wall.drawFront());
+                Player player = players[(dealer + offset) % SEATS];
+                for (int i = 0; i < PACKET; i++) {
+                    player.addToHand(wall.drawFront());
+                }
             }
         }
+        draw(dealer, false);
         for (int offset = 0; offset < SEATS && phase != Phase.FINISHED; offset++) {
             replaceFlowers(players[(dealer + offset) % SEATS]);
-        }
-        if (phase != Phase.FINISHED) {
-            draw(dealer, false);
         }
     }
 
@@ -607,6 +614,11 @@ public final class Round implements RoundView {
 
     public Wall wall() {
         return wall;
+    }
+
+    @Override
+    public Dice dice() {
+        return wall.dice();
     }
 
     @Override

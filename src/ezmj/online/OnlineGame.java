@@ -68,6 +68,10 @@ public final class OnlineGame implements GameView, RoundView {
     private int roundWind = 1;
     /** 舊服務器沒有送就是 0。 */
     private int handWind;
+    /** 服務器送的開門骰子；舊服務器沒有送是 null。 */
+    private Dice serverDice;
+    /** 流局時 roundEnd 的 wall：牌牆剩下的牌，從牌頭到牌尾。其他時候、有人胡或 0.11.0 以前的服務器是空的。 */
+    private List<Tile> wall = List.of();
     /** 報聽了的畫面座位。自己看 listeningWaits，別家看 state 的 listening。 */
     private final boolean[] listening = new boolean[SEATS];
     private int liveTiles;
@@ -120,12 +124,30 @@ public final class OnlineGame implements GameView, RoundView {
     }
 
     /**
-     * 這局開門的骰子。服務器沒有送，用全桌都看得到的資料算：房號、莊家的服務器座位、圈風、局風與連莊數，
+     * 這局開門的骰子，服務器在 roundStart 與 state 送來，是服務器上的牌牆真的照它開門的那一組。
+     * 舊的服務器沒有送，就用全桌都看得到的資料算：房號、莊家的服務器座位、圈風、局風與連莊數，
      * 每家算出來都一樣；斷線接回時沒有 roundStart，用 state 的也一樣。
      */
+    @Override
     public Dice dice() {
+        if (serverDice != null) {
+            return serverDice;
+        }
         String code = room == null ? "" : room.code();
         return Dice.of(code + "/" + Math.floorMod(dealer + mySeat, SEATS) + "/" + roundWind + "/" + handWind + "/" + streak);
+    }
+
+    /** roundStart 與 state 的 dice：三顆骰子的點數。舊服務器沒有，或點數不對，都是 null。 */
+    private static Dice dice(Map<String, Object> message) {
+        if (message.get("dice") == null) {
+            return null;
+        }
+        List<Integer> faces = Fields.integers(message, "dice");
+        try {
+            return faces.size() == 3 ? new Dice(faces.get(0), faces.get(1), faces.get(2)) : null;
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     public void applyRoundStart(Map<String, Object> message) {
@@ -134,6 +156,8 @@ public final class OnlineGame implements GameView, RoundView {
         roundWind = Fields.integer(message, "roundWind");
         handWind = handWind(message);
         streak = Fields.integer(message, "streak");
+        serverDice = dice(message);
+        wall = List.of();
         phase = Round.Phase.TURN;
         current = dealer;
         drawn = null;
@@ -158,6 +182,7 @@ public final class OnlineGame implements GameView, RoundView {
         streak = Fields.integer(state, "streak");
         roundWind = Fields.integer(state, "roundWind");
         handWind = handWind(state);
+        serverDice = dice(state);
         liveTiles = Fields.integer(state, "liveTiles");
         drawn = Fields.tileOrNull(state, "drawn");
         claimTile = Fields.tileOrNull(state, "claimTile");
@@ -194,6 +219,8 @@ public final class OnlineGame implements GameView, RoundView {
     /** 這局打完，四家的牌都攤開。陣列依服務器的座位排列，放進來時要轉成畫面座位。 */
     public RoundEnd applyRoundEnd(Map<String, Object> message) {
         boolean drawnGame = Fields.bool(message, "drawnGame");
+        List<Tile> left = drawnGame ? Fields.tilesOrNull(message, "wall") : null;
+        wall = left == null ? List.of() : List.copyOf(left);
         if (drawnGame) {
             result = RoundResult.drawnGame();
         } else {
@@ -462,6 +489,12 @@ public final class OnlineGame implements GameView, RoundView {
     @Override
     public int liveTiles() {
         return liveTiles;
+    }
+
+    /** 流局時服務器在 roundEnd 攤開的牌牆，從牌頭到牌尾；畫面收到流局的事件時一張一張翻開。 */
+    @Override
+    public List<Tile> remainingWall() {
+        return wall;
     }
 
     @Override

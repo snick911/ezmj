@@ -88,10 +88,15 @@ final class SaveTest {
         }
     }
 
-    /** 兩局看起來一樣：手牌、面子、花牌、棄牌、牌牆與輪到誰。 */
+    /** 兩局看起來一樣：手牌、面子、花牌、棄牌、牌牆（整面、開門的骰子、兩頭各拿了幾張）與輪到誰。 */
     private static void sameTable(Round expected, Round actual, String when) {
         eq(expected.phase(), actual.phase(), when + "：階段");
         eq(expected.wall().order(), actual.wall().order(), when + "：牌牆順序");
+        eq(expected.wall().stacked(), actual.wall().stacked(), when + "：整面牌牆");
+        eq(expected.dice(), actual.dice(), when + "：開門的骰子");
+        eq(expected.wall().start(), actual.wall().start(), when + "：開門處");
+        eq(expected.wall().headTaken(), actual.wall().headTaken(), when + "：牌頭拿了幾張");
+        eq(expected.wall().tailTaken(), actual.wall().tailTaken(), when + "：牌尾拿了幾張");
         for (int seat = 0; seat < 4; seat++) {
             Player a = expected.player(seat);
             Player b = actual.player(seat);
@@ -315,6 +320,9 @@ final class SaveTest {
             for (String bad : List.of("", "version=99\n", "not a save at all",
                     good.replace("version=1", "version=99"),
                     good.replaceAll("round\\.wall=..", "round.wall="),
+                    good.replaceAll("round\\.stacks=..", "round.stacks="),
+                    good.replaceAll("round\\.taken=\\d+", "round.taken=64"),
+                    good.replaceAll("round\\.dice=\\d", "round.dice=7"),
                     good.replace("round.player.0.concealed=", "round.player.0.concealed=1w"),
                     good.replaceAll("round\\.phase=\\w+", "round.phase=NOPE"),
                     good.replaceAll("player\\.0\\.chips=\\d+", "player.0.chips=lots"),
@@ -328,6 +336,22 @@ final class SaveTest {
                     }
                 }, "應該讀不出來：" + bad.length());
             }
+        });
+
+        test("以前的存檔只記剩下的牌：照舊從頭尾接著拿，骰子由畫面另外擲", () -> {
+            Path file = tempFile();
+            GameSession session = newSession(7);
+            Round round = session.newRound(message -> { });
+            round.start();
+            GameSave.save(file, 1, session, round, false, new ThinkTimer());
+            String good = Files.readString(file, StandardCharsets.ISO_8859_1);
+            String old = good.replaceAll("(?m)^round\\.(stacks|dice|taken)=.*\\R", "");
+            check(!old.contains("round.stacks") && !old.contains("round.dice"), "拿掉新的項目");
+            Files.writeString(file, old, StandardCharsets.ISO_8859_1);
+            Round restored = GameSave.load(file).round();
+            check(restored.dice() == null, "沒有骰子");
+            eq(round.wall().order(), restored.wall().order(), "剩下的牌一樣");
+            eq(round.wall().order().get(0), restored.wall().drawFront(), "牌頭照舊是剩下的第一張");
         });
 
         test("牌的記法存了再讀回來都一樣", () -> {

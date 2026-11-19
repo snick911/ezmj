@@ -79,10 +79,11 @@ final class Table {
             }
         }
 
+        // 發牌照真的牌桌：每家每次拿四張，拿四輪
         List<Tile> order = new ArrayList<>();
-        for (int i = 0; i < 16; i++) {
+        for (int turn = 0; turn < 4; turn++) {
             for (int offset = 0; offset < 4; offset++) {
-                order.add(seats.get((dealer + offset) % 4).get(i));
+                order.addAll(seats.get((dealer + offset) % 4).subList(turn * 4, turn * 4 + 4));
             }
         }
         order.addAll(front);

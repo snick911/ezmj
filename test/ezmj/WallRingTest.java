@@ -19,6 +19,7 @@ import ezmj.model.BotLevel;
 import ezmj.model.Dice;
 import ezmj.model.GameConfig;
 import ezmj.model.Tile;
+import ezmj.model.Wall;
 
 /** 開門的骰子與畫面上的牌牆：點數、開門的位置，以及從局面推回牌頭與牌尾各拿了幾張。 */
 final class WallRingTest {
@@ -107,7 +108,7 @@ final class WallRingTest {
             }
             eq(WallRing.TILES - 70, left, "剩下的張數");
         });
-        test("牌牆：實際打牌時，從局面推回的牌頭與牌尾和引擎一樣", () -> {
+        test("牌牆：實際打牌時，畫面從局面推回的牌頭與牌尾和引擎一樣，開門處也一樣", () -> {
             Random random = new Random(21);
             ComputerBot[] bots = new ComputerBot[4];
             for (int seat = 0; seat < 4; seat++) {
@@ -117,13 +118,13 @@ final class WallRingTest {
             for (int r = 0; r < 40; r++) {
                 GameSession session = new GameSession(new GameConfig("測試", 100_000, 100, 20, BotLevel.AMATEUR), random);
                 Round round = session.newRound(message -> { });
-                List<Tile> original = round.wall().order();
+                check(round.dice() != null, "開局就擲好骰子");
                 round.start();
                 if (round.phase() != Round.Phase.FINISHED) {
                     eq(65, WallRing.taken(round).head(), "發完牌，莊家多一張");
                 }
                 while (round.phase() != Round.Phase.FINISHED) {
-                    checkedTail += matches(round, original);
+                    checkedTail += matches(round);
                     if (round.phase() == Round.Phase.TURN) {
                         int seat = round.current();
                         bots[seat].playTurn(round, seat, round.turnOptions(seat));
@@ -146,12 +147,19 @@ final class WallRingTest {
         });
     }
 
-    /** 引擎剩下的牌要剛好是原本的牌牆去掉牌頭 head 張、牌尾 tail 張。回傳這次牌尾有沒有拿過牌。 */
-    private static int matches(Round round, List<Tile> original) {
+    /** 畫面推回的牌頭與牌尾張數、開門處都要和引擎的牌牆一樣。回傳這次牌尾有沒有拿過牌。 */
+    private static int matches(Round round) {
         WallRing.Taken taken = WallRing.taken(round);
-        List<Tile> left = round.wall().order();
-        eq(WallRing.TILES, taken.head() + taken.tail() + left.size(), "張數合得起來");
-        eq(original.subList(taken.head(), WallRing.TILES - taken.tail()), left, "剩下的牌");
+        Wall wall = round.wall();
+        eq(wall.headTaken(), taken.head(), "牌頭拿了幾張");
+        eq(wall.tailTaken(), taken.tail(), "牌尾拿了幾張");
+        WallRing ring = new WallRing(round.dealer(), round.dice());
+        eq(wall.start(), ring.start(), "開門處");
+        int left = 0;
+        for (int stack = 0; stack < WallRing.STACKS; stack++) {
+            left += ring.remaining(stack, taken.head(), taken.tail());
+        }
+        eq(wall.size(), left, "畫面上剩下的張數");
         return taken.tail() > 0 ? 1 : 0;
     }
 }
