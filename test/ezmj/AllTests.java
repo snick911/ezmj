@@ -33,6 +33,7 @@ public final class AllTests {
         ReportTest.run();
         CertificateTest.run();
         BadWordsTest.run();
+        VoiceClipTest.run();
         System.exit(T.report() == 0 ? 0 : 1);
     }
 }

@@ -185,9 +185,11 @@ public final class OnlineClient {
         send(listRoomsMessage());
     }
 
+    /** supports 帶 voice，服務器才把別人的語音轉過來（ezmjService 0.14.0 起）。 */
     public void createRoom(RoomSettings settings) {
         Map<String, Object> message = settings.toMessage();
         message.put("type", "createRoom");
+        message.put("supports", List.of(VoiceClip.FEATURE));
         send(message);
     }
 
@@ -195,9 +197,10 @@ public final class OnlineClient {
      * 帶 supports 說明看得懂專家模式與補位：服務器 0.7.0 起沒帶 expert 的話不讓加入專家模式的房間（expertNotSupported），
      * 0.10.0 起沒帶 substitute 的話不讓中途加入隨時補位的牌局（substituteNotSupported）。
      * 加入牌局中的房間時，服務器先送 substituteWaiting，上場時才送 room，見 Substitution。
+     * voice 和 createRoom 一樣。
      */
     public void joinRoom(String code) {
-        send(Fields.object("type", "joinRoom", "code", code, "supports", List.of("expert", "substitute")));
+        send(Fields.object("type", "joinRoom", "code", code, "supports", List.of("expert", "substitute", VoiceClip.FEATURE)));
     }
 
     public void leave() {
@@ -229,6 +232,11 @@ public final class OnlineClient {
     /** 房間裡的聊天，要先在房間裡。服務器會轉給房間裡每一位連著的真人，也包括自己。 */
     public void chat(String text) {
         send(Fields.object("type", "chat", "text", text));
+    }
+
+    /** 語音訊息，data 是 VoiceClip.encode 壓好的。服務器轉給房間裡其他連著的真人，自己只收到一則沒有聲音的回覆。 */
+    public void voice(byte[] data) {
+        send(VoiceClip.message(data));
     }
 
     public void selfWin(int waitId) {

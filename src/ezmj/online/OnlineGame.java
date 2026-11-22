@@ -324,6 +324,20 @@ public final class OnlineGame implements GameView, RoundView {
                 BadWords.mask(Fields.string(message, "text")));
     }
 
+    /**
+     * 一則語音。seat 已經轉成畫面座位，0 是自己送的。自己送的服務器只回 ms，不回聲音，data 是 null，
+     * 要重播就用自己留著的那份。
+     */
+    public record Voice(int seat, String name, int ms, byte[] data) {
+    }
+
+    /** data 不合格式丟出 IllegalArgumentException，見 VoiceClip.check。 */
+    public Voice parseVoice(Map<String, Object> message) {
+        byte[] data = message.get("data") == null ? null : VoiceClip.fromBase64(Fields.string(message, "data"));
+        int ms = data == null ? Fields.integer(message, "ms") : VoiceClip.millis(data);
+        return new Voice(screen(Fields.integer(message, "seat")), Fields.string(message, "name"), ms, data);
+    }
+
     /** canListen 訊息的編號：只送給打出牌後聽牌的那位，回覆 declareListen 時帶回去。 */
     public static int parseListenOffer(Map<String, Object> message) {
         return Fields.integer(message, "listenId");

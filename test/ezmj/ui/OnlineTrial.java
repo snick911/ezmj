@@ -73,7 +73,7 @@ public final class OnlineTrial {
     private OnlineTrial() {
     }
 
-    /** 第三個參數可以只跑一項：local、reconnect、gameover 或 substitute；沒給就全部跑。 */
+    /** 第三個參數可以只跑一項：local、reconnect、gameover、substitute 或 voice；沒給就全部跑。 */
     public static void main(String[] args) throws Exception {
         if (args.length > 0 && args[0].equals("--client")) {
             new Client(args).run();
@@ -106,6 +106,9 @@ public final class OnlineTrial {
             }
             if (only == null || only.equals("substitute")) {
                 failures += substitute(out.resolve("substitute"), port);
+            }
+            if (only == null || only.equals("voice")) {
+                failures += voice(out.resolve("voice"), port);
             }
         } finally {
             server.destroy();
@@ -175,6 +178,17 @@ public final class OnlineTrial {
         return expect("甲", host, 0) + expect("乙", guest, 0);
     }
 
+    /**
+     * 語音（ezmjService 0.14.0 起）：房主按住「按住說話」1.5 秒再放開，錄音來源換成固定的 440 Hz（ToneMicrophone），
+     * 不會錄到旁邊的聲音。房主的聊天區要有自己那一行，來賓的要有房主那一行，點得到重播。來賓聽到就離開，房主跟著離開。
+     */
+    private static int voice(Path dir, int port) throws Exception {
+        Files.createDirectories(dir);
+        Process host = client(dir, "甲", "host", port, "--talk", "--leaveWhen", "guest-done");
+        Process guest = client(dir, "乙", "guest", port, "--hearVoice", "--hostName", "甲");
+        return expect("甲", host, 0) + expect("乙", guest, 0);
+    }
+
     private static int expect(String name, Process process, int code) throws InterruptedException {
         if (!process.waitFor(420, TimeUnit.SECONDS)) {
             process.destroyForcibly();
@@ -190,7 +204,7 @@ public final class OnlineTrial {
         Files.createDirectories(home.resolve(".ezmj"));
         Path settings = home.resolve(".ezmj").resolve("settings.properties");
         if (!Files.exists(settings)) {
-            Files.writeString(settings, "sound=false\nvoice=false\nmusic=OFF\nmusicVolume=0\n");
+            Files.writeString(settings, "sound=false\nvoice=false\nmusic=OFF\nmusicVolume=0\nplayerVoiceVolume=0\n");
         }
         // 一定要換掉服務器，試打不能碰到線上的 Render；假裝斷線的來賓會再換成自己的 Proxy
         List<String> command = new ArrayList<>(List.of(java(), "-Dfile.encoding=UTF-8", "-Duser.home=" + home,
@@ -252,6 +266,10 @@ public final class OnlineTrial {
         private boolean sawSubstituteWaiting;
         private boolean sawSubstituted;
         private int decisionsAtSubstituted;
+        private long talkPressedAt;
+        private boolean talkReleased;
+        private boolean sawOwnVoice;
+        private boolean sawVoice;
 
         Client(String[] args) throws IOException {
             role = args[1];
@@ -269,6 +287,9 @@ public final class OnlineTrial {
         void run() throws Exception {
             if (options.containsKey("--proxy")) {
                 proxy = new Proxy(port);
+            }
+            if (options.containsKey("--talk")) {
+                VoiceTalk.microphones = ToneMicrophone::new;
             }
             ErrorReporter.install();
             SwingUtilities.invokeAndWait(() -> {
@@ -329,6 +350,12 @@ public final class OnlineTrial {
             }
             if ((options.containsKey("--substituteFromLobby") || options.containsKey("--substitute")) && !sawSubstituted) {
                 fail("應該要看到補位的公告");
+            }
+            if (options.containsKey("--talk") && !sawOwnVoice) {
+                fail("說完話聊天區應該要有自己的那一則語音");
+            }
+            if (options.containsKey("--hearVoice") && !sawVoice) {
+                fail("應該要收到房主的語音");
             }
             log("通過，結果視窗 " + results + " 次，自己決定 " + decisions + " 次，本機紀錄檔 " + found);
             System.exit(0);
@@ -733,6 +760,16 @@ public final class OnlineTrial {
             if (options.containsKey("--substitute") || options.containsKey("--substituteFromLobby")) {
                 checkSubstituted(table);
             }
+            if (options.containsKey("--talk")) {
+                talk(table);
+            }
+            if (options.containsKey("--hearVoice") && !leaving && heardVoice(table)) {
+                leaving = true;
+                write(dir.resolve("guest-done"), name);
+                log("聽到語音了，離開");
+                clickText(table, "離開牌局");
+                return;
+            }
             if (options.containsKey("--leaveAfterSubstituted") && sawSubstituted && !leaving
                     && decisions - decisionsAtSubstituted >= Integer.parseInt(options.get("--leaveAfterSubstituted"))) {
                 leaving = true;
@@ -867,6 +904,58 @@ public final class OnlineTrial {
                 shot("chat");
                 log("聊天區：" + text.strip());
             }
+        }
+
+        /**
+         * 按住說話：按鈕出現（房間有別的真人、服務器會轉語音）就按下去，1.5 秒後在按鈕上放開，和玩家用滑鼠一樣是按鈕的 model。
+         * 之後自己的聊天區要多一行語音。
+         */
+        private void talk(TablePanel table) {
+            JButton button = (JButton) field(table, "talkButton");
+            if (!button.isShowing()) {
+                return;
+            }
+            if (talkPressedAt == 0) {
+                talkPressedAt = System.currentTimeMillis();
+                button.getModel().setArmed(true);
+                button.getModel().setPressed(true);
+                log("按住說話");
+            } else if (!talkReleased && System.currentTimeMillis() - talkPressedAt >= 1_500) {
+                talkReleased = true;
+                shot("talking");
+                log("放開：" + button.getText());
+                if (!button.getText().startsWith("錄音中")) {
+                    fail("錄音中按鈕應該寫錄了幾秒：" + button.getText());
+                }
+                button.getModel().setPressed(false);
+                button.getModel().setArmed(false);
+            }
+            String text = ((JTextArea) field(table, "chatArea")).getText();
+            if (talkReleased && !sawOwnVoice && text.contains("我：〔語音 ")) {
+                sawOwnVoice = true;
+                shot("talked");
+                log("聊天區：" + text.strip());
+            }
+        }
+
+        /** 來賓：聊天區有房主的語音，那一行點得到（有重播），沒有被靜音。 */
+        private boolean heardVoice(TablePanel table) {
+            String text = ((JTextArea) field(table, "chatArea")).getText();
+            if (sawVoice || !text.contains("甲：〔語音 ")) {
+                return false;
+            }
+            Map<?, ?> lines = (Map<?, ?>) field(table, "voiceLines");
+            if (lines.size() != 1) {
+                fail("應該剛好有一行語音：" + lines);
+            }
+            Object line = lines.values().iterator().next();
+            if (field(line, "replay") == null) {
+                fail("別人的語音應該可以重播");
+            }
+            sawVoice = true;
+            shot("heard");
+            log("聊天區：" + text.strip());
+            return true;
         }
 
         private void checkDisconnectMark(TablePanel table) {
@@ -1028,6 +1117,36 @@ public final class OnlineTrial {
     // ---------------------------------------------------------------- 假裝網路斷線
 
     /** 客戶端到服務器中間的一段，可以切斷，切斷的這段時間連不上。 */
+    /** 試打用的麥克風：16 kHz 的 440 Hz，照真的時間一段一段給，不會錄到電腦旁邊的聲音。 */
+    private static final class ToneMicrophone implements VoiceTalk.Microphone {
+        private static final int RATE = 16_000;
+        private long position;
+
+        @Override
+        public int open() {
+            return RATE;
+        }
+
+        @Override
+        public int read(byte[] buffer) {
+            try {
+                Thread.sleep(buffer.length / 2 * 1000L / RATE);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            for (int i = 0; i + 1 < buffer.length; i += 2) {
+                short value = (short) (8_000 * Math.sin(2 * Math.PI * 440 * position++ / RATE));
+                buffer[i] = (byte) value;
+                buffer[i + 1] = (byte) (value >> 8);
+            }
+            return buffer.length;
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
     private static final class Proxy {
         private final int target;
         private final ServerSocket listener = new ServerSocket(0);

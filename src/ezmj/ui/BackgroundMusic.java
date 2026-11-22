@@ -36,6 +36,10 @@ public final class BackgroundMusic {
     private static Clip clip;
     private static MusicTrack current = MusicTrack.OFF;
     private static int volume = 100;
+    /** 正在播玩家的語音，音樂壓低，見 VoicePlayer。 */
+    private static boolean ducked;
+    /** 壓低時的音量百分比倍數。音量換算是平方，0.55 約是原本的 0.3 倍，和網頁版一樣。 */
+    private static final double DUCK = .55;
 
     private BackgroundMusic() {
     }
@@ -48,10 +52,26 @@ public final class BackgroundMusic {
     public static void setVolume(int percent) {
         PLAYER.execute(() -> {
             volume = percent;
-            if (clip != null) {
-                SoundEffects.applyVolume(clip, percent);
-            }
+            applyVolume();
         });
+    }
+
+    /** 播玩家的語音時把音樂壓低，播完再回來。 */
+    static void duck(boolean on) {
+        PLAYER.execute(() -> {
+            ducked = on;
+            applyVolume();
+        });
+    }
+
+    private static void applyVolume() {
+        if (clip != null) {
+            SoundEffects.applyVolume(clip, effectiveVolume());
+        }
+    }
+
+    private static int effectiveVolume() {
+        return ducked ? (int) Math.round(volume * DUCK) : volume;
     }
 
     private static void switchTo(MusicTrack track, Path recordingDir) {
@@ -73,7 +93,7 @@ public final class BackgroundMusic {
                     : render(track);
             Clip next = AudioSystem.getClip();
             next.open(format, samples, 0, samples.length);
-            SoundEffects.applyVolume(next, volume);
+            SoundEffects.applyVolume(next, effectiveVolume());
             next.loop(Clip.LOOP_CONTINUOUSLY);
             clip = next;
         } catch (IOException | UnsupportedAudioFileException | LineUnavailableException

@@ -76,6 +76,7 @@ import ezmj.model.Tile;
 import ezmj.model.VoiceStyle;
 import ezmj.online.OnlineProfile;
 import ezmj.online.RoomSettings;
+import ezmj.online.VoiceClip;
 
 /** 主視窗：以 CardLayout 切換開始畫面、練習牌局、修業模式、連線對戰與牌桌。 */
 public final class MainFrame extends JFrame {
@@ -372,6 +373,10 @@ public final class MainFrame extends JFrame {
         preferences.add(voiceItem);
         preferences.add(buildPlayerVoiceMenu());
         preferences.add(buildVoiceStyleMenu());
+        JCheckBoxMenuItem playerVoice = checkItem(VoiceClip.SETTING_LABEL, settings.playerVoiceEnabled(),
+                this::changePlayerVoiceEnabled);
+        playerVoice.setToolTipText(VoiceClip.SETTING_NOTE);
+        preferences.add(playerVoice);
         preferences.add(checkItem("動畫", settings.animationEnabled(), this::changeAnimation));
 
         // 進入修業檔案時看那個檔案的紀錄，其他時候看練習牌局的
@@ -439,6 +444,15 @@ public final class MainFrame extends JFrame {
         saveSettings();
         if (enabled) {
             SoundEffects.preload();
+        }
+    }
+
+    /** 連線牌局裡別人傳來的語音。關掉時正在播的也停掉。 */
+    private void changePlayerVoiceEnabled(boolean enabled) {
+        settings.setPlayerVoiceEnabled(enabled);
+        saveSettings();
+        if (!enabled) {
+            VoicePlayer.stopAll();
         }
     }
 
@@ -615,7 +629,9 @@ public final class MainFrame extends JFrame {
                 VoiceLines.play(VoiceLines.Line.PONG, settings.playerGender());
             }
         });
-        Object[] message = {"背景音樂", music, "音效", sound, "語音", voice};
+        JSlider playerVoice = volumeSlider(settings.playerVoiceVolume());
+        playerVoice.addChangeListener(e -> settings.setPlayerVoiceVolume(playerVoice.getValue()));
+        Object[] message = {"背景音樂", music, "音效", sound, "語音", voice, VoiceClip.SETTING_LABEL, playerVoice};
         JOptionPane.showMessageDialog(this, message, "音量", JOptionPane.PLAIN_MESSAGE);
         saveSettings();
     }

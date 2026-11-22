@@ -23,6 +23,7 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -53,6 +54,7 @@ import ezmj.online.RoomListing;
 import ezmj.online.RoomSettings;
 import ezmj.online.ServerAddress;
 import ezmj.online.Substitution;
+import ezmj.online.VoiceClip;
 
 /** 連線層：走真的 TCP 與 WebSocket，對面是測試自己開的假服務器；局面的轉換直接餵服務器格式的訊息。 */
 final class OnlineTest {
@@ -247,6 +249,8 @@ final class OnlineTest {
                 eq("", create.get("name"), "沒填名稱也送，由服務器取");
                 eq(false, create.get("private"), "預設公開");
                 eq(false, create.get("expert"), "預設不是專家模式");
+                // 服務器 0.14.0 起只把別人的語音轉給有帶 voice 的客戶端
+                eq(List.of("voice"), create.get("supports"), "聽得懂語音");
                 probe.client.createRoom(new RoomSettings(500, 10, 2,
                         List.of(BotLevel.PRO, BotLevel.BEGINNER, BotLevel.AMATEUR), 15, GameSpeed.FAST, "週五牌搭子", true,
                         true));
@@ -263,7 +267,12 @@ final class OnlineTest {
                 Map<String, Object> join = connection.next("joinRoom");
                 eq("ABC234", join.get("code"), "房號");
                 // 服務器 0.7.0 起沒帶 expert 就不讓加入專家模式的房間，0.10.0 起沒帶 substitute 就不讓中途補位
-                eq(List.of("expert", "substitute"), join.get("supports"), "看得懂專家模式與補位");
+                eq(List.of("expert", "substitute", "voice"), join.get("supports"), "看得懂專家模式、補位與語音");
+                byte[] clip = VoiceClip.encode(new float[VoiceClip.RATE], VoiceClip.RATE);
+                probe.client.voice(clip);
+                Map<String, Object> voice = connection.next("voice");
+                eq(List.of("type", "data"), List.copyOf(voice.keySet()), "只送聲音");
+                check(Arrays.equals(clip, VoiceClip.fromBase64((String) voice.get("data"))), "聲音原封不動");
             }
         });
         test(name + "只看大廳：不登入，第一則就是 listRooms，之後再要一次", () -> {

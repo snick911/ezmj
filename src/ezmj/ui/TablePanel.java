@@ -18,8 +18,11 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.Path2D;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 
@@ -29,7 +32,9 @@ import javax.swing.BoxLayout;
 import javax.swing.Icon;
 import javax.swing.JButton;
 import javax.swing.JLabel;
+import javax.swing.JMenuItem;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
@@ -37,6 +42,7 @@ import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import javax.swing.text.AbstractDocument;
+import javax.swing.text.BadLocationException;
 
 import ezmj.engine.GameView;
 import ezmj.engine.RoundEvent;
@@ -45,6 +51,7 @@ import ezmj.model.BadWords;
 import ezmj.model.Dice;
 import ezmj.model.Player;
 import ezmj.model.Tile;
+import ezmj.online.VoiceClip;
 
 /** 牌桌主畫面：中間是牌桌，下方是動作列，右側是計分板與紀錄。 */
 public final class TablePanel extends JPanel {
@@ -140,6 +147,21 @@ public final class TablePanel extends JPanel {
     private long rollBegin;
     /** 聊天送出的地方；沒有聊天時是 null。 */
     private Consumer<String> chatSender;
+    /**
+     * 按住說話，在聊天下面。房間裡沒有別的真人或服務器不會轉語音時藏起來，見 setTalk。
+     * 按下與放開看按鈕的 model：滑鼠移出去再放開時 armed 已經是 false，空白鍵按住也一樣。
+     */
+    private final JButton talkButton = Theme.button(VoiceClip.TALK_LABEL, Theme.BUTTON);
+    private VoiceTalk talk;
+    private boolean talkPressed;
+    /** 聊天區裡語音的那幾行，鍵是第幾行（從 0 算，換行不算）。點那一行可以重播或靜音。 */
+    private final Map<Integer, VoiceLine> voiceLines = new HashMap<>();
+    /** 靜音的人（畫面座位加名字），他們的語音不自動播。 */
+    private final Set<String> muted = new HashSet<>();
+
+    /** 聊天區裡的一則語音。replay 是 null 時沒有聲音可以重播。 */
+    private record VoiceLine(String muteKey, String name, boolean mine, Runnable replay) {
+    }
 
     /** onToggleAutoPlay 是 null 時沒有電腦代打的按鈕，多人遊戲不能用。 */
     TablePanel(Consumer<Tile> onDiscard, Runnable onLeave, Runnable onToggleAutoPlay, Runnable onShowHistory) {
@@ -448,8 +470,131 @@ public final class TablePanel extends JPanel {
         input.add(chatField, BorderLayout.CENTER);
         input.add(send, BorderLayout.EAST);
         chatBox.add(input);
+        chatBox.add(Box.createVerticalStrut(6));
+        talkButton.setFont(Theme.font(Font.BOLD, 13f));
+        talkButton.setBorder(BorderFactory.createEmptyBorder(6, 10, 6, 10));
+        talkButton.getModel().addChangeListener(e -> talkModelChanged());
+        talkButton.setVisible(false);
+        // 和輸入列一樣只取自己的高度，多的空間留給聊天；按鈕藏起來時這一列的高度是 0
+        JPanel talkRow = new JPanel(new BorderLayout()) {
+            @Override
+            public Dimension getMaximumSize() {
+                return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+            }
+        };
+        talkRow.setOpaque(false);
+        talkRow.setAlignmentX(LEFT_ALIGNMENT);
+        talkRow.add(talkButton, BorderLayout.CENTER);
+        chatBox.add(talkRow);
+        chatArea.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                showVoiceMenu(e);
+            }
+        });
         chatBox.setVisible(false);
         return chatBox;
+    }
+
+    private void talkModelChanged() {
+        boolean pressed = talkButton.getModel().isPressed();
+        if (pressed == talkPressed || talk == null) {
+            return;
+        }
+        talkPressed = pressed;
+        if (pressed) {
+            talk.press();
+        } else {
+            talk.release(talkButton.getModel().isArmed());
+        }
+    }
+
+    /**
+     * 房間裡有別的真人、服務器也會轉語音時才有說話的按鈕，傳 null 就藏起來，還在錄的也丟掉。
+     * 跟電腦打的一人房間沒有人聽，所以沒有。
+     */
+    void setTalk(VoiceTalk voiceTalk) {
+        if (talk == voiceTalk) {
+            return;
+        }
+        if (talk != null) {
+            talk.stop();
+            talkState(VoiceClip.TALK_LABEL, false);
+        }
+        talk = voiceTalk;
+        talkPressed = false;
+        if (talk != null) {
+            talk.attach(new VoiceTalk.View() {
+                @Override
+                public void talkState(String label, boolean recording) {
+                    TablePanel.this.talkState(label, recording);
+                }
+
+                @Override
+                public void talkNotice(String text) {
+                    showChatNotice(text);
+                }
+            });
+        }
+        talkButton.setVisible(talk != null);
+        sidebar.revalidate();
+    }
+
+    /** 錄音中按鈕變紅，寫錄了幾秒。 */
+    private void talkState(String label, boolean recording) {
+        talkButton.setText(recording ? label : VoiceClip.TALK_LABEL);
+        talkButton.setBackground(recording ? Theme.RED : Theme.BUTTON);
+    }
+
+    /**
+     * 聊天區一行「名字：〔語音 3.2 秒〕」，點那一行跳出重播，別人的再加靜音，和網頁版那一行後面的按鈕一樣。
+     * replay 是 null 時沒有重播，例如自己送的、服務器回覆時已經找不到那一份。muteKey 認得是哪一位，見 isMuted。
+     */
+    void appendVoice(String name, int ms, boolean mine, String muteKey, Runnable replay) {
+        int line = chatArea.getLineCount() - 1;
+        voiceLines.put(line, new VoiceLine(muteKey, name, mine, replay));
+        appendChat(name, VoiceClip.label(ms), mine);
+        chatArea.setToolTipText(VOICE_TIP);
+    }
+
+    static final String VOICE_TIP = "點語音那一行可以重播，別人的也可以靜音";
+
+    /** 這一位被靜音了：他的語音不自動播。 */
+    boolean isMuted(String muteKey) {
+        return muted.contains(muteKey);
+    }
+
+    private void showVoiceMenu(MouseEvent e) {
+        int offset = chatArea.viewToModel2D(e.getPoint());
+        VoiceLine voice;
+        try {
+            voice = voiceLines.get(chatArea.getLineOfOffset(offset));
+        } catch (BadLocationException bad) {
+            return;
+        }
+        if (voice == null || (voice.replay() == null && voice.mine())) {
+            return;
+        }
+        JPopupMenu menu = new JPopupMenu();
+        if (voice.replay() != null) {
+            JMenuItem replay = new JMenuItem(VoiceClip.REPLAY_LABEL);
+            replay.setFont(Theme.font(Font.PLAIN, 14f));
+            replay.addActionListener(event -> voice.replay().run());
+            menu.add(replay);
+        }
+        if (!voice.mine()) {
+            String key = voice.muteKey();
+            JMenuItem mute = new JMenuItem((isMuted(key) ? VoiceClip.UNMUTE_LABEL : VoiceClip.MUTE_LABEL) + " " + voice.name());
+            mute.setFont(Theme.font(Font.PLAIN, 14f));
+            mute.addActionListener(event -> {
+                if (!muted.remove(key)) {
+                    muted.add(key);
+                    VoicePlayer.stopAll();
+                }
+            });
+            menu.add(mute);
+        }
+        menu.show(chatArea, e.getX(), e.getY());
     }
 
     private static void styleTextArea(JTextArea area) {

@@ -35,6 +35,9 @@ public final class AppSettings {
     private static final String KEY_PLAYER_GENDER = "playerGender";
     private static final String KEY_VOICE_STYLE = "voiceStyle";
     private static final String KEY_SPEED = "gameSpeed";
+    private static final String KEY_PLAYER_VOICE = "playerVoice";
+    private static final String KEY_PLAYER_VOICE_VOLUME = "playerVoiceVolume";
+    public static final int DEFAULT_PLAYER_VOICE_VOLUME = 100;
 
     private int fontPercent = DEFAULT_FONT_PERCENT;
     private int tilePercent = DEFAULT_TILE_PERCENT;
@@ -50,6 +53,8 @@ public final class AppSettings {
     private Gender playerGender = Gender.FEMALE;
     private VoiceStyle voiceStyle = VoiceStyle.DEFAULT;
     private GameSpeed gameSpeed = GameSpeed.NORMAL;
+    private boolean playerVoiceEnabled = true;
+    private int playerVoiceVolume = DEFAULT_PLAYER_VOICE_VOLUME;
 
     public static AppSettings load(Path file) {
         AppSettings settings = new AppSettings();
@@ -73,6 +78,8 @@ public final class AppSettings {
         settings.setPlayerGender(Gender.fromKey(values.getProperty(KEY_PLAYER_GENDER, "").trim()));
         settings.setVoiceStyle(VoiceStyle.fromKey(values.getProperty(KEY_VOICE_STYLE, "").trim()));
         settings.setGameSpeed(GameSpeed.fromKey(values.getProperty(KEY_SPEED, "").trim()));
+        settings.setPlayerVoiceEnabled(!"false".equals(values.getProperty(KEY_PLAYER_VOICE, "").trim()));
+        settings.setPlayerVoiceVolume(intValue(values, KEY_PLAYER_VOICE_VOLUME, DEFAULT_PLAYER_VOICE_VOLUME));
         return settings;
     }
 
@@ -100,6 +107,8 @@ public final class AppSettings {
         values.setProperty(KEY_PLAYER_GENDER, playerGender.name());
         values.setProperty(KEY_VOICE_STYLE, voiceStyle.name());
         values.setProperty(KEY_SPEED, gameSpeed.name());
+        values.setProperty(KEY_PLAYER_VOICE, String.valueOf(playerVoiceEnabled));
+        values.setProperty(KEY_PLAYER_VOICE_VOLUME, String.valueOf(playerVoiceVolume));
         PropertyFiles.store(values, file);
     }
 
@@ -220,5 +229,23 @@ public final class AppSettings {
 
     public void setVoiceStyle(VoiceStyle style) {
         voiceStyle = style;
+    }
+
+    /** 連線牌局裡同桌真人按住說話傳來的語音要不要自動播，和喊牌的語音分開。關掉的話聊天區照樣可以重播。 */
+    public boolean playerVoiceEnabled() {
+        return playerVoiceEnabled;
+    }
+
+    public void setPlayerVoiceEnabled(boolean enabled) {
+        playerVoiceEnabled = enabled;
+    }
+
+    /** 音量 0 到 100。 */
+    public int playerVoiceVolume() {
+        return playerVoiceVolume;
+    }
+
+    public void setPlayerVoiceVolume(int percent) {
+        playerVoiceVolume = Math.max(0, Math.min(100, percent));
     }
 }

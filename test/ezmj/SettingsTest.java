@@ -70,6 +70,8 @@ final class SettingsTest {
         eq(Gender.FEMALE, settings.playerGender(), "我的語音");
         eq(VoiceStyle.HYPE, settings.voiceStyle(), "語音風格");
         eq(GameSpeed.NORMAL, settings.gameSpeed(), "遊戲速度");
+        check(settings.playerVoiceEnabled(), "玩家語音預設開啟");
+        eq(100, settings.playerVoiceVolume(), "玩家語音音量");
     }
 
     static void run() {
@@ -112,6 +114,8 @@ final class SettingsTest {
                     settings.setVoiceEnabled(false);
                     settings.setVoiceVolume(40);
                     settings.setPlayerGender(Gender.MALE);
+                    settings.setPlayerVoiceEnabled(false);
+                    settings.setPlayerVoiceVolume(60);
                     settings.save(file);
 
                     AppSettings loaded = AppSettings.load(file);
@@ -127,6 +131,8 @@ final class SettingsTest {
                     check(!loaded.voiceEnabled(), "語音");
                     eq(40, loaded.voiceVolume(), "語音音量");
                     eq(Gender.MALE, loaded.playerGender(), "我的語音");
+                    check(!loaded.playerVoiceEnabled(), "玩家語音");
+                    eq(60, loaded.playerVoiceVolume(), "玩家語音音量");
                 }
             } finally {
                 Files.deleteIfExists(file);
