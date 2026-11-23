@@ -47,6 +47,7 @@ import ezmj.model.GameSpeed;
 import ezmj.online.RoomListing;
 import ezmj.online.ServerAddress;
 import ezmj.online.Substitution;
+import ezmj.online.VoiceClip;
 
 /**
  * 實機試打：真的開一台服務器，開真的 Swing 視窗，用按按鈕和點牌的方式打連線牌局，再驗證斷線重連。
@@ -907,12 +908,14 @@ public final class OnlineTrial {
         }
 
         /**
-         * 按住說話：按鈕出現（房間有別的真人、服務器會轉語音）就按下去，1.5 秒後在按鈕上放開，和玩家用滑鼠一樣是按鈕的 model。
-         * 之後自己的聊天區要多一行語音。
+         * 按住說話：牌桌左下角的按鈕亮起來（房間有別的真人連著線、服務器會轉語音）就按下去，1.5 秒後在按鈕上放開，
+         * 和玩家用滑鼠一樣是按鈕的 model。錄音中按鈕旁邊寫錄了幾秒；之後自己的聊天區多一行語音，
+         * 按鈕往外擴散波紋，旁邊寫「已廣播給牌友」。
          */
         private void talk(TablePanel table) {
-            JButton button = (JButton) field(table, "talkButton");
-            if (!button.isShowing()) {
+            TalkButton button = (TalkButton) field(table, "talkButton");
+            JLabel label = (JLabel) field(table, "talkLabel");
+            if (!button.isShowing() || button.isLonely()) {
                 return;
             }
             if (talkPressedAt == 0) {
@@ -923,9 +926,9 @@ public final class OnlineTrial {
             } else if (!talkReleased && System.currentTimeMillis() - talkPressedAt >= 1_500) {
                 talkReleased = true;
                 shot("talking");
-                log("放開：" + button.getText());
-                if (!button.getText().startsWith("錄音中")) {
-                    fail("錄音中按鈕應該寫錄了幾秒：" + button.getText());
+                log("放開：" + label.getText());
+                if (!button.isRecording() || !label.isShowing() || !label.getText().startsWith("錄音中")) {
+                    fail("錄音中按鈕應該變紅、旁邊寫錄了幾秒：" + label.getText());
                 }
                 button.getModel().setPressed(false);
                 button.getModel().setArmed(false);
@@ -934,7 +937,10 @@ public final class OnlineTrial {
             if (talkReleased && !sawOwnVoice && text.contains("我：〔語音 ")) {
                 sawOwnVoice = true;
                 shot("talked");
-                log("聊天區：" + text.strip());
+                log("聊天區：" + text.strip() + "／按鈕旁邊：" + label.getText());
+                if (!button.isBroadcasting() || !label.getText().equals(VoiceClip.BROADCAST_TEXT)) {
+                    fail("廣播出去時按鈕要擴散波紋、旁邊寫已經廣播：" + label.getText());
+                }
             }
         }
 

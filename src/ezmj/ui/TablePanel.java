@@ -68,6 +68,9 @@ public final class TablePanel extends JPanel {
     private static final int HINT_ROW = 24;
     /** 有火焰的按鈕兩側留給火焰的寬度。 */
     private static final int FLAME_SIDE = 18;
+    /** 說話的按鈕右邊那行字，廣播出去或送不出去時停多久。 */
+    private static final int TALK_LABEL_MS = 3_000;
+    private static final Color TALK_RECORDING = new Color(0xFF, 0x9C, 0x92);
 
     /** 動作列上的一個按鈕。translucent 的按鈕半透明，表示可以用但不一定要按。 */
     record ActionItem(String label, Color color, Runnable run, boolean translucent, boolean flame) {
@@ -148,10 +151,17 @@ public final class TablePanel extends JPanel {
     /** 聊天送出的地方；沒有聊天時是 null。 */
     private Consumer<String> chatSender;
     /**
-     * 按住說話，在聊天下面。房間裡沒有別的真人或服務器不會轉語音時藏起來，見 setTalk。
-     * 按下與放開看按鈕的 model：滑鼠移出去再放開時 armed 已經是 false，空白鍵按住也一樣。
+     * 按住說話：牌桌左下角、動作列左邊一顆圓的按鈕，麥克風兩邊有廣播的波紋，見 TalkButton。不是連線牌局或服務器
+     * 不會轉語音時藏起來；桌上沒有別的真人時變淡，按下去只說明沒有人聽，見 setTalk。
+     * 按下與放開看按鈕的 model：滑鼠移出圓再放開時 armed 已經是 false，空白鍵按住也一樣。
      */
-    private final JButton talkButton = Theme.button(VoiceClip.TALK_LABEL, Theme.BUTTON);
+    private final TalkButton talkButton = new TalkButton();
+    /** 按鈕右邊一行字：錄音中寫錄了幾秒、放開就廣播，廣播出去或送不出去時停一下再收起來。 */
+    private final JLabel talkLabel = new JLabel(" ");
+    private final Timer talkLabelHide = new Timer(TALK_LABEL_MS, e -> {
+        talkLabel.setVisible(false);
+        actionBar.doLayout();
+    });
     private VoiceTalk talk;
     private boolean talkPressed;
     /** 聊天區裡語音的那幾行，鍵是第幾行（從 0 算，換行不算）。點那一行可以重播或靜音。 */
@@ -256,12 +266,20 @@ public final class TablePanel extends JPanel {
         actionButtons.setOpaque(false);
         bar.add(hint);
         bar.add(actionButtons);
+        talkButton.getModel().addChangeListener(e -> talkModelChanged());
+        talkButton.setVisible(false);
+        talkLabel.setFont(Theme.font(Font.BOLD, 14f));
+        talkLabel.setVisible(false);
+        talkLabelHide.setRepeats(false);
+        bar.add(talkButton);
+        bar.add(talkLabel);
         return bar;
     }
 
     /**
      * 動作列的排法。按鈕一排一律置中，放在提示那一行下面。平常提示在上面那一行置中；
      * 有火焰的按鈕時上面那一行讓給火焰，提示放在按鈕左邊、靠右對齊，太長就折成兩行。
+     * 連線牌局左邊有說話的按鈕，上下置中，兩邊各讓出它的寬度，按鈕與提示照樣置中；按鈕右邊是錄音中的那行字。
      */
     private final class ActionBarLayout implements LayoutManager {
         @Override
@@ -287,23 +305,43 @@ public final class TablePanel extends JPanel {
             Insets in = bar.getInsets();
             int width = Math.max(0, bar.getWidth() - in.left - in.right);
             int row = Theme.scaled(HINT_ROW);
+            // 波紋畫在圓外面，按鈕比圓大；圓的左邊對齊動作列的內緣
+            int side = 0;
+            int talkRight = in.left;
+            if (talkButton.isVisible()) {
+                int size = TalkButton.buttonSize();
+                int circle = (int) Math.round(size / TalkButton.RING_ROOM);
+                int x = in.left + Theme.scaled(4) - (size - circle) / 2;
+                talkButton.setBounds(x, (bar.getHeight() - size) / 2, size, size);
+                talkRight = x + (size + circle) / 2;
+                side = talkRight - in.left + Theme.scaled(12);
+            }
             Dimension buttons = actionButtons.getPreferredSize();
-            int buttonsW = Math.min(width, buttons.width);
+            int buttonsW = Math.min(Math.max(0, width - 2 * side), buttons.width);
             int buttonsX = in.left + (width - buttonsW) / 2;
             int buttonsY = in.top + row + Theme.scaled(4);
             actionButtons.setBounds(buttonsX, buttonsY, buttonsW, buttons.height);
+            int labelRight = talkRight;
+            if (talkLabel.isVisible()) {
+                Dimension label = talkLabel.getPreferredSize();
+                int labelX = talkRight + Theme.scaled(10);
+                int labelW = Math.max(0, Math.min(label.width, buttonsX - Theme.scaled(12) - labelX));
+                talkLabel.setBounds(labelX, (bar.getHeight() - label.height) / 2, labelW, label.height);
+                labelRight = labelX + labelW;
+            }
             if (!flaming) {
                 hint.setHorizontalAlignment(SwingConstants.CENTER);
                 showHint(safeLabel(hintText));
-                hint.setBounds(in.left, in.top, width, row);
+                hint.setBounds(in.left + side, in.top, Math.max(0, width - 2 * side), row);
                 return;
             }
-            int room = Math.max(0, buttonsX - in.left - Theme.scaled(12));
+            int left = talkLabel.isVisible() ? labelRight + Theme.scaled(12) : in.left + side;
+            int room = Math.max(0, buttonsX - left - Theme.scaled(12));
             hint.setHorizontalAlignment(SwingConstants.RIGHT);
             boolean fits = hint.getFontMetrics(hint.getFont()).stringWidth(hintText) <= room;
             showHint(fits ? safeLabel(hintText) : rightWrapped(hintText, room));
             int height = hint.getPreferredSize().height;
-            hint.setBounds(in.left, buttonsY + (buttons.height - height) / 2, room, height);
+            hint.setBounds(left, buttonsY + (buttons.height - height) / 2, room, height);
         }
     }
 
@@ -470,22 +508,6 @@ public final class TablePanel extends JPanel {
         input.add(chatField, BorderLayout.CENTER);
         input.add(send, BorderLayout.EAST);
         chatBox.add(input);
-        chatBox.add(Box.createVerticalStrut(6));
-        talkButton.setFont(Theme.font(Font.BOLD, 13f));
-        talkButton.setBorder(BorderFactory.createEmptyBorder(6, 10, 6, 10));
-        talkButton.getModel().addChangeListener(e -> talkModelChanged());
-        talkButton.setVisible(false);
-        // 和輸入列一樣只取自己的高度，多的空間留給聊天；按鈕藏起來時這一列的高度是 0
-        JPanel talkRow = new JPanel(new BorderLayout()) {
-            @Override
-            public Dimension getMaximumSize() {
-                return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
-            }
-        };
-        talkRow.setOpaque(false);
-        talkRow.setAlignmentX(LEFT_ALIGNMENT);
-        talkRow.add(talkButton, BorderLayout.CENTER);
-        chatBox.add(talkRow);
         chatArea.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
@@ -510,40 +532,70 @@ public final class TablePanel extends JPanel {
     }
 
     /**
-     * 房間裡有別的真人、服務器也會轉語音時才有說話的按鈕，傳 null 就藏起來，還在錄的也丟掉。
-     * 跟電腦打的一人房間沒有人聽，所以沒有。
+     * 服務器會轉語音時才有說話的按鈕，傳 null 就藏起來，還在錄的也丟掉。anyoneToHear 是房間裡有別的真人連著線，
+     * 沒有的話按鈕變淡，按下去只說明沒有人聽；有人補位上場、斷線或離開時會再呼叫一次。
      */
-    void setTalk(VoiceTalk voiceTalk) {
-        if (talk == voiceTalk) {
-            return;
-        }
-        if (talk != null) {
-            talk.stop();
-            talkState(VoiceClip.TALK_LABEL, false);
-        }
-        talk = voiceTalk;
-        talkPressed = false;
-        if (talk != null) {
-            talk.attach(new VoiceTalk.View() {
-                @Override
-                public void talkState(String label, boolean recording) {
-                    TablePanel.this.talkState(label, recording);
-                }
+    void setTalk(VoiceTalk voiceTalk, boolean anyoneToHear) {
+        if (talk != voiceTalk) {
+            if (talk != null) {
+                talk.stop();
+                talkState(VoiceClip.TALK_LABEL, false);
+            }
+            talk = voiceTalk;
+            talkPressed = false;
+            if (talk != null) {
+                talk.attach(new VoiceTalk.View() {
+                    @Override
+                    public void talkState(String label, boolean recording) {
+                        TablePanel.this.talkState(label, recording);
+                    }
 
-                @Override
-                public void talkNotice(String text) {
-                    showChatNotice(text);
-                }
-            });
+                    @Override
+                    public void talkNotice(String text) {
+                        showChatNotice(text);
+                        showTalkLabel(text, Theme.MUTED);
+                    }
+                });
+            }
         }
-        talkButton.setVisible(talk != null);
-        sidebar.revalidate();
+        if (talk != null) {
+            talk.setAudience(anyoneToHear);
+        }
+        talkButton.setLonely(!anyoneToHear);
+        if (talkButton.isVisible() != (talk != null)) {
+            talkButton.setVisible(talk != null);
+            if (talk == null) {
+                talkLabel.setVisible(false);
+            }
+            actionBar.doLayout();
+            actionBar.repaint();
+        }
     }
 
-    /** 錄音中按鈕變紅，寫錄了幾秒。 */
+    /** 錄音中按鈕變紅，右邊寫錄了幾秒、放開就廣播；放開就收起來。 */
     private void talkState(String label, boolean recording) {
-        talkButton.setText(recording ? label : VoiceClip.TALK_LABEL);
-        talkButton.setBackground(recording ? Theme.RED : Theme.BUTTON);
+        talkButton.setRecording(recording);
+        if (recording) {
+            talkLabelHide.stop();
+            setTalkLabel(label, TALK_RECORDING);
+        } else if (!talkLabelHide.isRunning()) {
+            talkLabel.setVisible(false);
+            actionBar.doLayout();
+        }
+    }
+
+    /** 按鈕右邊停一下的字，例如已經廣播出去、送不出去的原因。 */
+    private void showTalkLabel(String text, Color color) {
+        setTalkLabel(text, color);
+        talkLabelHide.restart();
+    }
+
+    private void setTalkLabel(String text, Color color) {
+        talkLabel.setText(safeLabel(text));
+        talkLabel.setForeground(color);
+        talkLabel.setVisible(true);
+        actionBar.doLayout();
+        actionBar.repaint();
     }
 
     /**
@@ -555,6 +607,11 @@ public final class TablePanel extends JPanel {
         voiceLines.put(line, new VoiceLine(muteKey, name, mine, replay));
         appendChat(name, VoiceClip.label(ms), mine);
         chatArea.setToolTipText(VOICE_TIP);
+        if (mine) {
+            // 服務器回覆收到了：按鈕往外擴散兩圈波紋，右邊寫已經廣播
+            talkButton.broadcast();
+            showTalkLabel(VoiceClip.BROADCAST_TEXT, Theme.GOLD);
+        }
     }
 
     static final String VOICE_TIP = "點語音那一行可以重播，別人的也可以靜音";

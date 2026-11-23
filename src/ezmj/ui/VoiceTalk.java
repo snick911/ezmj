@@ -15,7 +15,7 @@ import javax.swing.Timer;
 import ezmj.online.VoiceClip;
 
 /**
- * 按住說話：按下開始錄音，放開送出；在按鈕外面放開就取消，錄滿 10 秒自動送出。和網頁版的同名類別一樣，
+ * 按住說話：按下開始錄音，放開就送出去廣播；在按鈕外面放開就取消，錄滿 10 秒自動送出。和網頁版的同名類別一樣，
  * 不到 0.3 秒的不送，按下去之前先看自己的頻率限制。按鈕在 TablePanel，這裡只管錄音與送出，都在 EDT 上呼叫。
  *
  * 錄音在背景執行緒用 Java Sound 的 TargetDataLine（見 Microphone），每次錄完就關掉麥克風。
@@ -25,7 +25,7 @@ final class VoiceTalk {
 
     /** 按鈕與提示，由 TablePanel 提供，都在 EDT 上呼叫。 */
     interface View {
-        /** 按鈕上的字；recording 時按鈕變紅。 */
+        /** 錄音中按鈕旁邊的字；recording 時按鈕變紅。 */
         void talkState(String label, boolean recording);
 
         /** 送不出去的原因，和聊天的提示放在同一個地方。 */
@@ -100,6 +100,8 @@ final class VoiceTalk {
     private final Timer ticker = new Timer(TICK_MS, e -> tick());
     private View view;
     private Recording recording;
+    /** 房間裡有別的真人連著線。 */
+    private boolean audience = true;
 
     /** sender 收到壓好的語音，負責送出去，在 EDT 上呼叫。 */
     VoiceTalk(Consumer<byte[]> sender) {
@@ -114,9 +116,18 @@ final class VoiceTalk {
         return recording != null;
     }
 
-    /** 按下說話的按鈕。 */
+    /** 有人補位上場、斷線或離開時，TablePanel 照房間的人更新。還在錄的照樣錄完。 */
+    void setAudience(boolean anyoneToHear) {
+        audience = anyoneToHear;
+    }
+
+    /** 按下說話的按鈕。桌上沒有別的真人時只說明沒有人聽，不開麥克風。 */
     void press() {
         if (recording != null || view == null) {
+            return;
+        }
+        if (!audience) {
+            view.talkNotice(VoiceClip.NOBODY_TEXT);
             return;
         }
         long waitMs = limiter.waitMs(nowMs());

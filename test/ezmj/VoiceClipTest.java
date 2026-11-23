@@ -122,25 +122,28 @@ final class VoiceClipTest {
             eq("語音傳得太快了，27 秒後再試", VoiceClip.tooFastText(26_001), "進位到秒");
         });
 
-        test("welcome 有 features 的 voice 才會用；跟電腦打沒有人聽", () -> {
+        test("welcome 有 features 的 voice 才會用；跟電腦打沒有人聽，按鈕變淡", () -> {
             check(VoiceClip.serverSupports(Map.of("features", List.of("voice"))), "新服務器");
             check(!VoiceClip.serverSupports(Map.of("type", "welcome")), "舊服務器沒有這個欄位");
             RoomSettings settings = new RoomSettings(500, 10, 2,
                     List.of(BotLevel.PRO, BotLevel.PRO, BotLevel.PRO), 15, GameSpeed.NORMAL, "", true);
             RoomInfo.Seat me = new RoomInfo.Seat(1, "我", true, true, null);
             RoomInfo.Seat bot = new RoomInfo.Seat(0, "電腦", false, true, Gender.MALE);
-            RoomInfo.Seat friend = new RoomInfo.Seat(2, "小明", true, false, null);
+            RoomInfo.Seat friend = new RoomInfo.Seat(2, "小明", true, true, null);
+            RoomInfo.Seat gone = new RoomInfo.Seat(3, "小華", true, false, null);
             check(!VoiceClip.anyoneToHear(new RoomInfo("ABC234", true, 1, settings, List.of(me, bot))), "只有電腦");
             check(VoiceClip.anyoneToHear(new RoomInfo("ABC234", true, 1, settings, List.of(me, bot, friend))),
-                    "斷線的真人也算，接回來就聽得到");
+                    "有別的真人連著線");
+            check(!VoiceClip.anyoneToHear(new RoomInfo("ABC234", true, 1, settings, List.of(me, bot, gone))),
+                    "斷線或離開牌局的真人收不到，不算");
         });
 
         test("畫面上的字", () -> {
             eq("〔語音 3.2 秒〕", VoiceClip.label(3_249), "四捨五入到 0.1 秒");
             eq("〔語音 0.3 秒〕", VoiceClip.label(300), "最短");
             eq("〔語音 10.0 秒〕", VoiceClip.label(10_000), "最長");
-            eq("錄音中 1 秒，放開送出", VoiceClip.recordingLabel(0), "剛開始");
-            eq("錄音中 10 秒，放開送出", VoiceClip.recordingLabel(9_999), "快滿了");
+            eq("錄音中 1 秒，放開就廣播", VoiceClip.recordingLabel(0), "剛開始");
+            eq("錄音中 10 秒，放開就廣播", VoiceClip.recordingLabel(9_999), "快滿了");
         });
 
         test("收到的語音：座位轉成畫面座位，自己送的只有長度", () -> {

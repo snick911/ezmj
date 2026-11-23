@@ -7,7 +7,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 牌桌上的語音訊息：按住說話，放開送出，由服務器轉給同桌的真人。Swing 版、網頁版與服務器共用這一份。
+ * 牌桌上的語音訊息：按住說話，放開就廣播，由服務器轉給同桌的真人。Swing 版、網頁版與服務器共用這一份。
  *
  * 聲音壓成 8 kHz 單聲道的 IMA ADPCM，每個取樣 4 位元，一秒 4 KB。用 Java 自己寫，網頁由 TeaVM 編進去，
  * 不靠瀏覽器的錄音格式：Chrome 錄成 WebM/Opus、Safari 錄成 MP4/AAC，Swing 都播不了。
@@ -170,10 +170,14 @@ public final class VoiceClip {
         return features instanceof List && ((List<?>) features).contains(FEATURE);
     }
 
-    /** 房間裡有別的真人才有人聽得到，跟電腦打的一人房間就不顯示說話的按鈕。 */
+    /**
+     * 房間裡有別的真人連著線才有人聽得到。服務器只把語音轉給當下連著的人，斷線或離開牌局的（開打後座位照樣算真人）
+     * 收不到，所以不算；斷線、接回或補位上場時服務器都會送 room，按鈕跟著變。沒有人聽時說話的按鈕變淡，
+     * 按下去只說明沒有人聽，見 NOBODY_TEXT。
+     */
     public static boolean anyoneToHear(RoomInfo room) {
         for (RoomInfo.Seat seat : room.seats()) {
-            if (seat.human() && seat.seat() != room.yourSeat()) {
+            if (seat.human() && seat.connected() && seat.seat() != room.yourSeat()) {
                 return true;
             }
         }
@@ -215,11 +219,16 @@ public final class VoiceClip {
         return "語音傳得太快了，" + Math.max(1, (waitMs + 999) / 1000) + " 秒後再試";
     }
 
-    /** 畫面上的字，Swing 版與網頁版一樣。 */
+    /** 畫面上的字，Swing 版與網頁版一樣。按鈕是麥克風加兩邊的廣播波紋，字放在滑鼠提示與報讀。 */
     public static final String TALK_LABEL = "按住說話";
+    public static final String TALK_TIP = "按住說話，放開就自動廣播給同桌的牌友";
+    /** 桌上沒有別的真人：按鈕變淡，按下去說明沒有人聽，不開麥克風。 */
+    public static final String NOBODY_TEXT = "桌上沒有別的真人玩家，語音沒有人聽得到";
+    /** 服務器回覆收到了，已經轉給同桌的牌友。 */
+    public static final String BROADCAST_TEXT = "已廣播給牌友";
     public static final String PREPARING_LABEL = "準備麥克風…";
-    public static final String HOLD_TEXT = "要按住說話，放開才送出";
-    public static final String CANCELLED_TEXT = "在按鈕外面放開，取消了，沒有送出";
+    public static final String HOLD_TEXT = "要按住說話，放開才會廣播";
+    public static final String CANCELLED_TEXT = "在按鈕外面放開，取消了，沒有廣播";
     public static final String OFFLINE_TEXT = "連線中斷，語音沒有送出";
     public static final String REPLAY_LABEL = "重播";
     public static final String MUTE_LABEL = "靜音";
@@ -227,12 +236,12 @@ public final class VoiceClip {
     /** 環境設定裡的兩項，和喊牌的「語音」分開。 */
     public static final String SETTING_LABEL = "玩家語音";
     public static final String VOLUME_LABEL = "玩家語音音量";
-    public static final String SETTING_NOTE = "玩家語音是同桌的真人按住「說話」傳來的語音，關掉就不自動播放，"
+    public static final String SETTING_NOTE = "玩家語音是同桌的真人按住牌桌左下角的麥克風傳來的語音，關掉就不自動播放，"
             + "聊天區照樣可以按「重播」；不想聽某一位，按他那一行的「靜音」。";
 
-    /** 錄音中按鈕上的字，ms 是錄了多久。 */
+    /** 錄音中牌桌上的提示，ms 是錄了多久。 */
     public static String recordingLabel(int ms) {
-        return "錄音中 " + (ms / 1000 + 1) + " 秒，放開送出";
+        return "錄音中 " + (ms / 1000 + 1) + " 秒，放開就廣播";
     }
 
     /** 聊天區與泡泡上的一則語音，例如「〔語音 3.2 秒〕」。 */
