@@ -29,10 +29,14 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
+import javax.crypto.Cipher;
+import javax.crypto.spec.ChaCha20ParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
 import javax.swing.plaf.basic.BasicHTML;
 
 import ezmj.engine.Claim;
@@ -55,6 +59,7 @@ import ezmj.online.RoomSettings;
 import ezmj.online.ServerAddress;
 import ezmj.online.Substitution;
 import ezmj.online.VoiceClip;
+import ezmj.online.Wire;
 
 /** 連線層：走真的 TCP 與 WebSocket，對面是測試自己開的假服務器；局面的轉換直接餵服務器格式的訊息。 */
 final class OnlineTest {
@@ -69,6 +74,7 @@ final class OnlineTest {
         T.section("連線");
         address();
         json();
+        wire();
         profile();
         client(false);
         client(true);
@@ -232,6 +238,30 @@ final class OnlineTest {
                 eq("{\"type\":\"claim\",\"waitId\":9,\"option\":2}", connection.nextLine(), "宣告");
                 eq("{\"type\":\"pass\",\"waitId\":10}", connection.nextLine(), "過");
                 eq("{\"type\":\"ready\"}", connection.nextLine(), "看完結果");
+            }
+        });
+        test(name + "送出去的都加密，同一則每次看起來也不一樣", () -> {
+            try (FakeServer server = new FakeServer(webSocket); Probe probe = new Probe(server)) {
+                FakeConnection connection = probe.loggedIn();
+                probe.client.discard(5, tile("9s"));
+                probe.client.discard(5, tile("9s"));
+                String first = connection.rawLine();
+                String second = connection.rawLine();
+                check(!Wire.isPlain(first) && !first.contains("discard") && !first.contains("9s"), "看不出內容：" + first);
+                check(!first.equals(second), "nonce 每次不同");
+                eq("{\"type\":\"discard\",\"waitId\":5,\"tile\":\"9s\"}", Wire.decode(second), "解得開");
+            }
+        });
+        test(name + "舊的服務器送沒加密的 JSON 也看得懂", () -> {
+            try (FakeServer server = new FakeServer(webSocket); Probe probe = new Probe(server)) {
+                probe.client.loginWithName("小明");
+                server.accept().next("hello");
+                server.current().sendPlain("{\"type\":\"welcome\",\"token\":\"t1\",\"room\":null}");
+                eq("loggedIn:false", probe.next(), "登入");
+                server.current().sendPlain("  {\"type\":\"countdown\",\"seconds\":3}");
+                eq("message:countdown", probe.next(), "前面有空白也可以");
+                server.current().sendPlain("eyJ0eXBlIjoiY291bnRkb3duIn0=");
+                eq("bad", probe.next(), "只有 base64、沒有加密的不收");
             }
         });
         test(name + "開房間帶上設定，加入帶房號", () -> {
@@ -927,6 +957,62 @@ final class OnlineTest {
         return (String) method.invoke(null, round);
     }
 
+    private static void wire() {
+        test("加密：ChaCha20 和 JDK 的一樣", () -> {
+            Method crypt = Wire.class.getDeclaredMethod("crypt", int[].class, byte[].class, int.class);
+            crypt.setAccessible(true);
+            Random random = new Random(7);
+            for (int length : new int[] {0, 1, 63, 64, 65, 200, 5000}) {
+                int[] key = new int[8];
+                byte[] keyBytes = new byte[32];
+                for (int i = 0; i < key.length; i++) {
+                    key[i] = random.nextInt();
+                    for (int b = 0; b < 4; b++) {
+                        keyBytes[i * 4 + b] = (byte) (key[i] >>> (8 * b));
+                    }
+                }
+                byte[] nonce = new byte[12];
+                random.nextBytes(nonce);
+                byte[] plain = new byte[length];
+                random.nextBytes(plain);
+                byte[] data = new byte[12 + length];
+                System.arraycopy(nonce, 0, data, 0, 12);
+                System.arraycopy(plain, 0, data, 12, length);
+                crypt.invoke(null, key, data, 12);
+                Cipher jdk = Cipher.getInstance("ChaCha20");
+                jdk.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(keyBytes, "ChaCha20"), new ChaCha20ParameterSpec(nonce, 0));
+                check(Arrays.equals(jdk.doFinal(plain), Arrays.copyOfRange(data, 12, data.length)), length + " 個位元組");
+            }
+        });
+        test("加密：來回一樣，中文與長的訊息都可以", () -> {
+            Random random = new Random(3);
+            for (String json : List.of("{}", "{\"type\":\"chat\",\"text\":\"你好，碰！🀄\"}",
+                    "{\"type\":\"voice\",\"data\":\"" + "A".repeat(53_340) + "\"}")) {
+                String line = Wire.encode(json, random);
+                eq(json, Wire.decode(line), "解得開");
+                eq(json, Wire.read(line), "read 也一樣");
+                check(!Wire.isPlain(line) && !line.contains("\n") && !line.contains("type"), "看不出內容");
+            }
+        });
+        test("加密：被改過、太短或不是 base64 就解不開", () -> {
+            String line = Wire.encode("{\"type\":\"discard\",\"waitId\":5,\"tile\":\"9s\"}", new Random(5));
+            // 最後一個字可能有用不到的位元，不改那裡
+            for (int at : new int[] {0, 15, 20, line.length() / 2}) {
+                char[] chars = line.toCharArray();
+                chars[at] = chars[at] == 'A' ? 'B' : 'A';
+                fails(IllegalArgumentException.class, () -> Wire.decode(new String(chars)), "改了第 " + at + " 個字");
+            }
+            for (String bad : List.of("", "AAAA", "不是base64", "eyJ0eXBlIjoicGluZyJ9", "{\"type\":\"ping\"}")) {
+                fails(IllegalArgumentException.class, () -> Wire.decode(bad), bad);
+            }
+        });
+        test("加密：沒加密的 JSON 物件照原樣收", () -> {
+            check(Wire.isPlain("{\"type\":\"ping\"}") && Wire.isPlain(" \t{"), "以 { 開頭");
+            check(!Wire.isPlain("") && !Wire.isPlain("[1]") && !Wire.isPlain("eyJ9"), "其他的不是");
+            eq("{\"type\":\"ping\"}", Wire.read("{\"type\":\"ping\"}"), "照原樣");
+        });
+    }
+
     @SuppressWarnings("unchecked")
     private static Map<String, Object> parse(String text) {
         return (Map<String, Object>) Json.parse(text);
@@ -1100,7 +1186,9 @@ final class OnlineTest {
         }
     }
 
+    /** 和新的服務器一樣收發 Wire 加密過的訊息；sendPlain 是舊的服務器。 */
     private static class FakeConnection {
+        private static final Random RANDOM = new Random();
         private final Socket socket;
         private final BufferedReader in;
         final OutputStream out;
@@ -1112,8 +1200,15 @@ final class OnlineTest {
             out = socket.getOutputStream();
         }
 
-        String nextLine() throws IOException {
+        /** 線上收到的樣子，沒有解開。連線關了就是 null。 */
+        String rawLine() throws IOException {
             return in.readLine();
+        }
+
+        /** 解開的 JSON。 */
+        String nextLine() throws IOException {
+            String line = rawLine();
+            return line == null ? null : Wire.decode(line);
         }
 
         /** 跳過其他訊息（通常是 ping），直到這種訊息。 */
@@ -1131,6 +1226,11 @@ final class OnlineTest {
         }
 
         void send(String line) throws IOException {
+            sendPlain(Wire.encode(line, RANDOM));
+        }
+
+        /** 不加密，照原樣送出去。 */
+        void sendPlain(String line) throws IOException {
             out.write((line + "\n").getBytes(StandardCharsets.UTF_8));
             out.flush();
         }
@@ -1193,7 +1293,7 @@ final class OnlineTest {
         }
 
         @Override
-        String nextLine() throws IOException {
+        String rawLine() throws IOException {
             while (true) {
                 int first;
                 try {
@@ -1225,7 +1325,7 @@ final class OnlineTest {
         }
 
         @Override
-        void send(String line) throws IOException {
+        void sendPlain(String line) throws IOException {
             sendFrame(0x80 | TEXT, line.getBytes(StandardCharsets.UTF_8));
         }
 

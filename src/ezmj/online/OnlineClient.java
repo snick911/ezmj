@@ -15,9 +15,11 @@ import java.net.http.WebSocket;
 import java.net.http.WebSocketHandshakeException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ExecutionException;
@@ -28,7 +30,8 @@ import java.util.concurrent.TimeUnit;
 import ezmj.model.Tile;
 
 /**
- * 到 EZMJ Server 的連線，協定見服務器的 README。走 TCP 時一行一則 UTF-8 JSON，走 WebSocket 時一則文字訊息一則 JSON。
+ * 到 EZMJ Server 的連線，協定見服務器的 README。走 TCP 時一行一則，走 WebSocket 時一則文字訊息一則，
+ * 內容是 Wire 加密過的 JSON，封包紀錄裡看不出送了什麼。收到沒加密的 JSON 也看得懂，那是舊的服務器。
  * 這裡只管連線：登入、閒置時送 ping、保存 token、斷線後自己重連。訊息內容交給上層看。
  * 讀寫各一條執行緒，通知都透過建構時給的 Executor，畫面給 EDT 就不用自己換執行緒。
  */
@@ -49,6 +52,8 @@ public final class OnlineClient {
     private static final int RETRY_FOR_MS = 180_000;
     private static final int MAX_LINE_BYTES = 1024 * 1024;
     private static final int MAX_QUEUED = 1024;
+    /** Wire 的 nonce。 */
+    private static final Random RANDOM = new SecureRandom();
 
     public static final Timing NORMAL = new Timing(PING_MS, READ_TIMEOUT_MS, RETRY_DELAYS_MS, RETRY_FOR_MS);
 
@@ -401,7 +406,7 @@ public final class OnlineClient {
             return;
         }
         try {
-            Object parsed = Fields.withoutHtml(Json.parse(line));
+            Object parsed = Fields.withoutHtml(Json.parse(Wire.read(line)));
             if (!(parsed instanceof Map)) {
                 throw new IllegalArgumentException("訊息要是 JSON 物件");
             }
@@ -487,13 +492,13 @@ public final class OnlineClient {
             }
         }
 
-        /** 閒置超過 pingMs 就送 ping，服務器才知道還連著。 */
+        /** 閒置超過 pingMs 就送 ping，服務器才知道還連著。每則送出前才加密，nonce 每次都不一樣。 */
         private void writeLoop() {
             String ping = Json.write(Fields.object("type", "ping"));
             try {
                 while (true) {
                     String line = outgoing.poll(timing.pingMs(), TimeUnit.MILLISECONDS);
-                    transport.write(line == null ? ping : line);
+                    transport.write(Wire.encode(line == null ? ping : line, RANDOM));
                 }
             } catch (IOException | InterruptedException e) {
                 // 連線已經斷了，close 會讓讀取執行緒收尾
@@ -526,7 +531,7 @@ public final class OnlineClient {
         void close();
     }
 
-    /** 一行一則 UTF-8 JSON，以 \n 結尾。 */
+    /** 一行一則，以 \n 結尾。Wire 的 base64 沒有換行。 */
     private static final class TcpTransport implements Transport {
         private final Socket socket;
         private final InputStream in;
@@ -586,7 +591,7 @@ public final class OnlineClient {
         }
     }
 
-    /** 一則文字訊息是一則 JSON，不用換行。TLS 由 JDK 處理，要走 wss 打包時就要帶上 jdk.crypto.ec。 */
+    /** 一則文字訊息是一則，不用換行。TLS 由 JDK 處理，要走 wss 打包時就要帶上 jdk.crypto.ec。 */
     private static final class WebSocketTransport implements Transport, WebSocket.Listener {
         /** 放進 incoming 表示不會再有訊息，只比較是不是同一個物件。 */
         private static final String END = new String("end");
